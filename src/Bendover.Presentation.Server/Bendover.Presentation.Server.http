@@ -1,0 +1,6 @@
+@Bendover.Presentation.Server_HostAddress = http://localhost:5062
+
+GET {{Bendover.Presentation.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
