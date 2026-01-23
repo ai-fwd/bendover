@@ -1,12 +1,13 @@
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
+using Microsoft.Extensions.AI;
 using Bendover.Domain;
 
 namespace Bendover.Application;
 
 public class AgentOrchestrator : IAgentOrchestrator
 {
-    private readonly IChatClient _chatClient;
+    private readonly IChatClientResolver _clientResolver;
     private readonly IContainerService _containerService;
     private readonly GovernanceEngine _governance;
     private readonly ScriptGenerator _scriptGenerator;
@@ -17,7 +18,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IEnumerable<IAgentObserver> _observers;
 
     public AgentOrchestrator(
-        IChatClient chatClient, 
+        IChatClientResolver clientResolver, 
         IContainerService containerService,
         GovernanceEngine governance,
         ScriptGenerator scriptGenerator,
@@ -26,7 +27,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ILeadAgent leadAgent,
         IPracticeService practiceService)
     {
-        _chatClient = chatClient;
+        _clientResolver = clientResolver;
         _containerService = containerService;
         _governance = governance;
         _scriptGenerator = scriptGenerator;
@@ -65,22 +66,33 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         // 2. Planning Phase (Architect)
         await NotifyAsync("Architect Planning...");
-        // In a real app, we'd loop here based on critique.
-        var plan = await _chatClient.CompleteAsync(
-            $"You are an Architect. {governanceContext}\n\nSelected Practices:\n{practicesContext}", 
-            $"Goal: {initialGoal}");
+        var architectClient = _clientResolver.GetClient(AgentRole.Architect);
+        var planResponse = await architectClient.CompleteAsync(new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.System, $"You are an Architect. {governanceContext}\n\nSelected Practices:\n{practicesContext}"),
+            new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
+        });
+        var plan = planResponse.Message.Text;
 
         // 3. Actor Phase (Engineer)
         await NotifyAsync("Engineer Generating Code...");
-        var actorCode = await _chatClient.CompleteAsync(
-            $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}", 
-            $"Plan: {plan}");
+        var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
+        var actorCodeResponse = await engineerClient.CompleteAsync(new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.System, $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}"),
+            new ChatMessage(ChatRole.User, $"Plan: {plan}")
+        });
+        var actorCode = actorCodeResponse.Message.Text;
 
         // 4. Critique Phase (Reviewer)
         await NotifyAsync("Reviewer Critiquing Code...");
-        var critique = await _chatClient.CompleteAsync(
-            $"You are a Reviewer. {governanceContext}\n\nSelected Practices:\n{practicesContext}", 
-            $"Review this code: {actorCode}");
+        var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
+        var critiqueResponse = await reviewerClient.CompleteAsync(new List<ChatMessage>
+        {
+             new ChatMessage(ChatRole.System, $"You are a Reviewer. {governanceContext}\n\nSelected Practices:\n{practicesContext}"),
+             new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
+        });
+        var critique = critiqueResponse.Message.Text;
 
         // 5. Script Generation
         var script = _scriptGenerator.WrapCode(actorCode);

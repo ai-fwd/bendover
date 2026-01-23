@@ -5,6 +5,8 @@ using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
 using Bendover.Application;
 using Bendover.Domain.Exceptions;
+using Microsoft.Extensions.Configuration;
+using Bendover.Infrastructure.Configuration;
 using Bendover.Domain;
 
 namespace Bendover.Presentation.CLI;
@@ -16,8 +18,17 @@ public class LocalAgentRunner : IAgentRunner
          // Setup Dependency Injection
         var services = new ServiceCollection();
         
+        // Build Configuration
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
+            .AddEnvironmentVariables()
+            .Build();
+
         // Application & Infrastructure
-        services.AddSingleton<IChatClient, OpenAIClientAdapter>();
+        services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.SectionName));
+        services.AddSingleton<IChatClientResolver, ChatClientResolver>();
         services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
         services.AddSingleton<IContainerService, DockerContainerService>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();

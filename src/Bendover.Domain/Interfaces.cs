@@ -2,10 +2,6 @@ using Bendover.Domain.Entities;
 
 namespace Bendover.Domain.Interfaces;
 
-public interface IChatClient
-{
-    Task<string> CompleteAsync(string systemPrompt, string userPrompt);
-}
 
 public interface IContainerService
 {

@@ -82,3 +82,5 @@ env/
 
 ## Other
 *.swp
+appsettings.*.json
+!appsettings.json

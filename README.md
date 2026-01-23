@@ -63,6 +63,39 @@ sudo apt-get update
 sudo apt-get install -y dotnet-sdk-8.0
 ```
 
+## Configuration
+
+The agent requires configuration to connect to an LLM provider (OpenAI or Local).
+
+Configuration is managed via `src/Bendover.Presentation.CLI/appsettings.json`.
+For local development, create/modify `src/Bendover.Presentation.CLI/appsettings.Development.json` (this file is git-ignored).
+
+Example `appsettings.Development.json` for Local LLM (e.g., LM Studio):
+```json
+{
+  "Agent": {
+    "Model": "openai/gpt-oss-20b",
+    "Endpoint": "http://127.0.0.1:1234",
+    "ApiKey": "sk-dummy"
+  }
+}
+```
+
+The agent supports role-based configuration overrides. You can specify different models for `Lead`, `Architect`, `Engineer`, or `Reviewer`.
+
+```json
+{
+  "Agent": {
+    "Model": "gpt-4o",
+    "RoleOverrides": {
+      "Engineer": {
+        "Model": "gpt-4-turbo"
+      }
+    }
+  }
+}
+```
+
 ### Troubleshooting Docker in WSL
 
 If you get access denied errors connecting to Docker:

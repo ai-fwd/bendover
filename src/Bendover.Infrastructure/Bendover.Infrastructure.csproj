@@ -7,6 +7,8 @@
 
   <ItemGroup>
     <PackageReference Include="Docker.DotNet.Enhanced" Version="3.131.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.0.0-preview.9.24556.5" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.2" />
   </ItemGroup>
 
   <PropertyGroup>
