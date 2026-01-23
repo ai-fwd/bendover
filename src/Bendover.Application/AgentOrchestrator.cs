@@ -1,5 +1,6 @@
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
+using Bendover.Domain;
 
 namespace Bendover.Application;
 
@@ -10,6 +11,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly GovernanceEngine _governance;
     private readonly ScriptGenerator _scriptGenerator;
     private readonly IEnvironmentValidator _environmentValidator;
+    private readonly ILeadAgent _leadAgent;
+    private readonly IPracticeService _practiceService;
 
     private readonly IEnumerable<IAgentObserver> _observers;
 
@@ -19,7 +22,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         GovernanceEngine governance,
         ScriptGenerator scriptGenerator,
         IEnvironmentValidator environmentValidator,
-        IEnumerable<IAgentObserver> observers)
+        IEnumerable<IAgentObserver> observers,
+        ILeadAgent leadAgent,
+        IPracticeService practiceService)
     {
         _chatClient = chatClient;
         _containerService = containerService;
@@ -27,6 +32,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         _scriptGenerator = scriptGenerator;
         _environmentValidator = environmentValidator;
         _observers = observers;
+        _leadAgent = leadAgent;
+        _practiceService = practiceService;
     }
 
     private async Task NotifyAsync(string message)
@@ -47,24 +54,33 @@ public class AgentOrchestrator : IAgentOrchestrator
         await NotifyAsync("Loading Governance Context...");
         var governanceContext = await _governance.GetContextAsync();
 
-        // 2. Planning Phase
-        await NotifyAsync("Planning...");
+        // 1a. Lead Phase (Practice Selection)
+        await NotifyAsync("Lead Agent Analyzing Request...");
+        var selectedPracticeNames = await _leadAgent.AnalyzeTaskAsync(initialGoal);
+        var allPractices = await _practiceService.GetPracticesAsync();
+        var selectedPractices = allPractices.Where(p => selectedPracticeNames.Contains(p.Name)).ToList();
+
+        // Format practices for prompt
+        var practicesContext = string.Join("\n", selectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));
+
+        // 2. Planning Phase (Architect)
+        await NotifyAsync("Architect Planning...");
         // In a real app, we'd loop here based on critique.
         var plan = await _chatClient.CompleteAsync(
-            $"You are a Planner. {governanceContext}", 
+            $"You are an Architect. {governanceContext}\n\nSelected Practices:\n{practicesContext}", 
             $"Goal: {initialGoal}");
 
-        // 3. Critique Phase
-        await NotifyAsync("Critiquing Plan...");
-        var critique = await _chatClient.CompleteAsync(
-            $"You are a Critic. {governanceContext}", 
-            $"Review this plan: {plan}");
-
-        // 4. Actor Phase
-        await NotifyAsync("Generating Code...");
+        // 3. Actor Phase (Engineer)
+        await NotifyAsync("Engineer Generating Code...");
         var actorCode = await _chatClient.CompleteAsync(
-            "You are an Actor. Implement this using the IBendoverSDK.", 
-            $"Plan: {plan}. Critique: {critique}");
+            $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}", 
+            $"Plan: {plan}");
+
+        // 4. Critique Phase (Reviewer)
+        await NotifyAsync("Reviewer Critiquing Code...");
+        var critique = await _chatClient.CompleteAsync(
+            $"You are a Reviewer. {governanceContext}\n\nSelected Practices:\n{practicesContext}", 
+            $"Review this code: {actorCode}");
 
         // 5. Script Generation
         var script = _scriptGenerator.WrapCode(actorCode);

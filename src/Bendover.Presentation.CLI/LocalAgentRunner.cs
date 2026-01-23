@@ -5,6 +5,7 @@ using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
 using Bendover.Application;
 using Bendover.Domain.Exceptions;
+using Bendover.Domain;
 
 namespace Bendover.Presentation.CLI;
 
@@ -23,6 +24,8 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<GovernanceEngine>();
         services.AddSingleton<ScriptGenerator>();
         services.AddSingleton<IAgentObserver, ConsoleAgentObserver>();
+        services.AddSingleton<ILeadAgent, FakeLeadAgent>();
+        services.AddSingleton<IPracticeService, PracticeService>();
         
         // Logging (Quiet for now)
         services.AddLogging(configure => configure.AddConsole().SetMinimumLevel(LogLevel.Warning));
