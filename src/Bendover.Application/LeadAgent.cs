@@ -10,34 +10,36 @@ public class LeadAgent : ILeadAgent
 {
     private readonly IChatClientResolver _clientResolver;
     private readonly IPracticeService _practiceService;
-    private readonly string _systemPromptPath;
 
-    public LeadAgent(IChatClientResolver clientResolver, IPracticeService practiceService,
-                     string? systemPromptPath = null)
+    public LeadAgent(IChatClientResolver clientResolver, IPracticeService practiceService)
     {
         _clientResolver = clientResolver;
         _practiceService = practiceService;
-        _systemPromptPath = systemPromptPath ?? BendoverPaths.GetSystemPromptPath("lead");
     }
 
     public async Task<IEnumerable<string>> AnalyzeTaskAsync(string userPrompt)
     {
-        // 1. Load System Prompt
+        // 1. Load System Prompt from Practices
+        var leadPractices = await _practiceService.GetPracticesForRoleAsync(AgentRole.Lead);
+        var leadPractice = leadPractices.FirstOrDefault(p => p.Name == "lead_agent_practice");
+
         string systemPrompt;
-        if (File.Exists(_systemPromptPath))
+        if (leadPractice != null)
         {
-            systemPrompt = await File.ReadAllTextAsync(_systemPromptPath);
+            systemPrompt = leadPractice.Content;
         }
         else
         {
-            // Fallback or Error? 
-            // For now, minimal fallback if file missing for some reason
+            // Fallback
             systemPrompt = "You are the Lead Agent. Select relevant practice names as JSON array.";
         }
 
-        // 2. Load Practices Metadata
+        // 2. Load Practices Metadata (Excluding the lead practice itself from the selection pool if desired, or keep it)
+        // Usually, the lead agent doesn't select itself, but it needs to know about others.
         var allPractices = await _practiceService.GetPracticesAsync();
-        var practicesList = string.Join("\n", allPractices.Select(p => $"- Name: {p.Name}, Role: {p.TargetRole}, Area: {p.AreaOfConcern}"));
+        var practicesList = string.Join("\n", allPractices
+            .Where(p => p.Name != "lead_agent_practice")
+            .Select(p => $"- Name: {p.Name}, Role: {p.TargetRole}, Area: {p.AreaOfConcern}"));
 
         // 3. Construct Context
         var fullSystemPrompt = $"{systemPrompt}\n\nAvailable Practices:\n{practicesList}";
@@ -56,8 +58,13 @@ public class LeadAgent : ILeadAgent
         return ParsePractices(responseText);
     }
 
-    private IEnumerable<string> ParsePractices(string responseText)
+    private IEnumerable<string> ParsePractices(string? responseText)
     {
+        if (string.IsNullOrWhiteSpace(responseText))
+        {
+            return new List<string>();
+        }
+
         try
         {
             // Attempt to extract JSON from code blocks if present

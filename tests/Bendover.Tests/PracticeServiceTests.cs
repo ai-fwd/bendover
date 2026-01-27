@@ -1,19 +1,25 @@
 using Bendover.Application;
 using Bendover.Domain;
+using Bendover.Domain.Interfaces;
+using Moq;
 
 namespace Bendover.Tests;
 
-public class PracticeServiceTests : IDisposable
+public class PracticeServiceTests
 {
-    private readonly string _testDir;
+    private readonly Mock<IFileService> _fileServiceMock;
     private readonly PracticeService _sut;
+    private readonly string _practicesPath = "/mock/practices";
 
     public PracticeServiceTests()
     {
-        _testDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_testDir);
+        _fileServiceMock = new Mock<IFileService>();
 
-        // Create sample practice
+        // Setup default behavior
+        _fileServiceMock.Setup(fs => fs.DirectoryExists(It.IsAny<string>())).Returns(true);
+        _fileServiceMock.Setup(fs => fs.GetFiles(It.IsAny<string>(), "*.md"))
+            .Returns(new[] { Path.Combine(_practicesPath, "sample.md") });
+
         var practiceContent = @"---
 Name: sample_practice
 TargetRole: Engineer
@@ -21,9 +27,9 @@ AreaOfConcern: Code Style
 ---
 Sample Content";
 
-        File.WriteAllText(Path.Combine(_testDir, "sample.md"), practiceContent);
+        _fileServiceMock.Setup(fs => fs.ReadAllText(It.IsAny<string>())).Returns(practiceContent);
 
-        _sut = new PracticeService(_testDir);
+        _sut = new PracticeService(_fileServiceMock.Object, _practicesPath);
     }
 
     [Fact]
@@ -52,13 +58,5 @@ Sample Content";
     {
         var practices = await _sut.GetPracticesForRoleAsync(AgentRole.Architect);
         Assert.Empty(practices);
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_testDir))
-        {
-            Directory.Delete(_testDir, true);
-        }
     }
 }

@@ -34,6 +34,8 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
         services.AddSingleton<IAgentObserver, ConsoleAgentObserver>();
+        services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
+        services.AddSingleton<IFileService, FileService>();
         services.AddSingleton<ILeadAgent, LeadAgent>();
         services.AddSingleton<IPracticeService, PracticeService>();
 

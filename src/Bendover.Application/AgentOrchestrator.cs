@@ -77,7 +77,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             new ChatMessage(ChatRole.System, $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}"),
             new ChatMessage(ChatRole.User, $"Plan: {plan}")
         });
-        var actorCode = actorCodeResponse.Message.Text;
+        var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
 
         // 4. Critique Phase (Reviewer)
         await NotifyAsync("Reviewer Critiquing Code...");
