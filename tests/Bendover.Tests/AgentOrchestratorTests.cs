@@ -33,7 +33,6 @@ public class AgentOrchestratorTests
         _environmentValidatorMock = new Mock<IEnvironmentValidator>();
         _observerMock = new Mock<IAgentObserver>();
 
-        var governance = new GovernanceEngine(); // Concrete class
         var scriptGen = new ScriptGenerator(); // Concrete class
 
         // Setup resolver to return specific mocks
@@ -44,7 +43,6 @@ public class AgentOrchestratorTests
         _sut = new AgentOrchestrator(
             _clientResolverMock.Object,
             _containerServiceMock.Object,
-            governance,
             scriptGen,
             _environmentValidatorMock.Object,
             new[] { _observerMock.Object },
@@ -91,22 +89,22 @@ public class AgentOrchestratorTests
 
         // 2. Architect (Planner)
         // Verify call logic
-         _architectClientMock.Verify(x => x.CompleteAsync(
-            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
-            It.IsAny<ChatOptions>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _architectClientMock.Verify(x => x.CompleteAsync(
+           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
+           It.IsAny<ChatOptions>(),
+           It.IsAny<CancellationToken>()), Times.Once);
 
         // 3. Engineer (Actor)
-         _engineerClientMock.Verify(x => x.CompleteAsync(
-            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Engineer") && m.Text.Contains("tdd_spirit"))),
-            It.IsAny<ChatOptions>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _engineerClientMock.Verify(x => x.CompleteAsync(
+           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Engineer") && m.Text.Contains("tdd_spirit"))),
+           It.IsAny<ChatOptions>(),
+           It.IsAny<CancellationToken>()), Times.Once);
 
         // 4. Reviewer (Critic)
-         _reviewerClientMock.Verify(x => x.CompleteAsync(
-            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Reviewer"))),
-            It.IsAny<ChatOptions>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _reviewerClientMock.Verify(x => x.CompleteAsync(
+           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Reviewer"))),
+           It.IsAny<ChatOptions>(),
+           It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify Execution Order using Invocations if strict ordering is needed, 
         // but verifying the calls exist is a good start. 

@@ -3,38 +3,62 @@ using Bendover.Domain;
 
 namespace Bendover.Tests;
 
-public class PracticeServiceTests
+public class PracticeServiceTests : IDisposable
 {
+    private readonly string _testDir;
     private readonly PracticeService _sut;
 
     public PracticeServiceTests()
     {
-        _sut = new PracticeService();
+        _testDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(_testDir);
+
+        // Create sample practice
+        var practiceContent = @"---
+Name: sample_practice
+TargetRole: Engineer
+AreaOfConcern: Code Style
+---
+Sample Content";
+
+        File.WriteAllText(Path.Combine(_testDir, "sample.md"), practiceContent);
+
+        _sut = new PracticeService(_testDir);
     }
 
     [Fact]
-    public async Task GetPracticesAsync_ShouldReturnMockedPractices()
+    public async Task GetPracticesAsync_ShouldLoadFromFiles()
     {
-        // Act
         var practices = await _sut.GetPracticesAsync();
 
-        // Assert
-        Assert.NotNull(practices);
-        Assert.Equal(3, practices.Count());
-        Assert.Contains(practices, p => p.Name == "tdd_spirit");
-        Assert.Contains(practices, p => p.Name == "clean_interfaces");
-        Assert.Contains(practices, p => p.Name == "readme_hygiene");
+        Assert.Single(practices);
+        var practice = practices.First();
+        Assert.Equal("sample_practice", practice.Name);
+        Assert.Equal(AgentRole.Engineer, practice.TargetRole);
+        Assert.Equal("Code Style", practice.AreaOfConcern);
+        Assert.Equal("Sample Content", practice.Content.Trim());
     }
 
     [Fact]
     public async Task GetPracticesForRoleAsync_ShouldFilterByRole()
     {
-        // Act
-        var engineerPractices = await _sut.GetPracticesForRoleAsync(AgentRole.Engineer);
+        var practices = await _sut.GetPracticesForRoleAsync(AgentRole.Engineer);
+        Assert.Single(practices);
+        Assert.Equal("sample_practice", practices.First().Name);
+    }
 
-        // Assert
-        Assert.Single(engineerPractices);
-        Assert.Equal("clean_interfaces", engineerPractices.First().Name);
-        Assert.Equal(AgentRole.Engineer, engineerPractices.First().TargetRole);
+    [Fact]
+    public async Task GetPracticesForRoleAsync_ShouldReturnEmpty_WhenNoMatch()
+    {
+        var practices = await _sut.GetPracticesForRoleAsync(AgentRole.Architect);
+        Assert.Empty(practices);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_testDir))
+        {
+            Directory.Delete(_testDir, true);
+        }
     }
 }

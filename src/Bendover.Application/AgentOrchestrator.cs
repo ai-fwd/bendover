@@ -1,7 +1,7 @@
+using Bendover.Domain;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
-using Bendover.Domain;
 
 namespace Bendover.Application;
 
@@ -9,7 +9,6 @@ public class AgentOrchestrator : IAgentOrchestrator
 {
     private readonly IChatClientResolver _clientResolver;
     private readonly IContainerService _containerService;
-    private readonly GovernanceEngine _governance;
     private readonly ScriptGenerator _scriptGenerator;
     private readonly IEnvironmentValidator _environmentValidator;
     private readonly ILeadAgent _leadAgent;
@@ -18,9 +17,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IEnumerable<IAgentObserver> _observers;
 
     public AgentOrchestrator(
-        IChatClientResolver clientResolver, 
+        IChatClientResolver clientResolver,
         IContainerService containerService,
-        GovernanceEngine governance,
         ScriptGenerator scriptGenerator,
         IEnvironmentValidator environmentValidator,
         IEnumerable<IAgentObserver> observers,
@@ -29,7 +27,6 @@ public class AgentOrchestrator : IAgentOrchestrator
     {
         _clientResolver = clientResolver;
         _containerService = containerService;
-        _governance = governance;
         _scriptGenerator = scriptGenerator;
         _environmentValidator = environmentValidator;
         _observers = observers;
@@ -51,9 +48,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         await NotifyAsync("Verifying Environment...");
         await _environmentValidator.ValidateAsync();
 
-        // 1. Load Governance Context
-        await NotifyAsync("Loading Governance Context...");
-        var governanceContext = await _governance.GetContextAsync();
+
 
         // 1a. Lead Phase (Practice Selection)
         await NotifyAsync("Lead Agent Analyzing Request...");
@@ -69,7 +64,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         var architectClient = _clientResolver.GetClient(AgentRole.Architect);
         var planResponse = await architectClient.CompleteAsync(new List<ChatMessage>
         {
-            new ChatMessage(ChatRole.System, $"You are an Architect. {governanceContext}\n\nSelected Practices:\n{practicesContext}"),
+            new ChatMessage(ChatRole.System, $"You are an Architect.\n\nSelected Practices:\n{practicesContext}"),
             new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
         });
         var plan = planResponse.Message.Text;
@@ -89,7 +84,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
         var critiqueResponse = await reviewerClient.CompleteAsync(new List<ChatMessage>
         {
-             new ChatMessage(ChatRole.System, $"You are a Reviewer. {governanceContext}\n\nSelected Practices:\n{practicesContext}"),
+             new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
              new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
         });
         var critique = critiqueResponse.Message.Text;
@@ -102,13 +97,13 @@ public class AgentOrchestrator : IAgentOrchestrator
         await _containerService.StartContainerAsync();
         try
         {
-             await _containerService.ExecuteScriptAsync(script);
+            await _containerService.ExecuteScriptAsync(script);
         }
         finally
         {
             await _containerService.StopContainerAsync();
         }
-        
+
         await NotifyAsync("Finished.");
     }
 }
