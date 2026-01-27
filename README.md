@@ -4,7 +4,7 @@ A self-evolving, sandboxed coding agent system.
 
 ## Prerequisites
 
-- **.NET 8.0 SDK** (or later)
+- **.NET 10.0 SDK** (or later)
 - **Docker Desktop** (Windows) or **Docker Engine** (Linux/WSL)
   - Ensure Docker is running and accessible.
 
@@ -60,7 +60,7 @@ rm packages-microsoft-prod.deb
 
 # Install .NET SDK
 sudo apt-get update
-sudo apt-get install -y dotnet-sdk-8.0
+sudo apt-get install -y dotnet-sdk-10.0
 ```
 
 ## Configuration
@@ -95,6 +95,28 @@ The agent supports role-based configuration overrides. You can specify different
   }
 }
 ```
+
+## Practices
+
+Bendover uses a library of "Practices" to guide agent behavior. These are markdown files located in `src/Bendover.Application/.bendover/practices/`.
+
+Each practice must include YAML frontmatter defining its metadata:
+
+```markdown
+---
+Name: example_practice
+TargetRole: Engineer
+AreaOfConcern: CodeQuality
+---
+Your practice instructions go here.
+```
+
+### Supported Roles
+- **Lead**: Orchestrates the session.
+- **Architect**: Plans the approach.
+- **Engineer**: Implements the code.
+- **Reviewer**: Critiques the solution.
+
 
 ### Troubleshooting Docker in WSL
 
