@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Bendover.Application;
 
-public class PromptBundleResolver
+public class PromptBundleResolver : IPromptBundleResolver
 {
     private readonly string _repoRoot;
 
@@ -46,5 +46,15 @@ public class PromptBundleResolver
         }
 
         return Path.Combine(promptOptPath, "bundles", bundleId, "practices");
+    }
+
+    public string Resolve(string bundlePath)
+    {
+        // Bundle contract:
+        // - practices/*.md
+        // - meta.json
+
+        // Return the practices directory within the bundle
+        return Path.Combine(bundlePath, "practices");
     }
 }
