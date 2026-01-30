@@ -2,6 +2,7 @@ using System;
 using System.Text.RegularExpressions;
 using System.Linq;
 using System.Collections.Generic;
+using Bendover.Application.Evaluation;
 
 namespace Bendover.PromptOpt.CLI.Evaluation.Rules;
 

@@ -57,4 +57,28 @@ public class PromptBundleResolver : IPromptBundleResolver
         // Return the practices directory within the bundle
         return Path.Combine(bundlePath, "practices");
     }
+
+    public string? GetActiveBundleId()
+    {
+        var promptOptPath = Path.Combine(_repoRoot, ".bendover", "promptopt");
+        var activeJsonPath = Path.Combine(promptOptPath, "active.json");
+
+        if (!File.Exists(activeJsonPath))
+        {
+            return null;
+        }
+
+        var jsonContent = File.ReadAllText(activeJsonPath);
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonContent);
+            if (doc.RootElement.TryGetProperty("bundleId", out var element))
+            {
+                return element.GetString();
+            }
+        }
+        catch (JsonException) { }
+
+        return null;
+    }
 }

@@ -1,3 +1,4 @@
+using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
@@ -13,6 +14,9 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IEnvironmentValidator _environmentValidator;
     private readonly ILeadAgent _leadAgent;
     private readonly IPracticeService _practiceService;
+    private readonly IPromptOptRunRecorder _runRecorder;
+    private readonly IPromptBundleResolver _bundleResolver;
+    private readonly IGitRunner _gitRunner;
 
     private readonly IEnumerable<IAgentObserver> _observers;
 
@@ -23,7 +27,10 @@ public class AgentOrchestrator : IAgentOrchestrator
         IEnvironmentValidator environmentValidator,
         IEnumerable<IAgentObserver> observers,
         ILeadAgent leadAgent,
-        IPracticeService practiceService)
+        IPracticeService practiceService,
+        IPromptOptRunRecorder runRecorder,
+        IPromptBundleResolver bundleResolver,
+        IGitRunner gitRunner)
     {
         _clientResolver = clientResolver;
         _containerService = containerService;
@@ -32,6 +39,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         _observers = observers;
         _leadAgent = leadAgent;
         _practiceService = practiceService;
+        _runRecorder = runRecorder;
+        _bundleResolver = bundleResolver;
+        _gitRunner = gitRunner;
     }
 
     private async Task NotifyAsync(string message)
@@ -44,66 +54,103 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     public async Task RunAsync(string initialGoal)
     {
-        // 0. Environment Verification
-        await NotifyAsync("Verifying Environment...");
-        await _environmentValidator.ValidateAsync();
-
-
-
-        // 1a. Lead Phase (Practice Selection)
-        await NotifyAsync("Lead Agent Analyzing Request...");
-        var selectedPracticeNames = await _leadAgent.AnalyzeTaskAsync(initialGoal);
-        var allPractices = await _practiceService.GetPracticesAsync();
-        var selectedPractices = allPractices.Where(p => selectedPracticeNames.Contains(p.Name)).ToList();
-
-        // Format practices for prompt
-        var practicesContext = string.Join("\n", selectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));
-
-        // 2. Planning Phase (Architect)
-        await NotifyAsync("Architect Planning...");
-        var architectClient = _clientResolver.GetClient(AgentRole.Architect);
-        var planResponse = await architectClient.CompleteAsync(new List<ChatMessage>
-        {
-            new ChatMessage(ChatRole.System, $"You are an Architect.\n\nSelected Practices:\n{practicesContext}"),
-            new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
-        });
-        var plan = planResponse.Message.Text;
-
-        // 3. Actor Phase (Engineer)
-        await NotifyAsync("Engineer Generating Code...");
-        var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
-        var actorCodeResponse = await engineerClient.CompleteAsync(new List<ChatMessage>
-        {
-            new ChatMessage(ChatRole.System, $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}"),
-            new ChatMessage(ChatRole.User, $"Plan: {plan}")
-        });
-        var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
-
-        // 4. Critique Phase (Reviewer)
-        await NotifyAsync("Reviewer Critiquing Code...");
-        var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
-        var critiqueResponse = await reviewerClient.CompleteAsync(new List<ChatMessage>
-        {
-             new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
-             new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
-        });
-        var critique = critiqueResponse.Message.Text;
-
-        // 5. Script Generation
-        var script = _scriptGenerator.WrapCode(actorCode);
-
-        // 6. Execution
-        await NotifyAsync("Executing in Container...");
-        await _containerService.StartContainerAsync();
+        // Capture Run Start
+        string baseCommit = "unknown";
         try
         {
-            await _containerService.ExecuteScriptAsync(script);
+            baseCommit = (await _gitRunner.RunAsync("rev-parse HEAD")).Trim();
+        }
+        catch { }
+
+        string bundleId = _bundleResolver.GetActiveBundleId() ?? "default";
+
+        await _runRecorder.StartRunAsync(initialGoal, baseCommit, bundleId);
+
+        try
+        {
+            // 0. Environment Verification
+            await NotifyAsync("Verifying Environment...");
+            await _environmentValidator.ValidateAsync();
+
+            // 1a. Lead Phase (Practice Selection)
+            await NotifyAsync("Lead Agent Analyzing Request...");
+            var selectedPracticeNames = await _leadAgent.AnalyzeTaskAsync(initialGoal);
+
+            // Record Lead Output? Lead Agent output is selectedPracticeNames.
+            // We can record it as output or just practice names.
+            // Requirement 4: "selectedPracticeNames list" in prompts.json. 
+            // recorder.RecordPracticesAsync handles this.
+
+            var allPractices = await _practiceService.GetPracticesAsync();
+            var selectedPractices = allPractices.Where(p => selectedPracticeNames.Contains(p.Name)).ToList();
+
+            // Format practices for prompt
+            var practicesContext = string.Join("\n", selectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));
+
+            await _runRecorder.RecordPracticesAsync(selectedPracticeNames, practicesContext);
+
+            // 2. Planning Phase (Architect)
+            await NotifyAsync("Architect Planning...");
+            var architectClient = _clientResolver.GetClient(AgentRole.Architect);
+            var architectMessages = new List<ChatMessage>
+            {
+                new ChatMessage(ChatRole.System, $"You are an Architect.\n\nSelected Practices:\n{practicesContext}"),
+                new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
+            };
+            await _runRecorder.RecordPromptAsync("architect", architectMessages);
+
+            var planResponse = await architectClient.CompleteAsync(architectMessages);
+            var plan = planResponse.Message.Text;
+            await _runRecorder.RecordOutputAsync("architect", plan ?? "");
+
+            // 3. Actor Phase (Engineer)
+            await NotifyAsync("Engineer Generating Code...");
+            var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
+            var engineerMessages = new List<ChatMessage>
+            {
+                new ChatMessage(ChatRole.System, $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}"),
+                new ChatMessage(ChatRole.User, $"Plan: {plan}")
+            };
+            await _runRecorder.RecordPromptAsync("engineer", engineerMessages);
+
+            var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
+            var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
+            await _runRecorder.RecordOutputAsync("engineer", actorCode);
+
+            // 4. Critique Phase (Reviewer)
+            await NotifyAsync("Reviewer Critiquing Code...");
+            var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
+            var reviewerMessages = new List<ChatMessage>
+            {
+                 new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
+                 new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
+            };
+            await _runRecorder.RecordPromptAsync("reviewer", reviewerMessages);
+
+            var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
+            var critique = critiqueResponse.Message.Text;
+            await _runRecorder.RecordOutputAsync("reviewer", critique ?? "");
+
+            // 5. Script Generation
+            var script = _scriptGenerator.WrapCode(actorCode);
+
+            // 6. Execution
+            await NotifyAsync("Executing in Container...");
+            await _containerService.StartContainerAsync();
+            try
+            {
+                await _containerService.ExecuteScriptAsync(script);
+            }
+            finally
+            {
+                await _containerService.StopContainerAsync();
+            }
+
+            await NotifyAsync("Finished.");
         }
         finally
         {
-            await _containerService.StopContainerAsync();
+            await _runRecorder.FinalizeRunAsync();
         }
-
-        await NotifyAsync("Finished.");
     }
 }

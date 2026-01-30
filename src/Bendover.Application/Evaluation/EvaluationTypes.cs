@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Bendover.PromptOpt.CLI.Evaluation;
+namespace Bendover.Application.Evaluation;
 
 public record FileDiff(string Path, FileStatus Status, string Content);
 

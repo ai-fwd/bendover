@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
+using System.Linq;
+using Bendover.Application.Evaluation;
 
 namespace Bendover.PromptOpt.CLI.Evaluation.Rules;
 

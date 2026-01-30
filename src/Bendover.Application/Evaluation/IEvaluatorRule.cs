@@ -1,4 +1,4 @@
-namespace Bendover.PromptOpt.CLI.Evaluation;
+namespace Bendover.Application.Evaluation;
 
 public interface IEvaluatorRule
 {

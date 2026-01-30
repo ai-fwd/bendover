@@ -1,10 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Text;
+using System.Linq;
 using System.Text.RegularExpressions;
 
-namespace Bendover.PromptOpt.CLI.Evaluation;
+namespace Bendover.Application.Evaluation;
 
 public static class DiffParser
 {
@@ -12,12 +11,12 @@ public static class DiffParser
     {
         // Split by "diff --git"
         // But simpler: Iterate lines
-        
+
         if (string.IsNullOrWhiteSpace(diffContent)) yield break;
 
         // Split by "diff --git "
         // But simpler: Iterate lines
-        
+
         var chunks = Regex.Split(diffContent, @"^diff --git ", RegexOptions.Multiline)
                           .Where(s => !string.IsNullOrWhiteSpace(s));
 
@@ -31,33 +30,33 @@ public static class DiffParser
     {
         // Re-add "diff --git " if regex ate it? No, Split consumes it.
         // Chunk starts with "a/path b/path" presumably.
-        
+
         var lines = chunk.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-        
+
         // Line 0: "a/path b/path"
         // Parse path from b/path usually.
         var pathLine = lines[0];
         // Extract path. usually "a/path b/path". 
         // Or just scan for "+++ b/path" line later to be sure?
         // But for added/deleted, one might be /dev/null
-        
+
         string path = "unknown";
         FileStatus status = FileStatus.Modified;
-        
+
         // Check for new file / deleted file modes
-        foreach(var line in lines)
+        foreach (var line in lines)
         {
             if (line.StartsWith("new file mode")) status = FileStatus.Added;
             if (line.StartsWith("deleted file mode")) status = FileStatus.Deleted;
-            
+
             if (line.StartsWith("+++ b/"))
             {
                 path = line.Substring(6).Trim();
             }
             else if (line.StartsWith("+++ ") && status == FileStatus.Added)
             {
-                 // +++ b/new.file (standard)
-                 if (line.Length > 4) path = line.Substring(4).Trim();
+                // +++ b/new.file (standard)
+                if (line.Length > 4) path = line.Substring(4).Trim();
             }
             else if (line.StartsWith("--- a/") && status == FileStatus.Deleted)
             {
@@ -65,7 +64,7 @@ public static class DiffParser
                 path = line.Substring(6).Trim();
             }
         }
-        
+
         // Fallback for path if not found in +++ / ---
         if (path == "unknown")
         {
@@ -87,7 +86,7 @@ public static class DiffParser
         // Or return the whole chunk as context?
         // Requirements say "Hunks text".
         var content = string.Join("\n", lines);
-        
+
         return new FileDiff(path, status, content);
     }
 }

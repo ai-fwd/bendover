@@ -1,0 +1,8 @@
+using System.Threading.Tasks;
+
+namespace Bendover.Application.Interfaces;
+
+public interface IGitRunner
+{
+    Task<string> RunAsync(string arguments);
+}

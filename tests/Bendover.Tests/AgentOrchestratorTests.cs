@@ -1,4 +1,5 @@
 using Bendover.Application;
+using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
@@ -19,6 +20,9 @@ public class AgentOrchestratorTests
     private readonly Mock<IContainerService> _containerServiceMock;
     private readonly Mock<IEnvironmentValidator> _environmentValidatorMock;
     private readonly Mock<IAgentObserver> _observerMock;
+    private readonly Mock<IPromptOptRunRecorder> _runRecorderMock;
+    private readonly Mock<IPromptBundleResolver> _bundleResolverMock;
+    private readonly Mock<IGitRunner> _gitRunnerMock;
     private readonly AgentOrchestrator _sut;
 
     public AgentOrchestratorTests()
@@ -31,7 +35,15 @@ public class AgentOrchestratorTests
         _reviewerClientMock = new Mock<IChatClient>();
         _containerServiceMock = new Mock<IContainerService>();
         _environmentValidatorMock = new Mock<IEnvironmentValidator>();
+        _environmentValidatorMock = new Mock<IEnvironmentValidator>();
         _observerMock = new Mock<IAgentObserver>();
+        _runRecorderMock = new Mock<IPromptOptRunRecorder>();
+        _bundleResolverMock = new Mock<IPromptBundleResolver>();
+        _gitRunnerMock = new Mock<IGitRunner>();
+
+        // Setup Recorder defaults
+        _runRecorderMock.Setup(x => x.StartRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync("test_run_id");
 
         var scriptGen = new ScriptGenerator(); // Concrete class
 
@@ -47,7 +59,10 @@ public class AgentOrchestratorTests
             _environmentValidatorMock.Object,
             new[] { _observerMock.Object },
             _leadAgentMock.Object,
-            _practiceServiceMock.Object
+            _practiceServiceMock.Object,
+            _runRecorderMock.Object,
+            _bundleResolverMock.Object,
+            _gitRunnerMock.Object
         );
     }
 
@@ -90,19 +105,19 @@ public class AgentOrchestratorTests
         // 2. Architect (Planner)
         // Verify call logic
         _architectClientMock.Verify(x => x.CompleteAsync(
-           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
+           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
 
         // 3. Engineer (Actor)
         _engineerClientMock.Verify(x => x.CompleteAsync(
-           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Engineer") && m.Text.Contains("tdd_spirit"))),
+           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Engineer") && m.Text.Contains("tdd_spirit"))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
 
         // 4. Reviewer (Critic)
         _reviewerClientMock.Verify(x => x.CompleteAsync(
-           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text.Contains("Reviewer"))),
+           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Reviewer"))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
 

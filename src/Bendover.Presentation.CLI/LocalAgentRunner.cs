@@ -1,9 +1,12 @@
 using Bendover.Application;
+using Bendover.Application.Evaluation;
+using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Exceptions;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
 using Bendover.Infrastructure.Configuration;
+using Bendover.Infrastructure.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -38,6 +41,14 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IFileService, FileService>();
         services.AddSingleton<ILeadAgent, LeadAgent>();
         services.AddSingleton<IPracticeService, PracticeService>();
+
+        // New Services for Prompt Opt
+        services.AddSingleton<IGitRunner, GitRunner>();
+        services.AddSingleton<IDotNetRunner, DotNetRunner>();
+        services.AddSingleton<IPromptBundleResolver>(_ => new PromptBundleResolver(Directory.GetCurrentDirectory()));
+        services.AddSingleton<EvaluatorEngine>();
+        services.AddSingleton<IEnumerable<IEvaluatorRule>>(Enumerable.Empty<IEvaluatorRule>());
+        services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
 
         // Logging (Quiet for now)
         services.AddLogging(configure => configure.AddConsole().SetMinimumLevel(LogLevel.Warning));
