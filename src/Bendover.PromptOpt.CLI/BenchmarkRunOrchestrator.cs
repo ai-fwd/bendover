@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Threading.Tasks;
 using Bendover.Application;
+using Bendover.Application.Interfaces;
 
 namespace Bendover.PromptOpt.CLI;
 
@@ -44,7 +45,8 @@ public class BenchmarkRunOrchestrator
             var commitHash = await _fileSystem.File.ReadAllTextAsync(commitPath);
             commitHash = commitHash.Trim();
 
-            await _gitRunner.CheckoutAsync(commitHash, workingDirectory);
+            await _gitRunner.RunAsync($"clone . \"{workingDirectory}\"");
+            await _gitRunner.RunAsync($"checkout {commitHash}", workingDirectory);
 
             var practicesPath = _bundleResolver.Resolve(bundlePath);
 
@@ -53,9 +55,9 @@ public class BenchmarkRunOrchestrator
 
             var agentResult = await _agentRunner.RunAsync(workingDirectory, practicesPath, taskText);
 
-            var diff = await _gitRunner.GetDiffAsync(workingDirectory);
+            var diff = await _gitRunner.RunAsync("diff", workingDirectory);
             
-            var testOutput = await _dotNetRunner.RunTestsAsync(workingDirectory);
+            var testOutput = await _dotNetRunner.RunAsync("test", workingDirectory);
 
             if (!_fileSystem.Directory.Exists(outputPath))
             {

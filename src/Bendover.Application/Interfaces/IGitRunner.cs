@@ -4,5 +4,5 @@ namespace Bendover.Application.Interfaces;
 
 public interface IGitRunner
 {
-    Task<string> RunAsync(string arguments);
+    Task<string> RunAsync(string arguments, string? workingDirectory = null);
 }

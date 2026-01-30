@@ -4,5 +4,5 @@ namespace Bendover.Application.Interfaces;
 
 public interface IDotNetRunner
 {
-    Task<string> RunAsync(string arguments);
+    Task<string> RunAsync(string arguments, string? workingDirectory = null);
 }

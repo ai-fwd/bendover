@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using System.Threading;
 using Bendover.Application;
+using Bendover.Infrastructure.Services;
 using Spectre.Console.Cli;
 using System.ComponentModel;
 

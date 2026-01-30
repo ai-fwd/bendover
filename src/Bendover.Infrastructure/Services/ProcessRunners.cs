@@ -6,23 +6,23 @@ namespace Bendover.Infrastructure.Services;
 
 public class GitRunner : IGitRunner
 {
-    public async Task<string> RunAsync(string arguments)
+    public async Task<string> RunAsync(string arguments, string? workingDirectory = null)
     {
-        return await ProcessRunner.RunAsync("git", arguments);
+        return await ProcessRunner.RunAsync("git", arguments, workingDirectory);
     }
 }
 
 public class DotNetRunner : IDotNetRunner
 {
-    public async Task<string> RunAsync(string arguments)
+    public async Task<string> RunAsync(string arguments, string? workingDirectory = null)
     {
-        return await ProcessRunner.RunAsync("dotnet", arguments);
+        return await ProcessRunner.RunAsync("dotnet", arguments, workingDirectory);
     }
 }
 
 public static class ProcessRunner
 {
-    public static async Task<string> RunAsync(string fileName, string arguments)
+    public static async Task<string> RunAsync(string fileName, string arguments, string? workingDirectory = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -31,7 +31,8 @@ public static class ProcessRunner
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            WorkingDirectory = workingDirectory ?? ""
         };
 
         using var process = Process.Start(startInfo);

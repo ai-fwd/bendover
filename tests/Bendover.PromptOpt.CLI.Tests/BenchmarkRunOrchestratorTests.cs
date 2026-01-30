@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Abstractions.TestingHelpers;
 using System.Threading.Tasks;
 using Bendover.Application;
+using Bendover.Application.Interfaces;
 using Moq;
 using Xunit;
 
@@ -50,8 +51,11 @@ public class BenchmarkRunOrchestratorTests
         _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
 
         // Setup Mocks
-        _gitRunnerMock.Setup(x => x.CheckoutAsync(commitHash, It.IsAny<string>())) // working dir might be temp
-            .Returns(Task.CompletedTask);
+        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("clone")), It.IsAny<string?>()))
+            .ReturnsAsync("");
+
+        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>())) // working dir might be temp
+            .ReturnsAsync("");
         
         _bundleResolverMock.Setup(x => x.Resolve(bundlePath))
             .Returns(practicesPath);
@@ -59,10 +63,10 @@ public class BenchmarkRunOrchestratorTests
         _agentRunnerMock.Setup(x => x.RunAsync(It.IsAny<string>(), practicesPath, taskText))
             .ReturnsAsync(new AgentResult(true, "Agent Output", "agent_artifacts"));
 
-        _gitRunnerMock.Setup(x => x.GetDiffAsync(It.IsAny<string>()))
+        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string>()))
             .ReturnsAsync("git diff content");
 
-        _dotNetRunnerMock.Setup(x => x.RunTestsAsync(It.IsAny<string>()))
+        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string>()))
             .ReturnsAsync("Tests Passed");
 
         // Act
@@ -71,7 +75,7 @@ public class BenchmarkRunOrchestratorTests
         // Assert
         // 1. Reads base_commit.txt (implicit by passing data to checkout)
         // 2. Runs git checkout
-        _gitRunnerMock.Verify(x => x.CheckoutAsync(commitHash, It.IsAny<string>()), Times.Once);
+        _gitRunnerMock.Verify(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>()), Times.Once);
 
         // 3. Resolves practices
         _bundleResolverMock.Verify(x => x.Resolve(bundlePath), Times.Once);
