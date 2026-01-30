@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Bendover.PromptOpt.CLI.Evaluation;
 using Bendover.PromptOpt.CLI.Evaluation.Rules;
+using Bendover.Application.Evaluation;
 using Xunit;
 
 namespace Bendover.PromptOpt.CLI.Tests.Evaluation;

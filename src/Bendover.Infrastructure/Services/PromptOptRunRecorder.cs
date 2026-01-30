@@ -22,8 +22,6 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
     private string? _runId;
     private string? _runDir;
 
-    private readonly List<string> _practiceNames = new();
-    private string _practicesContext = "";
     private readonly Dictionary<string, List<ChatMessage>> _prompts = new();
     private readonly Dictionary<string, string> _outputs = new();
 
@@ -69,12 +67,7 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         return _runId;
     }
 
-    public Task RecordPracticesAsync(IEnumerable<string> practiceNames, string context)
-    {
-        _practiceNames.AddRange(practiceNames);
-        _practicesContext = context;
-        return Task.CompletedTask;
-    }
+
 
     public Task RecordPromptAsync(string phase, List<ChatMessage> messages)
     {
@@ -94,18 +87,9 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
     {
         if (_runDir == null) return;
 
-        // Write prompts.json
-        var promptsData = new
-        {
-            selectedPracticeNames = _practiceNames,
-            practicesContext = _practicesContext,
-            phases = _prompts // Serializer handles ChatMessage? usually not. Need DTOs.
-        };
-        // Microsoft.Extensions.AI ChatMessage might simpler to project
+
         var serializedPrompts = new
         {
-            selectedPracticeNames = _practiceNames,
-            practicesContext = _practicesContext,
             phases = _prompts.ToDictionary(k => k.Key, v => v.Value.Select(m => new { role = m.Role.Value, content = m.Text }))
         };
 

@@ -59,7 +59,8 @@ public class PromptOptRunRecorderTests
     {
         // Arrange
         var runId = await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
-        await _sut.RecordPracticesAsync(new[] { "practice1" }, "context");
+        await _sut.RecordPromptAsync("lead", new List<ChatMessage> { new ChatMessage(ChatRole.User, "Goal: Test Goal") });
+        await _sut.RecordOutputAsync("lead", "[\"practice1\"]"); // Simulating serialized output
         await _sut.RecordPromptAsync("architect", new List<ChatMessage> { new ChatMessage(ChatRole.User, "prompt") });
         await _sut.RecordOutputAsync("architect", "plan details");
 

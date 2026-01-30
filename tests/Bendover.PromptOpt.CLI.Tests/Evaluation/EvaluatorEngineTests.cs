@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Bendover.PromptOpt.CLI.Evaluation;
+using Bendover.Application.Evaluation;
 using Moq;
 using Xunit;
 

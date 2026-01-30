@@ -1,5 +1,6 @@
 using System.Linq;
 using Bendover.PromptOpt.CLI.Evaluation;
+using Bendover.Application.Evaluation;
 using Xunit;
 
 namespace Bendover.PromptOpt.CLI.Tests.Evaluation;

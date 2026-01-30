@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
@@ -76,10 +77,13 @@ public class AgentOrchestrator : IAgentOrchestrator
             await NotifyAsync("Lead Agent Analyzing Request...");
             var selectedPracticeNames = await _leadAgent.AnalyzeTaskAsync(initialGoal);
 
-            // Record Lead Output? Lead Agent output is selectedPracticeNames.
-            // We can record it as output or just practice names.
-            // Requirement 4: "selectedPracticeNames list" in prompts.json. 
-            // recorder.RecordPracticesAsync handles this.
+            // Record Lead Input
+            var leadMessages = new List<ChatMessage> { new ChatMessage(ChatRole.User, $"Goal: {initialGoal}") };
+            await _runRecorder.RecordPromptAsync("lead", leadMessages);
+
+            // Output is the list of selected practices
+            // Serialization logic is implicit here but for recording output we likely want the string representation
+            await _runRecorder.RecordOutputAsync("lead", JsonSerializer.Serialize(selectedPracticeNames));
 
             var allPractices = await _practiceService.GetPracticesAsync();
             var selectedPractices = allPractices.Where(p => selectedPracticeNames.Contains(p.Name)).ToList();
@@ -87,7 +91,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             // Format practices for prompt
             var practicesContext = string.Join("\n", selectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));
 
-            await _runRecorder.RecordPracticesAsync(selectedPracticeNames, practicesContext);
+            // Removed RecordPracticesAsync call
 
             // 2. Planning Phase (Architect)
             await NotifyAsync("Architect Planning...");
