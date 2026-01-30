@@ -61,8 +61,12 @@ public class LocalAgentRunner : IAgentRunner
 
             var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
 
-            // In a real scenario, argument handling would go here.
-            await orchestrator.RunAsync("Self-Improvement");
+            // Interactive Mode
+            var goal = AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
+
+            AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");
+
+            await orchestrator.RunAsync(goal);
 
             AnsiConsole.MarkupLine("[bold green]Agent Finished Successfully.[/]");
         }
