@@ -84,3 +84,9 @@ env/
 *.swp
 appsettings.*.json
 !appsettings.json
+
+## GEPA runs, logs, tmp files
+.bendover/promptopt/runs/
+.bendover/promptopt/logs/
+.bendover/promptopt/tmp/
+.bendover/promptopt/*.env

@@ -22,19 +22,21 @@ def load_split(split_file_path):
                 tasks.append(line)
     return tasks
 
-def create_candidate_bundle(seed_bundle_id, bundle_root, generation, practices_content, exist_ok=False):
+def create_candidate_bundle(seed_bundle_path, bundle_root, generation, practices_content, exist_ok=False):
     """
-    Pure function returning (new_id, new_path, metadata_content).
-    Writes the bundle content to disk including meta.json.
+    Creates a new bundle by copying the seed bundle and applying edits to specific files.
     
-    ID format: gen{generation}_{content_hash[:8]}
+    seed_bundle_path: Path to the seed bundle directory.
+    bundle_root: Directory where new bundles are created.
+    practices_content: Dictionary mapping filename -> NEW BODY CONTENT (str). 
+                       Frontmatter from the seed file will be preserved.
     """
+    seed_bundle_path = Path(seed_bundle_path)
     bundle_root = Path(bundle_root)
     
-    # Calculate hash based on concatenated practice content
-    # Sort keys to ensure determinism
-    sorted_practices = sorted(practices_content.items())
-    content_str = "".join([content for _, content in sorted_practices])
+    # calculate hash based on new content (body only for mutated files)
+    sorted_content = sorted(practices_content.items())
+    content_str = "".join([content for _, content in sorted_content])
     content_hash = hashlib.sha256(content_str.encode('utf-8')).hexdigest()
     
     new_id = f"gen{generation}_{content_hash[:8]}"
@@ -42,7 +44,6 @@ def create_candidate_bundle(seed_bundle_id, bundle_root, generation, practices_c
     
     if new_path.exists():
         if exist_ok:
-            # Read metadata if available, else just return
             meta_path = new_path / "meta.json"
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text())
@@ -54,14 +55,34 @@ def create_candidate_bundle(seed_bundle_id, bundle_root, generation, practices_c
     practices_dir = new_path / "practices"
     practices_dir.mkdir(parents=True)
     
-    # Write practice files
+    # Copy all files from seed bundle practices
+    seed_practices_dir = seed_bundle_path / "practices"
+    if seed_practices_dir.exists():
+        for file in seed_practices_dir.glob("*"):
+            if file.is_file():
+                if file.name in practices_content:
+                    # Apply mutation preserving frontmatter
+                    original_text = file.read_text()
+                    new_body = practices_content[file.name]
+                    merged_content = _merge_frontmatter_body(original_text, new_body)
+                    (practices_dir / file.name).write_text(merged_content)
+                else:
+                    # Direct copy
+                    (practices_dir / file.name).write_text(file.read_text())
+    
+    # Write any new files that didn't exist in seed (if any in practices_content)
+    # This logic assumes we mostly mutate existing, but good generic support.
     for filename, content in practices_content.items():
-        (practices_dir / filename).write_text(content)
-        
+        if not (practices_dir / filename).exists():
+             # Assume content passed is full content if new? 
+             # Or just body? Let's assume body and empty frontmatter if new.
+             # But likely we only edit existing files as per plan.
+             (practices_dir / filename).write_text(content)
+
     # Create and write metadata
     meta = {
         "id": new_id,
-        "parent": seed_bundle_id,
+        "parent": seed_bundle_path.name,
         "generation": generation,
         "created_at": datetime.now().isoformat(),
         "hash": content_hash
@@ -70,6 +91,43 @@ def create_candidate_bundle(seed_bundle_id, bundle_root, generation, practices_c
     (new_path / "meta.json").write_text(json.dumps(meta, indent=2))
     
     return new_id, new_path, meta
+
+def prepare_replay_task(run_id, runs_root):
+    """
+    Creates a temporary task directory from a recorded run.
+    """
+    run_dir = Path(runs_root) / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+        
+    temp_dir = Path(f"/tmp/bendover_replay_{run_id}_{int(time.time())}")
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy goal.txt -> task.md
+    goal_src = run_dir / "goal.txt"
+    if goal_src.exists():
+        (temp_dir / "task.md").write_text(goal_src.read_text())
+    else:
+        # Fallback or error?
+        (temp_dir / "task.md").write_text("No goal recorded.")
+
+    # Copy base_commit.txt
+    commit_src = run_dir / "base_commit.txt"
+    if commit_src.exists():
+        (temp_dir / "base_commit.txt").write_text(commit_src.read_text())
+        
+    return temp_dir
+
+def _merge_frontmatter_body(original_text, new_body):
+    """
+    Helper to preserve YAML frontmatter from original_text and append new_body.
+    """
+    if original_text.startswith("---\n"):
+        parts = original_text.split("---\n", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1]
+            return f"---\n{frontmatter}---\n\n{new_body}"
+    return new_body
 
 def evaluate_bundle(bundle_path, task_path, cli_command, log_dir, timeout_seconds):
     """
