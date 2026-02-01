@@ -4,7 +4,11 @@ import os
 import json
 from pathlib import Path
 from dspy.teleprompt import GEPA
+from dotenv import load_dotenv
 from promptopt.gepa_driver import load_split, create_candidate_bundle, evaluate_bundle, prepare_replay_task
+
+# Load env from promptopt/.env
+load_dotenv(Path(__file__).parent / ".env")
 
 app = typer.Typer()
 
@@ -73,7 +77,7 @@ def main(
     cli_command: str = typer.Option(..., help="Command to invoke Bendover CLI"),
     target_practice_file: str = typer.Option(..., help="Practice file to evolve (e.g., coding_standards.md)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
-    lm_model: str = typer.Option("gpt-4o-mini", help="LLM model to use"),
+    lm_model: str = typer.Option(os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="LLM model to use"),
     bundle_root: str = typer.Option(".bendover/promptopt/bundles/", help="Bundle root directory"),
     run_root: str = typer.Option(".bendover/promptopt/runs/", help="Run root directory")
 ):
