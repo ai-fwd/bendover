@@ -1,6 +1,33 @@
-# Bendover
+# Bendover 
 
-A self-evolving, sandboxed coding agent system.
+Bendover is an opinionated, self improving coding agent.
+
+It’s an experiment in building an agentic system that can learn and apply a specific coding policy aka judgment when ambiguity shows up, instead of falling back to generic pre training led reasoning that doesn’t align.
+
+_The name bendover is ode to a soca song with a line 🎵[...] take it easy I will do the work, you don't have to [...]🎵_
+
+# The Hypothesis
+
+Teaching an LLM to consistently squeeze out ambiguity will improve output quality more than adding more instructions or examples.
+
+# The Experiment
+
+To build a non-trivial bootstrapped agentic coding system that learns from feedback to build itself. 
+
+- Leverage an LLM to write > 95% of the code
+- Start with an existing agentic loop (i.e. Claude, Antigravity, Codex, etc.) 
+- Capture real coding runs and score outputs
+- Replay those runs to learn a policy<sup>*</sup> when tasks are ambiguous
+
+Some notes:
+- Behavior is defined by role targeted practices → "this is how I do X"
+- Judgment over syntax → identical decisions, not code
+- Real work is the dataset → learning comes from specific examples, not volume
+- The initial Bendover scaffolding is intentionally opinionated → my own judgement
+
+<sup>*</sup> The policy it learns must match the one I use internally when ambiguity shows up. That policy is expressed through code. 
+
+From here on, everything in this repo has been written by an agent. 
 
 ## Prerequisites
 
@@ -132,3 +159,50 @@ If you get access denied errors connecting to Docker:
    ```bash
    docker run --rm hello-world
    ```
+
+## Prompt Optimization (GEPA)
+
+Bendover uses a unified **Replay Workflow** to optimize agent practices using [DSPy's GEPA](https://github.com/stanfordnlp/dspy). Instead of synthetic benchmarks, we use recorded real-world runs to evolve our prompt bundles.
+
+### The Workflow
+
+1.  **Capture**: Interactive sessions with the CLI (`Bendover.Presentation.CLI`) are automatically recorded to `.bendover/promptopt/runs/`. Each run captures the user's goal, the repository state (`base_commit.txt`), and the full interaction trace.
+2.  **Curate**: Selected run IDs are listed in dataset files (e.g., `train.txt`) to define a training split.
+3.  **Optimize**: The `run_gepa.py` script:
+    *   Loads the training runs.
+    *   Starts with a **Seed Bundle** of practices.
+    *   Proposes changes to a specific **Target Practice File** (e.g., `coding_standards.md`).
+    *   **Replays** each run by creating a temporary task environment with the original goal and commit.
+    *   Evaluates the candidate bundle using `Bendover.PromptOpt.CLI`.
+    *   Uses feedback to evolve the practice content further.
+
+### Running Optimization
+
+#### 1. Requirements
+- Python 3.10+
+- `pip install -r promptopt/requirements.txt`
+- A `.env` file in `promptopt/.env` with `DSPY_REFLECTION_MODEL` (optional, defaults to `gpt-4o-mini`).
+- A seed bundle in `.bendover/promptopt/bundles/seed` (or similar).
+- Recorded runs in `.bendover/promptopt/runs/`.
+
+#### 2. Create a Split
+Create a text file (e.g., `promptopt/datasets/train.txt`) listing the IDs of the runs you want to optimize against:
+```text
+20260130_100000_abc123
+20260130_110000_def456
+```
+
+#### 3. Run GEPA
+Execute the optimization script, specifying the target practice file you want to evolve.
+
+```bash
+export PYTHONPATH=$PYTHONPATH:.
+python3 promptopt/run_gepa.py \
+  --seed-bundle-id seed \
+  --train-split promptopt/datasets/train.txt \
+  --target-practice-file coding_standards.md \
+  --log-dir .bendover/promptopt/logs \
+  --cli-command "dotnet run --project src/Bendover.PromptOpt.CLI"
+```
+
+The optimizer will output the evolved body content for the target practice file.
