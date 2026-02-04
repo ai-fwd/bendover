@@ -10,29 +10,33 @@ namespace Bendover.PromptOpt.CLI;
 public class BenchmarkRunOrchestrator
 {
     private readonly IGitRunner _gitRunner;
-    private readonly IAgentRunner _agentRunner;
+    private readonly IAgentOrchestratorFactory _agentOrchestratorFactory;
     private readonly IPromptBundleResolver _bundleResolver;
     private readonly IDotNetRunner _dotNetRunner;
     private readonly IFileSystem _fileSystem;
+    private readonly IPromptOptRunContextAccessor _runContextAccessor;
 
     public BenchmarkRunOrchestrator(
         IGitRunner gitRunner,
-        IAgentRunner agentRunner,
+        IAgentOrchestratorFactory agentOrchestratorFactory,
         IPromptBundleResolver bundleResolver,
         IDotNetRunner dotNetRunner,
-        IFileSystem fileSystem)
+        IFileSystem fileSystem,
+        IPromptOptRunContextAccessor runContextAccessor)
     {
         _gitRunner = gitRunner;
-        _agentRunner = agentRunner;
+        _agentOrchestratorFactory = agentOrchestratorFactory;
         _bundleResolver = bundleResolver;
         _dotNetRunner = dotNetRunner;
         _fileSystem = fileSystem;
+        _runContextAccessor = runContextAccessor;
     }
 
     public async Task RunAsync(string bundlePath, string taskPath, string outputPath)
     {
-        var workingDirectory = _fileSystem.Path.Combine(_fileSystem.Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workingDirectory = _fileSystem.Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         _fileSystem.Directory.CreateDirectory(workingDirectory);
+        Directory.CreateDirectory(workingDirectory);
 
         try
         {
@@ -53,21 +57,28 @@ public class BenchmarkRunOrchestrator
             var taskFilePath = _fileSystem.Path.Combine(taskPath, "task.md");
             var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
 
-            var agentResult = await _agentRunner.RunAsync(workingDirectory, practicesPath, taskText);
-
-            var diff = await _gitRunner.RunAsync("diff", workingDirectory);
-            
-            var testOutput = await _dotNetRunner.RunAsync("test", workingDirectory);
-
             if (!_fileSystem.Directory.Exists(outputPath))
             {
                 _fileSystem.Directory.CreateDirectory(outputPath);
             }
 
-            await _fileSystem.File.WriteAllTextAsync(_fileSystem.Path.Combine(outputPath, "git_diff.patch"), diff);
-            await _fileSystem.File.WriteAllTextAsync(_fileSystem.Path.Combine(outputPath, "dotnet_test.txt"), testOutput);
-            await _fileSystem.File.WriteAllTextAsync(_fileSystem.Path.Combine(outputPath, "exit_code.txt"), agentResult.Success ? "0" : "1");
-            await _fileSystem.File.WriteAllTextAsync(_fileSystem.Path.Combine(outputPath, "run_meta.json"), "{}");
+            _runContextAccessor.Current = new PromptOptRunContext(
+                outputPath,
+                Capture: true,
+                Evaluate: true
+            );
+
+            var currentDir = Directory.GetCurrentDirectory();
+            try
+            {
+                Directory.SetCurrentDirectory(workingDirectory);
+                var agentOrchestrator = _agentOrchestratorFactory.Create(practicesPath);
+                await agentOrchestrator.RunAsync(taskText);
+            }
+            finally
+            {
+                Directory.SetCurrentDirectory(currentDir);
+            }
         }
         finally
         {

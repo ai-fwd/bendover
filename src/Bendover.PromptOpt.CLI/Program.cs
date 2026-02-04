@@ -2,9 +2,17 @@
 using System.Threading.Tasks;
 using System.Threading;
 using Bendover.Application;
+using Bendover.Application.Evaluation;
+using Bendover.Application.Interfaces;
+using Bendover.Domain;
+using Bendover.Domain.Interfaces;
+using Bendover.Infrastructure;
 using Bendover.Infrastructure.Services;
 using Spectre.Console.Cli;
 using System.ComponentModel;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
+using Bendover.Infrastructure.Configuration;
 
 namespace Bendover.PromptOpt.CLI;
 
@@ -25,20 +33,50 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, RunCommandSettings settings, CancellationToken cancellationToken)
     {
-        var fileSystem = new FileSystem();
-        var gitRunner = new GitRunner();
-        var agentRunner = new StubAgentRunner();
-        var dotNetRunner = new DotNetRunner();
-        
-        var repoRoot = System.IO.Directory.GetCurrentDirectory(); 
-        var resolver = new PromptBundleResolver(repoRoot);
+        var services = new ServiceCollection();
+
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
+            .AddEnvironmentVariables()
+            .Build();
+
+        services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.SectionName));
+        services.AddSingleton<IChatClientResolver, ChatClientResolver>();
+        services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
+        services.AddSingleton<IContainerService, DockerContainerService>();
+        services.AddSingleton<IAgentOrchestratorFactory, PromptOptAgentOrchestratorFactory>();
+        services.AddSingleton<ScriptGenerator>();
+        services.AddSingleton<IAgentObserver, NoOpAgentObserver>();
+        services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
+        services.AddSingleton<IFileService, FileService>();
+        services.AddSingleton<ILeadAgent, LeadAgent>();
+        services.AddSingleton<IPracticeService, PracticeService>();
+        services.AddSingleton<IGitRunner, GitRunner>();
+        services.AddSingleton<IDotNetRunner, DotNetRunner>();
+        services.AddSingleton<IPromptBundleResolver>(_ => new PromptBundleResolver(Directory.GetCurrentDirectory()));
+        services.AddSingleton<EvaluatorEngine>();
+        services.AddSingleton<IEnumerable<IEvaluatorRule>>(Enumerable.Empty<IEvaluatorRule>());
+        services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
+        services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
+
+        var serviceProvider = services.BuildServiceProvider();
+
+        var fileSystem = serviceProvider.GetRequiredService<System.IO.Abstractions.IFileSystem>();
+        var gitRunner = serviceProvider.GetRequiredService<IGitRunner>();
+        var dotNetRunner = serviceProvider.GetRequiredService<IDotNetRunner>();
+        var resolver = serviceProvider.GetRequiredService<IPromptBundleResolver>();
+        var agentOrchestratorFactory = serviceProvider.GetRequiredService<IAgentOrchestratorFactory>();
+        var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
 
         var orchestrator = new BenchmarkRunOrchestrator(
             gitRunner,
-            agentRunner,
+            agentOrchestratorFactory,
             resolver,
             dotNetRunner,
-            fileSystem
+            fileSystem,
+            runContextAccessor
         );
 
         await orchestrator.RunAsync(settings.Bundle, settings.Task, settings.Out);

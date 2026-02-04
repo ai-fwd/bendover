@@ -48,6 +48,7 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IPromptBundleResolver>(_ => new PromptBundleResolver(Directory.GetCurrentDirectory()));
         services.AddSingleton<EvaluatorEngine>();
         services.AddSingleton<IEnumerable<IEvaluatorRule>>(Enumerable.Empty<IEvaluatorRule>());
+        services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
         services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
 
         // Logging (Quiet for now)
@@ -60,9 +61,20 @@ public class LocalAgentRunner : IAgentRunner
             AnsiConsole.MarkupLine("[bold blue]Starting Bendover Agent (Local)...[/]");
 
             var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
+            var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
 
             // Interactive Mode
             var goal = AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
+
+            var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
+            var evaluate = configuration.GetValue("PromptOpt:Evaluate", false);
+            var outDir = Path.Combine(".bendover", "promptopt", "runs", runId);
+            runContextAccessor.Current = new PromptOptRunContext(
+                outDir,
+                Capture: true,
+                Evaluate: evaluate,
+                RunId: runId
+            );
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");
 

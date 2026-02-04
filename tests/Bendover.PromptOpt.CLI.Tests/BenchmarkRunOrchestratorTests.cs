@@ -4,6 +4,8 @@ using System.IO.Abstractions.TestingHelpers;
 using System.Threading.Tasks;
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Domain.Interfaces;
+using Bendover.PromptOpt.CLI;
 using Moq;
 using Xunit;
 
@@ -12,26 +14,31 @@ namespace Bendover.PromptOpt.CLI.Tests;
 public class BenchmarkRunOrchestratorTests
 {
     private readonly Mock<IGitRunner> _gitRunnerMock;
-    private readonly Mock<IAgentRunner> _agentRunnerMock;
+    private readonly Mock<IAgentOrchestratorFactory> _agentOrchestratorFactoryMock;
+    private readonly Mock<IAgentOrchestrator> _agentOrchestratorMock;
     private readonly Mock<IPromptBundleResolver> _bundleResolverMock;
     private readonly Mock<IDotNetRunner> _dotNetRunnerMock;
     private readonly MockFileSystem _fileSystem;
+    private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
     private readonly BenchmarkRunOrchestrator _sut;
 
     public BenchmarkRunOrchestratorTests()
     {
         _gitRunnerMock = new Mock<IGitRunner>();
-        _agentRunnerMock = new Mock<IAgentRunner>();
+        _agentOrchestratorFactoryMock = new Mock<IAgentOrchestratorFactory>();
+        _agentOrchestratorMock = new Mock<IAgentOrchestrator>();
         _bundleResolverMock = new Mock<IPromptBundleResolver>();
         _dotNetRunnerMock = new Mock<IDotNetRunner>();
         _fileSystem = new MockFileSystem();
+        _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
 
         _sut = new BenchmarkRunOrchestrator(
             _gitRunnerMock.Object,
-            _agentRunnerMock.Object,
+            _agentOrchestratorFactoryMock.Object,
             _bundleResolverMock.Object,
             _dotNetRunnerMock.Object,
-            _fileSystem
+            _fileSystem,
+            _runContextAccessorMock.Object
         );
     }
 
@@ -60,14 +67,11 @@ public class BenchmarkRunOrchestratorTests
         _bundleResolverMock.Setup(x => x.Resolve(bundlePath))
             .Returns(practicesPath);
 
-        _agentRunnerMock.Setup(x => x.RunAsync(It.IsAny<string>(), practicesPath, taskText))
-            .ReturnsAsync(new AgentResult(true, "Agent Output", "agent_artifacts"));
+        _agentOrchestratorFactoryMock.Setup(x => x.Create(practicesPath))
+            .Returns(_agentOrchestratorMock.Object);
 
-        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string>()))
-            .ReturnsAsync("git diff content");
-
-        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string>()))
-            .ReturnsAsync("Tests Passed");
+        _agentOrchestratorMock.Setup(x => x.RunAsync(taskText))
+            .Returns(Task.CompletedTask);
 
         // Act
         await _sut.RunAsync(bundlePath, taskPath, outputPath);
@@ -81,19 +85,15 @@ public class BenchmarkRunOrchestratorTests
         _bundleResolverMock.Verify(x => x.Resolve(bundlePath), Times.Once);
 
         // 4. Invokes Agent
-        _agentRunnerMock.Verify(x => x.RunAsync(It.IsAny<string>(), practicesPath, taskText), Times.Once);
+        _agentOrchestratorFactoryMock.Verify(x => x.Create(practicesPath), Times.Once);
+        _agentOrchestratorMock.Verify(x => x.RunAsync(taskText), Times.Once);
 
-        // 5. Writes artifacts
-        Assert.True(_fileSystem.FileExists(Path.Combine(outputPath, "git_diff.patch")), "git_diff.patch should exist");
-        Assert.Equal("git diff content", _fileSystem.GetFile(Path.Combine(outputPath, "git_diff.patch")).TextContents);
-
-        Assert.True(_fileSystem.FileExists(Path.Combine(outputPath, "dotnet_test.txt")), "dotnet_test.txt should exist");
-        Assert.Equal("Tests Passed", _fileSystem.GetFile(Path.Combine(outputPath, "dotnet_test.txt")).TextContents);
-
-        Assert.True(_fileSystem.FileExists(Path.Combine(outputPath, "exit_code.txt")), "exit_code.txt should exist");
-        Assert.Equal("0", _fileSystem.GetFile(Path.Combine(outputPath, "exit_code.txt")).TextContents);
-
-        Assert.True(_fileSystem.FileExists(Path.Combine(outputPath, "run_meta.json")), "run_meta.json should exist");
-        // Verify meta json content if needed, for now just existence
+        // 5. Sets run context and creates output directory
+        Assert.True(_fileSystem.Directory.Exists(outputPath));
+        _runContextAccessorMock.VerifySet(
+            x => x.Current = It.Is<PromptOptRunContext>(
+                ctx => ctx.OutDir == outputPath && ctx.Capture && ctx.Evaluate
+            ),
+            Times.Once);
     }
 }

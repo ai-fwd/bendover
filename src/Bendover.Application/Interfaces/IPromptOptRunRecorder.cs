@@ -13,3 +13,15 @@ public interface IPromptOptRunRecorder
     Task RecordOutputAsync(string phase, string output);
     Task FinalizeRunAsync();
 }
+
+public interface IPromptOptRunContextAccessor
+{
+    PromptOptRunContext? Current { get; set; }
+}
+
+public record PromptOptRunContext(
+    string OutDir,
+    bool Capture,
+    bool Evaluate,
+    string? RunId = null
+);
