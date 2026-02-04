@@ -1,18 +1,19 @@
-﻿using System.IO.Abstractions;
-using System.Threading.Tasks;
+﻿using System.ComponentModel;
+using System.IO.Abstractions;
 using System.Threading;
+using System.Threading.Tasks;
 using Bendover.Application;
 using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
-using Bendover.Infrastructure.Services;
-using Spectre.Console.Cli;
-using System.ComponentModel;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
 using Bendover.Infrastructure.Configuration;
+using Bendover.Infrastructure.Services;
+using DotNetEnv;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Spectre.Console.Cli;
 
 namespace Bendover.PromptOpt.CLI;
 
@@ -35,10 +36,10 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
     {
         var services = new ServiceCollection();
 
+        Env.TraversePath().Load();
+
         var configuration = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
             .AddEnvironmentVariables()
             .Build();
 

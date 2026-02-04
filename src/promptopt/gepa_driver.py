@@ -148,11 +148,8 @@ def evaluate_bundle(bundle_path, task_path, cli_command, log_dir, timeout_second
     # Assuming CLI supports: <command> --bundle <path> --task <path> --out <path>
     # Splitting cli_command into parts in case it's "dotnet run --project ..."
     cmd_parts = cli_command.split()
-    cmd = cmd_parts + [
-        "--bundle", str(bundle_path),
-        "--task", str(task_path),
-        "--out", str(out_dir)
-    ]
+    cmd = shlex.split(cli_command) + ["--bundle", str(bundle_path), "--task", str(task_path), "--out", str(out_dir)]
+    print(f"[DEBUG] Invoking CLI: {cmd}")
     
     def run_eval(attempt=1):
         try:
@@ -177,6 +174,9 @@ def evaluate_bundle(bundle_path, task_path, cli_command, log_dir, timeout_second
 
     # Retry ONCE if non-zero exit AND evaluator.json missing
     if result.returncode != 0:
+        print(f"[ERROR] CLI Failed (Return Code {result.returncode})")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
         evaluator_json = out_dir / "evaluator.json"
         if not evaluator_json.exists():
             # Retry

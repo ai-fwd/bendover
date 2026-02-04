@@ -7,6 +7,7 @@ using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
 using Bendover.Infrastructure.Configuration;
 using Bendover.Infrastructure.Services;
+using DotNetEnv;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -22,10 +23,10 @@ public class LocalAgentRunner : IAgentRunner
         var services = new ServiceCollection();
 
         // Build Configuration
+        Env.TraversePath().Load(); // Load .env file traversing up the tree
+
         var configuration = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
             .AddEnvironmentVariables()
             .Build();
 

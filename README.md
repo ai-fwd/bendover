@@ -181,9 +181,18 @@ Bendover uses a unified **Replay Workflow** to optimize agent practices using [D
 #### 1. Requirements
 - Python 3.10+
 - `pip install -r promptopt/requirements.txt`
-- A `.env` file in `promptopt/.env` with `DSPY_REFLECTION_MODEL` (optional, defaults to `gpt-4o-mini`).
+- A `.env` file in the project root (copied from `.env.example`).
 - A seed bundle in `.bendover/promptopt/bundles/seed` (or similar).
 - Recorded runs in `.bendover/promptopt/runs/`.
+
+### Configuration
+1. Copy `.env.example` to `.env` in the project root:
+   ```bash
+   cp .env.example .env
+   ```
+2. Configure your keys:
+   - `Agent__*`: For local LLMs used by the Agent.
+   - `OPENAI_*` / `DSPY_*`: For reflection models used by GEPA.
 
 #### 2. Create a Split
 Create a text file (e.g., `promptopt/datasets/train.txt`) listing the IDs of the runs you want to optimize against:

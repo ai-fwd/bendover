@@ -7,8 +7,8 @@ from dspy.teleprompt import GEPA
 from dotenv import load_dotenv
 from promptopt.gepa_driver import load_split, create_candidate_bundle, evaluate_bundle, prepare_replay_task
 
-# Load env from promptopt/.env
-load_dotenv(Path(__file__).parent / ".env")
+# Load env automatically (finds .env in root)
+load_dotenv()
 
 app = typer.Typer()
 

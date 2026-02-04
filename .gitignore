@@ -102,4 +102,6 @@ __pycache__/
 # packaging artifacts
 *.egg-info/
 build/
-dist/
+
+# Environment Variables
+.env

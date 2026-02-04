@@ -46,12 +46,16 @@ public class ChatClientResolver : IChatClientResolver
 
         var openAIClientOptions = new OpenAIClientOptions
         {
-             Endpoint = new Uri(options.Endpoint)
+            Endpoint = new Uri(options.Endpoint)
         };
-        
+
         // If config has no API key, use "dummy" if local? 
         // Local LLMs often need any non-empty string as key.
-        var apiKey = !string.IsNullOrEmpty(options.ApiKey) ? options.ApiKey : "sk-dummy";
+        if (string.IsNullOrEmpty(options.ApiKey))
+        {
+            throw new InvalidOperationException($"ApiKey is missing for role {role}. Please check your .env file.");
+        }
+        var apiKey = options.ApiKey;
 
         var openAIClient = new OpenAIClient(new ApiKeyCredential(apiKey), openAIClientOptions);
         var chatClient = new OpenAIChatClient(openAIClient, options.Model);
