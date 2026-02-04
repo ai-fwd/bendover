@@ -12,7 +12,7 @@ public class BenchmarkRunOrchestrator
     private readonly IGitRunner _gitRunner;
     private readonly IAgentOrchestratorFactory _agentOrchestratorFactory;
     private readonly IPromptBundleResolver _bundleResolver;
-    private readonly IDotNetRunner _dotNetRunner;
+    private readonly IPromptOptRunEvaluator _runEvaluator;
     private readonly IFileSystem _fileSystem;
     private readonly IPromptOptRunContextAccessor _runContextAccessor;
 
@@ -20,69 +20,88 @@ public class BenchmarkRunOrchestrator
         IGitRunner gitRunner,
         IAgentOrchestratorFactory agentOrchestratorFactory,
         IPromptBundleResolver bundleResolver,
-        IDotNetRunner dotNetRunner,
+        IPromptOptRunEvaluator runEvaluator,
         IFileSystem fileSystem,
         IPromptOptRunContextAccessor runContextAccessor)
     {
         _gitRunner = gitRunner;
         _agentOrchestratorFactory = agentOrchestratorFactory;
         _bundleResolver = bundleResolver;
-        _dotNetRunner = dotNetRunner;
+        _runEvaluator = runEvaluator;
         _fileSystem = fileSystem;
         _runContextAccessor = runContextAccessor;
     }
 
-    public async Task RunAsync(string bundlePath, string taskPath, string outputPath)
+    public Task RunAsync(string bundlePath, string taskPath, string outputPath)
     {
-        var workingDirectory = _fileSystem.Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-        _fileSystem.Directory.CreateDirectory(workingDirectory);
-        Directory.CreateDirectory(workingDirectory);
+        return RunAsync(bundlePath, taskPath, outputPath, PromptOptRunOptions.GenerateAndScore);
+    }
 
-        try
+    public async Task RunAsync(string bundlePath, string taskPath, string outputPath, PromptOptRunOptions options)
+    {
+        if (options.Generate)
         {
-            var commitPath = _fileSystem.Path.Combine(taskPath, "base_commit.txt");
-            if (!_fileSystem.File.Exists(commitPath))
-            {
-                throw new FileNotFoundException("base_commit.txt not found", commitPath);
-            }
+            var workingDirectory = _fileSystem.Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            _fileSystem.Directory.CreateDirectory(workingDirectory);
+            Directory.CreateDirectory(workingDirectory);
 
-            var commitHash = await _fileSystem.File.ReadAllTextAsync(commitPath);
-            commitHash = commitHash.Trim();
-
-            await _gitRunner.RunAsync($"clone . \"{workingDirectory}\"");
-            await _gitRunner.RunAsync($"checkout {commitHash}", workingDirectory);
-
-            var practicesPath = _bundleResolver.Resolve(bundlePath);
-
-            var taskFilePath = _fileSystem.Path.Combine(taskPath, "task.md");
-            var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
-
-            if (!_fileSystem.Directory.Exists(outputPath))
-            {
-                _fileSystem.Directory.CreateDirectory(outputPath);
-            }
-
-            _runContextAccessor.Current = new PromptOptRunContext(
-                outputPath,
-                Capture: true,
-                Evaluate: true
-            );
-
-            var currentDir = Directory.GetCurrentDirectory();
             try
             {
-                Directory.SetCurrentDirectory(workingDirectory);
-                var agentOrchestrator = _agentOrchestratorFactory.Create(practicesPath);
-                await agentOrchestrator.RunAsync(taskText);
+                var commitPath = _fileSystem.Path.Combine(taskPath, "base_commit.txt");
+                if (!_fileSystem.File.Exists(commitPath))
+                {
+                    throw new FileNotFoundException("base_commit.txt not found", commitPath);
+                }
+
+                var commitHash = await _fileSystem.File.ReadAllTextAsync(commitPath);
+                commitHash = commitHash.Trim();
+
+                await _gitRunner.RunAsync($"clone . \"{workingDirectory}\"");
+                await _gitRunner.RunAsync($"checkout {commitHash}", workingDirectory);
+
+                var practicesPath = _bundleResolver.Resolve(bundlePath);
+
+                var taskFilePath = _fileSystem.Path.Combine(taskPath, "task.md");
+                var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
+
+                if (!_fileSystem.Directory.Exists(outputPath))
+                {
+                    _fileSystem.Directory.CreateDirectory(outputPath);
+                }
+
+                _runContextAccessor.Current = new PromptOptRunContext(
+                    outputPath,
+                    Capture: true
+                );
+
+                var currentDir = Directory.GetCurrentDirectory();
+                try
+                {
+                    Directory.SetCurrentDirectory(workingDirectory);
+                    var agentOrchestrator = _agentOrchestratorFactory.Create(practicesPath);
+                    await agentOrchestrator.RunAsync(taskText);
+                }
+                finally
+                {
+                    Directory.SetCurrentDirectory(currentDir);
+                }
             }
             finally
             {
-                Directory.SetCurrentDirectory(currentDir);
+                // Cleanup if needed
             }
         }
-        finally
+
+        if (options.Score)
         {
-             // Cleanup if needed
+            await _runEvaluator.EvaluateAsync(outputPath);
         }
     }
+}
+
+public record PromptOptRunOptions(bool Generate, bool Score)
+{
+    public static PromptOptRunOptions GenerateOnly => new(true, false);
+    public static PromptOptRunOptions ScoreOnly => new(false, true);
+    public static PromptOptRunOptions GenerateAndScore => new(true, true);
 }

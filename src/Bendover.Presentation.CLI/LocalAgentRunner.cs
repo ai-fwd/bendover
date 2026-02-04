@@ -50,6 +50,7 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IEnumerable<IEvaluatorRule>>(Enumerable.Empty<IEvaluatorRule>());
         services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
         services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
+        services.AddSingleton<IPromptOptRunEvaluator, PromptOptRunEvaluator>();
 
         // Logging (Quiet for now)
         services.AddLogging(configure => configure.AddConsole().SetMinimumLevel(LogLevel.Warning));
@@ -67,12 +68,10 @@ public class LocalAgentRunner : IAgentRunner
             var goal = AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
 
             var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
-            var evaluate = configuration.GetValue("PromptOpt:Evaluate", false);
             var outDir = Path.Combine(".bendover", "promptopt", "runs", runId);
             runContextAccessor.Current = new PromptOptRunContext(
                 outDir,
                 Capture: true,
-                Evaluate: evaluate,
                 RunId: runId
             );
 

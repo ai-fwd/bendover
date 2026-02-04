@@ -4,8 +4,6 @@ using System.IO;
 using System.IO.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
 using System.Threading.Tasks;
-using Bendover.Application;
-using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
 using Bendover.Infrastructure.Services;
 using Microsoft.Extensions.AI;
@@ -18,24 +16,15 @@ public class PromptOptRunRecorderTests
 {
     private readonly MockFileSystem _fileSystem;
     private readonly PromptOptRunRecorder _sut;
-    private readonly Mock<IGitRunner> _gitRunnerMock;
-    private readonly Mock<IDotNetRunner> _dotNetRunnerMock;
     private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
-    private readonly EvaluatorEngine _evaluatorEngine;
 
     public PromptOptRunRecorderTests()
     {
         _fileSystem = new MockFileSystem();
-        _gitRunnerMock = new Mock<IGitRunner>();
-        _dotNetRunnerMock = new Mock<IDotNetRunner>();
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
-        _evaluatorEngine = new EvaluatorEngine(new List<IEvaluatorRule>()); // No rules for simple test
 
         _sut = new PromptOptRunRecorder(
             _fileSystem,
-            _evaluatorEngine,
-            _gitRunnerMock.Object,
-            _dotNetRunnerMock.Object,
             _runContextAccessorMock.Object
         );
     }
@@ -46,7 +35,7 @@ public class PromptOptRunRecorderTests
         // Arrange
         var outDir = "/runs/out-1";
         _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext(outDir, Capture: true, Evaluate: false, RunId: "run-1"));
+            .Returns(new PromptOptRunContext(outDir, Capture: true, RunId: "run-1"));
 
         // Act
         var runId = await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
@@ -63,12 +52,12 @@ public class PromptOptRunRecorderTests
     }
 
     [Fact]
-    public async Task FinalizeRunAsync_CaptureEnabledAndEvaluateDisabled_WritesPromptsAndOutputsOnly()
+    public async Task FinalizeRunAsync_CaptureEnabled_WritesPromptsAndOutputs()
     {
         // Arrange
         var outDir = "/runs/out-2";
         _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext(outDir, Capture: true, Evaluate: false));
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
 
         await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
         await _sut.RecordPromptAsync("lead", new List<ChatMessage> { new ChatMessage(ChatRole.User, "Goal: Test Goal") });
@@ -82,35 +71,24 @@ public class PromptOptRunRecorderTests
         // Assert
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
-        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "git_diff.patch")));
-        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_test.txt")));
-        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "evaluator.json")));
-
-        _gitRunnerMock.Verify(x => x.RunAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
-        _dotNetRunnerMock.Verify(x => x.RunAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
-    public async Task FinalizeRunAsync_CaptureDisabledAndEvaluateEnabled_WritesEvaluationArtifactsOnly()
+    public async Task StartRunAsync_CaptureDisabled_DoesNotWriteMeta()
     {
         // Arrange
         var outDir = "/runs/out-3";
         _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext(outDir, Capture: false, Evaluate: true));
-
-        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
-
-        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string?>())).ReturnsAsync("diff content");
-        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string?>())).ReturnsAsync("test passed");
+            .Returns(new PromptOptRunContext(outDir, Capture: false));
 
         // Act
-        await _sut.FinalizeRunAsync();
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
 
         // Assert
-        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
-        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "git_diff.patch")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_test.txt")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "evaluator.json")));
+        Assert.True(_fileSystem.Directory.Exists(outDir));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "goal.txt")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "base_commit.txt")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "bundle_id.txt")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "run_meta.json")));
     }
 }

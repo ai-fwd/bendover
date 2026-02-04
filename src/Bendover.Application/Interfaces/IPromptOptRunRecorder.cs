@@ -22,6 +22,10 @@ public interface IPromptOptRunContextAccessor
 public record PromptOptRunContext(
     string OutDir,
     bool Capture,
-    bool Evaluate,
     string? RunId = null
 );
+
+public interface IPromptOptRunEvaluator
+{
+    Task EvaluateAsync(string outDir);
+}

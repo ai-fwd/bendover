@@ -60,41 +60,73 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
         services.AddSingleton<IEnumerable<IEvaluatorRule>>(Enumerable.Empty<IEvaluatorRule>());
         services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
         services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
+        services.AddSingleton<IPromptOptRunEvaluator, PromptOptRunEvaluator>();
 
         var serviceProvider = services.BuildServiceProvider();
 
         var fileSystem = serviceProvider.GetRequiredService<System.IO.Abstractions.IFileSystem>();
         var gitRunner = serviceProvider.GetRequiredService<IGitRunner>();
-        var dotNetRunner = serviceProvider.GetRequiredService<IDotNetRunner>();
         var resolver = serviceProvider.GetRequiredService<IPromptBundleResolver>();
         var agentOrchestratorFactory = serviceProvider.GetRequiredService<IAgentOrchestratorFactory>();
         var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
+        var runEvaluator = serviceProvider.GetRequiredService<IPromptOptRunEvaluator>();
 
         var orchestrator = new BenchmarkRunOrchestrator(
             gitRunner,
             agentOrchestratorFactory,
             resolver,
-            dotNetRunner,
+            runEvaluator,
             fileSystem,
             runContextAccessor
         );
 
-        await orchestrator.RunAsync(settings.Bundle, settings.Task, settings.Out);
+        var options = settings.Mode switch
+        {
+            PromptOptRunMode.Generate => PromptOptRunOptions.GenerateOnly,
+            PromptOptRunMode.Score => PromptOptRunOptions.ScoreOnly,
+            _ => PromptOptRunOptions.GenerateAndScore
+        };
+
+        if (options.Generate)
+        {
+            if (string.IsNullOrWhiteSpace(settings.Bundle) || string.IsNullOrWhiteSpace(settings.Task))
+            {
+                throw new InvalidOperationException("Bundle and Task are required for generate modes.");
+            }
+        }
+
+        await orchestrator.RunAsync(
+            settings.Bundle ?? string.Empty,
+            settings.Task ?? string.Empty,
+            settings.Out,
+            options
+        );
         return 0;
     }
+}
+
+public enum PromptOptRunMode
+{
+    Generate,
+    Score,
+    GenerateAndScore
 }
 
 public class RunCommandSettings : CommandSettings
 {
     [CommandOption("--bundle <PATH>")]
     [Description("Path to the bundle directory")]
-    public required string Bundle { get; init; }
+    public string? Bundle { get; init; }
 
     [CommandOption("--task <PATH>")]
     [Description("Path to the task directory")]
-    public required string Task { get; init; }
+    public string? Task { get; init; }
 
     [CommandOption("--out <PATH>")]
     [Description("Path to the output directory")]
     public required string Out { get; init; }
+
+    [CommandOption("--mode <MODE>")]
+    [Description("Run mode: Generate, Score, GenerateAndScore")]
+    public PromptOptRunMode Mode { get; init; } = PromptOptRunMode.GenerateAndScore;
 }
