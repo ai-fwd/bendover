@@ -72,7 +72,8 @@ public class LocalAgentRunner : IAgentRunner
             runContextAccessor.Current = new PromptOptRunContext(
                 outDir,
                 Capture: true,
-                RunId: runId
+                RunId: runId,
+                BundleId: "default"
             );
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");

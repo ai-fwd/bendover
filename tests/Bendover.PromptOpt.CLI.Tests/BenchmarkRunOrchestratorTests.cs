@@ -43,72 +43,14 @@ public class BenchmarkRunOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_GenerateAndScore_ShouldRunOrchestratorAndEvaluator()
+    public async Task RunAsync_ShouldUseBundlePathAndTaskPathAndEmitArtifacts()
     {
         // Arrange
-        var bundlePath = "/bundle";
+        var bundlePath = "/bundle/bundle-456";
         var taskPath = "/task";
         var outputPath = "/out";
         var commitHash = "abc1234";
-        var practicesPath = "/bundle/practices";
-        var taskText = "Do the work";
-
-        // Setup Task Files
-        _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData(commitHash));
-        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
-
-        // Setup Mocks
-        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("clone")), It.IsAny<string?>()))
-            .ReturnsAsync("");
-
-        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>())) // working dir might be temp
-            .ReturnsAsync("");
-        
-        _bundleResolverMock.Setup(x => x.Resolve(bundlePath))
-            .Returns(practicesPath);
-
-        _agentOrchestratorFactoryMock.Setup(x => x.Create(practicesPath))
-            .Returns(_agentOrchestratorMock.Object);
-
-        _agentOrchestratorMock.Setup(x => x.RunAsync(taskText))
-            .Returns(Task.CompletedTask);
-
-        // Act
-        await _sut.RunAsync(bundlePath, taskPath, outputPath, PromptOptRunOptions.GenerateAndScore);
-
-        // Assert
-        // 1. Reads base_commit.txt (implicit by passing data to checkout)
-        // 2. Runs git checkout
-        _gitRunnerMock.Verify(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>()), Times.Once);
-
-        // 3. Resolves practices
-        _bundleResolverMock.Verify(x => x.Resolve(bundlePath), Times.Once);
-
-        // 4. Invokes Agent
-        _agentOrchestratorFactoryMock.Verify(x => x.Create(practicesPath), Times.Once);
-        _agentOrchestratorMock.Verify(x => x.RunAsync(taskText), Times.Once);
-
-        // 5. Sets run context and creates output directory
-        Assert.True(_fileSystem.Directory.Exists(outputPath));
-        _runContextAccessorMock.VerifySet(
-            x => x.Current = It.Is<PromptOptRunContext>(
-                ctx => ctx.OutDir == outputPath && ctx.Capture
-            ),
-            Times.Once);
-
-        // 6. Scores run
-        _runEvaluatorMock.Verify(x => x.EvaluateAsync(outputPath), Times.Once);
-    }
-
-    [Fact]
-    public async Task RunAsync_GenerateOnly_ShouldNotScore()
-    {
-        // Arrange
-        var bundlePath = "/bundle";
-        var taskPath = "/task";
-        var outputPath = "/out";
-        var commitHash = "abc1234";
-        var practicesPath = "/bundle/practices";
+        var practicesPath = "/bundle/bundle-456/practices";
         var taskText = "Do the work";
 
         _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData(commitHash));
@@ -126,26 +68,16 @@ public class BenchmarkRunOrchestratorTests
             .Returns(Task.CompletedTask);
 
         // Act
-        await _sut.RunAsync(bundlePath, taskPath, outputPath, PromptOptRunOptions.GenerateOnly);
+        await _sut.RunAsync(bundlePath, taskPath, outputPath);
 
         // Assert
+        _bundleResolverMock.Verify(x => x.Resolve(bundlePath), Times.Once);
         _agentOrchestratorMock.Verify(x => x.RunAsync(taskText), Times.Once);
-        _runEvaluatorMock.Verify(x => x.EvaluateAsync(It.IsAny<string>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunAsync_ScoreOnly_ShouldNotRunOrchestrator()
-    {
-        // Arrange
-        var bundlePath = "/bundle";
-        var taskPath = "/task";
-        var outputPath = "/out";
-
-        // Act
-        await _sut.RunAsync(bundlePath, taskPath, outputPath, PromptOptRunOptions.ScoreOnly);
-
-        // Assert
-        _agentOrchestratorMock.Verify(x => x.RunAsync(It.IsAny<string>()), Times.Never);
+        _runContextAccessorMock.VerifySet(
+            x => x.Current = It.Is<PromptOptRunContext>(
+                ctx => ctx.OutDir == outputPath && ctx.Capture && ctx.BundleId == "bundle-456"
+            ),
+            Times.Once);
         _runEvaluatorMock.Verify(x => x.EvaluateAsync(outputPath), Times.Once);
     }
 }

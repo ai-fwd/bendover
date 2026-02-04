@@ -80,36 +80,18 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             runContextAccessor
         );
 
-        var options = settings.Mode switch
+        if (string.IsNullOrWhiteSpace(settings.Bundle) || string.IsNullOrWhiteSpace(settings.Task))
         {
-            PromptOptRunMode.Generate => PromptOptRunOptions.GenerateOnly,
-            PromptOptRunMode.Score => PromptOptRunOptions.ScoreOnly,
-            _ => PromptOptRunOptions.GenerateAndScore
-        };
-
-        if (options.Generate)
-        {
-            if (string.IsNullOrWhiteSpace(settings.Bundle) || string.IsNullOrWhiteSpace(settings.Task))
-            {
-                throw new InvalidOperationException("Bundle and Task are required for generate modes.");
-            }
+            throw new InvalidOperationException("Bundle and Task are required.");
         }
 
         await orchestrator.RunAsync(
-            settings.Bundle ?? string.Empty,
-            settings.Task ?? string.Empty,
-            settings.Out,
-            options
+            settings.Bundle,
+            settings.Task,
+            settings.Out
         );
         return 0;
     }
-}
-
-public enum PromptOptRunMode
-{
-    Generate,
-    Score,
-    GenerateAndScore
 }
 
 public class RunCommandSettings : CommandSettings
@@ -125,8 +107,4 @@ public class RunCommandSettings : CommandSettings
     [CommandOption("--out <PATH>")]
     [Description("Path to the output directory")]
     public required string Out { get; init; }
-
-    [CommandOption("--mode <MODE>")]
-    [Description("Run mode: Generate, Score, GenerateAndScore")]
-    public PromptOptRunMode Mode { get; init; } = PromptOptRunMode.GenerateAndScore;
 }

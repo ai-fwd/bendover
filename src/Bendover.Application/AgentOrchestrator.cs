@@ -16,7 +16,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly ILeadAgent _leadAgent;
     private readonly IPracticeService _practiceService;
     private readonly IPromptOptRunRecorder _runRecorder;
-    private readonly IPromptBundleResolver _bundleResolver;
+    private readonly IPromptOptRunContextAccessor _runContextAccessor;
     private readonly IGitRunner _gitRunner;
 
     private readonly IEnumerable<IAgentObserver> _observers;
@@ -30,7 +30,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ILeadAgent leadAgent,
         IPracticeService practiceService,
         IPromptOptRunRecorder runRecorder,
-        IPromptBundleResolver bundleResolver,
+        IPromptOptRunContextAccessor runContextAccessor,
         IGitRunner gitRunner)
     {
         _clientResolver = clientResolver;
@@ -41,7 +41,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _leadAgent = leadAgent;
         _practiceService = practiceService;
         _runRecorder = runRecorder;
-        _bundleResolver = bundleResolver;
+        _runContextAccessor = runContextAccessor;
         _gitRunner = gitRunner;
     }
 
@@ -63,7 +63,10 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
         catch { }
 
-        string bundleId = _bundleResolver.GetActiveBundleId() ?? "default";
+        var context = _runContextAccessor.Current
+            ?? throw new InvalidOperationException("PromptOpt run context is not set.");
+        var bundleId = context.BundleId
+            ?? throw new InvalidOperationException("PromptOpt run context BundleId is not set.");
 
         await _runRecorder.StartRunAsync(initialGoal, baseCommit, bundleId);
 

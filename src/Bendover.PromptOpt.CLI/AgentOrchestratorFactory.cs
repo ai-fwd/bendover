@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using Bendover.Application;
 using Bendover.Application.Interfaces;
 using Bendover.Domain;
@@ -33,9 +32,9 @@ public class PromptOptAgentOrchestratorFactory : IAgentOrchestratorFactory
         var fileService = _serviceProvider.GetRequiredService<IFileService>();
         var runRecorder = _serviceProvider.GetRequiredService<IPromptOptRunRecorder>();
         var gitRunner = _serviceProvider.GetRequiredService<IGitRunner>();
+        var runContextAccessor = _serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
 
         var practiceService = new PracticeService(fileService, practicesPath);
-        var bundleResolver = new PromptBundleResolver(Directory.GetCurrentDirectory());
 
         return new AgentOrchestrator(
             clientResolver,
@@ -46,7 +45,7 @@ public class PromptOptAgentOrchestratorFactory : IAgentOrchestratorFactory
             leadAgent,
             practiceService,
             runRecorder,
-            bundleResolver,
+            runContextAccessor,
             gitRunner
         );
     }

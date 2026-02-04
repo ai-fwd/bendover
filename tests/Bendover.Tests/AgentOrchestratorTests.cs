@@ -21,7 +21,7 @@ public class AgentOrchestratorTests
     private readonly Mock<IEnvironmentValidator> _environmentValidatorMock;
     private readonly Mock<IAgentObserver> _observerMock;
     private readonly Mock<IPromptOptRunRecorder> _runRecorderMock;
-    private readonly Mock<IPromptBundleResolver> _bundleResolverMock;
+    private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
     private readonly Mock<IGitRunner> _gitRunnerMock;
     private readonly AgentOrchestrator _sut;
 
@@ -38,7 +38,7 @@ public class AgentOrchestratorTests
         _environmentValidatorMock = new Mock<IEnvironmentValidator>();
         _observerMock = new Mock<IAgentObserver>();
         _runRecorderMock = new Mock<IPromptOptRunRecorder>();
-        _bundleResolverMock = new Mock<IPromptBundleResolver>();
+        _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
         _gitRunnerMock = new Mock<IGitRunner>();
 
         // Setup Recorder defaults
@@ -61,7 +61,7 @@ public class AgentOrchestratorTests
             _leadAgentMock.Object,
             _practiceServiceMock.Object,
             _runRecorderMock.Object,
-            _bundleResolverMock.Object,
+            _runContextAccessorMock.Object,
             _gitRunnerMock.Object
         );
     }
@@ -95,12 +95,21 @@ public class AgentOrchestratorTests
         _reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Critique content") }));
 
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
         // Act
         await _sut.RunAsync(goal);
 
         // Assert
         // 1. Lead Agent Analysis
         _leadAgentMock.Verify(x => x.AnalyzeTaskAsync(goal), Times.Once);
+
+        _runRecorderMock.Verify(
+            x => x.StartRunAsync(goal, "abc123", "bundle-123"),
+            Times.Once);
 
         // 2. Architect (Planner)
         // Verify call logic

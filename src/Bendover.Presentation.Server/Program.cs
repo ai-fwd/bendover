@@ -3,6 +3,7 @@ using Bendover.Domain;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
 using Bendover.Infrastructure.Configuration;
+using Bendover.Infrastructure.Services;
 using Bendover.Presentation.Server.Hubs;
 using Bendover.Presentation.Server.Services;
 
@@ -21,6 +22,11 @@ builder.Services.AddSingleton<IAgentObserver, HubAgentObserver>();
 builder.Services.AddSingleton<ILeadAgent, LeadAgent>();
 builder.Services.AddSingleton<IPracticeService, PracticeService>();
 builder.Services.AddSingleton<ScriptGenerator>();
+builder.Services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
+builder.Services.AddSingleton<IGitRunner, GitRunner>();
+builder.Services.AddSingleton<IDotNetRunner, DotNetRunner>();
+builder.Services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
+builder.Services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
 
 var app = builder.Build();
 

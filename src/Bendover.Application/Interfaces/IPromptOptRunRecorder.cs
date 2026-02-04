@@ -22,7 +22,8 @@ public interface IPromptOptRunContextAccessor
 public record PromptOptRunContext(
     string OutDir,
     bool Capture,
-    string? RunId = null
+    string? RunId = null,
+    string? BundleId = null
 );
 
 public interface IPromptOptRunEvaluator
