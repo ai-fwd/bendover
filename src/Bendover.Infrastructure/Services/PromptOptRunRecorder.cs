@@ -13,6 +13,8 @@ namespace Bendover.Infrastructure.Services;
 public class PromptOptRunRecorder : IPromptOptRunRecorder
 {
     private readonly IFileSystem _fileSystem;
+    private readonly IGitRunner _gitRunner;
+    private readonly IDotNetRunner _dotNetRunner;
     private readonly IPromptOptRunContextAccessor _runContextAccessor;
     private string? _runId;
     private string? _runDir;
@@ -23,9 +25,13 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
     public PromptOptRunRecorder(
         IFileSystem fileSystem,
+        IGitRunner gitRunner,
+        IDotNetRunner dotNetRunner,
         IPromptOptRunContextAccessor runContextAccessor)
     {
         _fileSystem = fileSystem;
+        _gitRunner = gitRunner;
+        _dotNetRunner = dotNetRunner;
         _runContextAccessor = runContextAccessor;
     }
 
@@ -96,6 +102,29 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
             // Write outputs.json
             await WriteJsonAsync("outputs.json", _outputs);
+
+            // Capture git diff
+            try
+            {
+                var diff = await _gitRunner.RunAsync("diff");
+                await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "git_diff.patch"), diff);
+            }
+            catch (Exception ex)
+            {
+                await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "git_diff_error.txt"), ex.Message);
+            }
+
+            // Run dotnet test
+            try
+            {
+                var testOutput = await _dotNetRunner.RunAsync("test");
+                await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "dotnet_test.txt"), testOutput);
+            }
+            catch (Exception ex)
+            {
+                var testOutput = $"Error running tests: {ex.Message}";
+                await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "dotnet_test_error.txt"), testOutput);
+            }
         }
 
     }

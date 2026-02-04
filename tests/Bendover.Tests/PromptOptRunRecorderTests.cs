@@ -16,15 +16,21 @@ public class PromptOptRunRecorderTests
 {
     private readonly MockFileSystem _fileSystem;
     private readonly PromptOptRunRecorder _sut;
+    private readonly Mock<IGitRunner> _gitRunnerMock;
+    private readonly Mock<IDotNetRunner> _dotNetRunnerMock;
     private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
 
     public PromptOptRunRecorderTests()
     {
         _fileSystem = new MockFileSystem();
+        _gitRunnerMock = new Mock<IGitRunner>();
+        _dotNetRunnerMock = new Mock<IDotNetRunner>();
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
 
         _sut = new PromptOptRunRecorder(
             _fileSystem,
+            _gitRunnerMock.Object,
+            _dotNetRunnerMock.Object,
             _runContextAccessorMock.Object
         );
     }
@@ -52,7 +58,7 @@ public class PromptOptRunRecorderTests
     }
 
     [Fact]
-    public async Task FinalizeRunAsync_CaptureEnabled_WritesPromptsAndOutputs()
+    public async Task FinalizeRunAsync_CaptureEnabled_WritesPromptsOutputsAndRunArtifacts()
     {
         // Arrange
         var outDir = "/runs/out-2";
@@ -65,12 +71,22 @@ public class PromptOptRunRecorderTests
         await _sut.RecordPromptAsync("architect", new List<ChatMessage> { new ChatMessage(ChatRole.User, "prompt") });
         await _sut.RecordOutputAsync("architect", "plan details");
 
+        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string?>()))
+            .ReturnsAsync("diff content");
+        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string?>()))
+            .ReturnsAsync("test passed");
+
         // Act
         await _sut.FinalizeRunAsync();
 
         // Assert
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "git_diff.patch")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_test.txt")));
+
+        _gitRunnerMock.Verify(x => x.RunAsync("diff", It.IsAny<string?>()), Times.Once);
+        _dotNetRunnerMock.Verify(x => x.RunAsync("test", It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]

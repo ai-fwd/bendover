@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Abstractions;
@@ -14,64 +13,41 @@ public class PromptOptRunEvaluator : IPromptOptRunEvaluator
 {
     private readonly IFileSystem _fileSystem;
     private readonly EvaluatorEngine _evaluator;
-    private readonly IGitRunner _gitRunner;
-    private readonly IDotNetRunner _dotNetRunner;
 
     public PromptOptRunEvaluator(
         IFileSystem fileSystem,
-        EvaluatorEngine evaluator,
-        IGitRunner gitRunner,
-        IDotNetRunner dotNetRunner)
+        EvaluatorEngine evaluator)
     {
         _fileSystem = fileSystem;
         _evaluator = evaluator;
-        _gitRunner = gitRunner;
-        _dotNetRunner = dotNetRunner;
     }
 
     public async Task EvaluateAsync(string outDir)
     {
         _fileSystem.Directory.CreateDirectory(outDir);
 
-        // Capture git diff
-        try
-        {
-            var diff = await _gitRunner.RunAsync("diff");
-            await _fileSystem.File.WriteAllTextAsync(Path.Combine(outDir, "git_diff.patch"), diff);
-        }
-        catch (Exception ex)
-        {
-            await _fileSystem.File.WriteAllTextAsync(Path.Combine(outDir, "git_diff_error.txt"), ex.Message);
-        }
-
-        // Run dotnet test
-        string testOutput = "";
-        try
-        {
-            // Running at solution root
-            testOutput = await _dotNetRunner.RunAsync("test");
-            await _fileSystem.File.WriteAllTextAsync(Path.Combine(outDir, "dotnet_test.txt"), testOutput);
-        }
-        catch (Exception ex)
-        {
-            testOutput = $"Error running tests: {ex.Message}";
-            await _fileSystem.File.WriteAllTextAsync(Path.Combine(outDir, "dotnet_test_error.txt"), testOutput);
-        }
+        var diffPath = Path.Combine(outDir, "git_diff.patch");
+        var testPath = Path.Combine(outDir, "dotnet_test.txt");
+        var diffContent = _fileSystem.File.Exists(diffPath)
+            ? await _fileSystem.File.ReadAllTextAsync(diffPath)
+            : string.Empty;
+        var testOutput = _fileSystem.File.Exists(testPath)
+            ? await _fileSystem.File.ReadAllTextAsync(testPath)
+            : string.Empty;
 
         // Evaluator
         var changedFiles = new List<FileDiff>();
         try
         {
-            if (_fileSystem.File.Exists(Path.Combine(outDir, "git_diff.patch")))
+            if (!string.IsNullOrWhiteSpace(diffContent))
             {
-                var diffContent = await _fileSystem.File.ReadAllTextAsync(Path.Combine(outDir, "git_diff.patch"));
                 changedFiles = DiffParser.Parse(diffContent).ToList();
             }
         }
         catch { /* ignore parsing errors */ }
 
         var context = new EvaluationContext(
-            DiffContent: "",
+            DiffContent: diffContent,
             TestOutput: testOutput,
             ChangedFiles: changedFiles
         );
