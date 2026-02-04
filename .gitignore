@@ -90,3 +90,16 @@ appsettings.*.json
 .bendover/promptopt/logs/
 .bendover/promptopt/tmp/
 .bendover/promptopt/*.env
+.bendover/promptopt/bundles/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# packaging artifacts
+*.egg-info/
+build/
+dist/

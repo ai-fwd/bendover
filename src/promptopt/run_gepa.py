@@ -66,7 +66,7 @@ class BundleProgram(dspy.Module):
         
         return dspy.Prediction(score=score)
 
-def metric_fn(gold, pred, trace=None):
+def metric_fn(gold, pred, trace=None, pred_name=None, pred_trace=None):
     return pred.score
 
 @app.command()
@@ -128,7 +128,7 @@ def main(
     )
     
     # Optimization
-    teleprompter = GEPA(metric=metric_fn)
+    teleprompter = GEPA(metric=metric_fn, max_full_evals=10, reflection_lm=lm)
     
     print(f"Starting optimization with {len(run_ids)} runs...")
     compiled_program = teleprompter.compile(

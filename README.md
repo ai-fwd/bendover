@@ -196,13 +196,15 @@ Create a text file (e.g., `promptopt/datasets/train.txt`) listing the IDs of the
 Execute the optimization script, specifying the target practice file you want to evolve.
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:.
-python3 promptopt/run_gepa.py \
-  --seed-bundle-id seed \
-  --train-split promptopt/datasets/train.txt \
-  --target-practice-file coding_standards.md \
+export PYTHONPATH=$PYTHONPATH:$(pwd)/src && ./src/promptopt/.venv/bin/python -m promptopt.run_gepa \
+  --seed-bundle-id seed_bundle_1 \
+  --train-split .bendover/promptopt/datasets/train.txt \
   --log-dir .bendover/promptopt/logs \
-  --cli-command "dotnet run --project src/Bendover.PromptOpt.CLI"
+  --cli-command "dotnet run --project src/Bendover.PromptOpt.CLI --" \
+  --target-practice-file tdd_spirit.md \
+  --timeout-seconds 900 \
+  --bundle-root .bendover/promptopt/bundles \
+  --run-root .bendover/promptopt/runs
 ```
 
 The optimizer will output the evolved body content for the target practice file.
