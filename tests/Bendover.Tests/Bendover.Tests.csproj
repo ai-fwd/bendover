@@ -34,9 +34,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\src\Bendover.Presentation.CLI\appsettings.Development.json" Link="appsettings.Development.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 
 </Project>

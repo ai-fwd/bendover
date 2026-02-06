@@ -1,4 +1,5 @@
 using Bendover.Application;
+using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
