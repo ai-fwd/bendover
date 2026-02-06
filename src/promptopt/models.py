@@ -7,6 +7,7 @@ from typing import Any
 
 @dataclass
 class PracticeFile:
+    """In-memory representation of a single practice markdown file."""
     file_name: str
     name: str
     frontmatter: str
@@ -22,6 +23,7 @@ class PracticeFile:
 
 @dataclass
 class Bundle:
+    """A bundle is a collection of practices + metadata on disk."""
     bundle_id: str
     path: Path
     practices: dict[str, PracticeFile]
@@ -30,6 +32,7 @@ class Bundle:
 
 @dataclass
 class RunArtifact:
+    """Recorded run used as training data for GEPA."""
     run_id: str
     run_dir: Path
     goal: str
@@ -42,6 +45,7 @@ class RunArtifact:
 
 @dataclass
 class PracticeAttribution:
+    """Evaluator notes scoped to specific practices."""
     selected_practices: list[str] = field(default_factory=list)
     offending_practices: list[str] = field(default_factory=list)
     notes_by_practice: dict[str, list[str]] = field(default_factory=dict)
@@ -49,6 +53,7 @@ class PracticeAttribution:
 
 @dataclass
 class EvaluationResult:
+    """Result of evaluating a bundle on a run."""
     passed: bool
     score: float
     flags: list[str] = field(default_factory=list)

@@ -7,6 +7,7 @@ from typing import Iterable
 import typer
 import dspy
 from dspy.clients import configure_cache
+from dspy.clients.base_lm import BaseLM
 from dspy.teleprompt import GEPA
 from dspy.utils import DummyLM
 from dotenv import load_dotenv
@@ -22,7 +23,7 @@ from promptopt.bundle_store import (
 from promptopt.cache import EvaluationCache
 from promptopt.evaluator_client import evaluate_bundle
 from promptopt.gepa_driver import load_split
-from promptopt.models import EvaluationResult
+from promptopt.models import Bundle, EvaluationResult, PracticeFile, RunArtifact
 from promptopt.run_store import load_run_artifact
 
 # Load env automatically (finds .env in root)
@@ -34,6 +35,10 @@ app = typer.Typer()
 class PracticeSignature(dspy.Signature):
     """
     A lightweight signature to include each practice predictor in traces.
+
+    DSPy/GEPA needs predictors in the execution trace so it can reflect on them.
+    This signature is intentionally minimal and acts like a "no-op" predictor
+    that still produces a trace entry.
     """
 
     run_ids: str = dspy.InputField(desc="Batch of run ids")
@@ -48,7 +53,7 @@ class TestReflectionLM:
     current instruction extracted from the first ``` block.
     """
 
-    def __call__(self, prompt: str, **kwargs):
+    def __call__(self, prompt: str, **kwargs) -> list[str]:
         current_instruction = _extract_first_code_block(prompt)
         add_lines = []
         for line in prompt.splitlines():
@@ -69,8 +74,8 @@ class TestReflectionLM:
 class BundleProgram(dspy.Module):
     def __init__(
         self,
-        seed_bundle,
-        runs_by_id: dict[str, object],
+        seed_bundle: Bundle,
+        runs_by_id: dict[str, RunArtifact],
         bundle_root: Path,
         log_dir: Path,
         cache: EvaluationCache,
@@ -86,7 +91,8 @@ class BundleProgram(dspy.Module):
         self.cli_command = cli_command
         self.timeout = timeout
 
-        self.practice_by_pred: dict[str, object] = {}
+        # Map predictor name -> PracticeFile for later feedback attribution.
+        self.practice_by_pred: dict[str, PracticeFile] = {}
 
         for idx, practice in enumerate(seed_bundle.practices.values()):
             pred_name = f"practice_{idx}"
@@ -110,21 +116,30 @@ class BundleProgram(dspy.Module):
     def get_practice_updates(self) -> dict[str, str]:
         return self._current_practice_updates()
 
-    def forward(self, run_ids: list[str]):
+    def forward(self, run_ids: list[str]) -> dspy.Prediction:
+        """
+        GEPA calls this method during search.
+
+        It builds a candidate bundle from the current predictor instructions,
+        replays the run(s) via the external CLI, and returns a score + feedback.
+        """
         batch_ids = self._normalize_run_ids(run_ids)
         if not batch_ids:
             return dspy.Prediction(score=0.0, feedback="No runs provided", feedback_by_pred={})
 
-        # Touch predictors to register trace (no-op output)
+        # Touch predictors so DSPy captures a trace for each practice predictor.
+        # GEPA uses these traces to decide what to update.
         batch_token = ",".join(batch_ids)
         for pred_name in self.practice_by_pred.keys():
             predictor = getattr(self, pred_name)
             predictor(run_ids=batch_token)
 
+        # Build a candidate bundle from the latest predictor instructions.
         updates = self._current_practice_updates()
         candidate_bundle = build_bundle_from_seed(self.seed_bundle, updates)
         bundle_hash = hash_bundle(candidate_bundle.practices)
 
+        # Persist candidate bundle to disk so the CLI can read it.
         written_bundle = write_bundle(
             bundle_root=self.bundle_root,
             bundle=candidate_bundle,
@@ -134,13 +149,14 @@ class BundleProgram(dspy.Module):
             exist_ok=True,
         )
 
-        evaluations = []
+        evaluations: list[EvaluationResult] = []
         for run_id in batch_ids:
             cached = self.cache.get(run_id, bundle_hash)
             if cached:
                 evaluations.append(cached)
                 continue
 
+            # Replay the run using the external evaluator (PromptOpt.CLI).
             run = self.runs_by_id[run_id]
             task_path = prepare_task_dir(run)
             result = evaluate_bundle(
@@ -153,8 +169,10 @@ class BundleProgram(dspy.Module):
             self.cache.set(run_id, bundle_hash, result)
             evaluations.append(result)
 
+        # Aggregate per-run scores into a single GEPA fitness score.
         score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
 
+        # Route per-practice feedback into the correct predictor slot.
         feedback_by_pred = self._build_feedback_map(evaluations)
         overall_feedback = "\n".join(_flatten_notes(evaluations))
 
@@ -185,6 +203,12 @@ class BundleProgram(dspy.Module):
 
 
 def metric_fn(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    """
+    GEPA metric function.
+
+    When GEPA asks for feedback on a *specific predictor*, we return the
+    predictor-targeted feedback. Otherwise, we return the overall score.
+    """
     score = getattr(pred, "score", 0.0)
     if pred_name:
         feedback_map = getattr(pred, "feedback_by_pred", {})
@@ -219,7 +243,12 @@ def _flatten_notes(evaluations: list[EvaluationResult]) -> list[str]:
     return notes
 
 
-def prepare_task_dir(run):
+def prepare_task_dir(run: RunArtifact) -> Path:
+    """
+    Build a minimal "task" directory for the CLI replay.
+
+    The CLI expects a task.md and base_commit.txt file.
+    """
     temp_dir = Path(tempfile.mkdtemp(prefix=f"bendover_replay_{run.run_id}_"))
     (temp_dir / "task.md").write_text(run.goal)
     (temp_dir / "base_commit.txt").write_text(run.base_commit)
@@ -252,7 +281,10 @@ def split_devset(run_ids: list[str]) -> tuple[list[str], list[str]]:
     return run_ids, []
 
 
-def configure_base_lm(lm_mode: str, lm_model: str, cache_enabled: bool = True):
+def configure_base_lm(lm_mode: str, lm_model: str, cache_enabled: bool = True) -> BaseLM:
+    """
+    Base LM is used to generate traces for the predictors (not reflection).
+    """
     if lm_mode not in ("dummy", "model"):
         raise ValueError(f"Unsupported lm_mode: {lm_mode}")
     if lm_mode == "dummy":
@@ -265,7 +297,10 @@ def configure_base_lm(lm_mode: str, lm_model: str, cache_enabled: bool = True):
     return lm
 
 
-def configure_reflection_lm(reflection_lm: str, cache_enabled: bool = True):
+def configure_reflection_lm(reflection_lm: str, cache_enabled: bool = True) -> BaseLM | TestReflectionLM:
+    """
+    Reflection LM is used by GEPA to propose new instructions.
+    """
     if reflection_lm == "test":
         return TestReflectionLM()
     return dspy.LM(reflection_lm, cache=cache_enabled)
@@ -284,6 +319,16 @@ def main(
     batch_size: int = typer.Option(0, help="Batch size for training"),
     disable_dspy_cache: bool = typer.Option(False, help="Disable DSPy memory/disk caches"),
 ):
+    """
+    Entry point for GEPA prompt optimization.
+
+    High-level flow:
+    1) Load run IDs from datasets/train.txt.
+    2) Resolve the active bundle (or fall back to promptopt_root/practices).
+    3) Build a DSPy program with one predictor per practice file.
+    4) Let GEPA reflect on traces + scores to evolve instructions.
+    5) Write the best bundle and update active.json.
+    """
     root = Path(promptopt_root)
     bundles_root = root / "bundles"
     runs_root = root / "runs"
@@ -296,6 +341,7 @@ def main(
     logs_root.mkdir(parents=True, exist_ok=True)
     cache_root.mkdir(parents=True, exist_ok=True)
 
+    # Resolve dataset split path. Default: <promptopt_root>/datasets/train.txt
     if train_split:
         train_split_path = Path(train_split)
         if not train_split_path.is_absolute():
@@ -309,6 +355,7 @@ def main(
     if len(run_ids) > 10:
         raise ValueError("train_split must contain at most 10 run_ids")
 
+    # Resolve the seed bundle. If active.json is missing, fall back to root/practices.
     try:
         active_bundle_id = read_active_bundle_id(active_json)
         seed_bundle_path = bundles_root / active_bundle_id
@@ -330,6 +377,7 @@ def main(
         valset = [dspy.Example(run_ids=batch).with_inputs("run_ids") for batch in val_batches]
 
     cache_enabled = not disable_dspy_cache
+    # DSPy cache can be disabled for deterministic integration tests.
     if disable_dspy_cache:
         configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
@@ -350,6 +398,7 @@ def main(
 
     reflection_minibatch_size = min(3, max(len(trainset), 1))
 
+    # GEPA uses the reflection LM + traces from the base LM to propose new instructions.
     teleprompter = GEPA(
         metric=metric_fn,
         max_full_evals=max_full_evals,

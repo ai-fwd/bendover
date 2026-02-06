@@ -15,6 +15,12 @@ class EvaluationCache:
         return self.root / "evals" / bundle_hash / f"{run_id}.json"
 
     def get(self, run_id: str, bundle_hash: str) -> EvaluationResult | None:
+        """
+        Load a cached evaluation if available.
+
+        Cache key is (run_id + bundle_hash) so the same run can be re-scored
+        across different candidate bundles.
+        """
         path = self._path(run_id, bundle_hash)
         if not path.exists():
             return None
@@ -23,6 +29,7 @@ class EvaluationCache:
         return EvaluationResult.from_dict(evaluation)
 
     def set(self, run_id: str, bundle_hash: str, evaluation: EvaluationResult) -> None:
+        """Persist an evaluation to disk for reuse in later GEPA iterations."""
         path = self._path(run_id, bundle_hash)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {

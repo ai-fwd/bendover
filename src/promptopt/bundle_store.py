@@ -10,6 +10,12 @@ from promptopt.models import Bundle, PracticeFile
 
 
 def read_active_bundle_id(active_json_path: Path) -> str:
+    """
+    Read the active bundle id from active.json.
+
+    This mirrors the CLI resolver: if active.json is missing we let the caller decide
+    how to fall back (e.g., root/practices).
+    """
     if not active_json_path.exists():
         raise FileNotFoundError(f"active.json not found: {active_json_path}")
 
@@ -26,12 +32,14 @@ def read_active_bundle_id(active_json_path: Path) -> str:
 
 
 def update_active_json(active_json_path: Path, bundle_id: str, metadata: dict[str, Any]) -> None:
+    """Persist the active bundle id and metadata after optimization."""
     active_json_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"bundleId": bundle_id, **metadata}
     active_json_path.write_text(json.dumps(payload, indent=2))
 
 
 def _parse_frontmatter(text: str) -> tuple[str, str]:
+    """Split YAML frontmatter from the practice body, if present."""
     if not text.startswith("---\n"):
         return "", text
 
@@ -45,6 +53,7 @@ def _parse_frontmatter(text: str) -> tuple[str, str]:
 
 
 def _extract_name(frontmatter: str, fallback: str) -> str:
+    """Use Name: from frontmatter if available; otherwise fall back to filename."""
     for line in frontmatter.splitlines():
         if ":" not in line:
             continue
@@ -56,6 +65,12 @@ def _extract_name(frontmatter: str, fallback: str) -> str:
 
 
 def load_bundle(bundle_path: Path) -> Bundle:
+    """
+    Load a bundle from disk: practices/*.md + optional meta.json.
+
+    Each practice file is parsed into frontmatter + body, and a stable name is
+    derived from the frontmatter or filename.
+    """
     if not bundle_path.exists():
         raise FileNotFoundError(f"Bundle not found: {bundle_path}")
 
@@ -89,6 +104,9 @@ def load_bundle(bundle_path: Path) -> Bundle:
 
 
 def build_bundle_from_seed(seed: Bundle, updates: dict[str, str]) -> Bundle:
+    """
+    Create a new bundle by applying body updates to the seed practices.
+    """
     practices: dict[str, PracticeFile] = {}
     for file_name, practice in seed.practices.items():
         new_body = updates.get(file_name, practice.body)
@@ -112,6 +130,7 @@ def build_bundle_from_seed(seed: Bundle, updates: dict[str, str]) -> Bundle:
 
 
 def hash_bundle(practices: dict[str, PracticeFile]) -> str:
+    """Hash the practice bodies to produce a deterministic bundle id."""
     content = "".join([practices[name].body for name in sorted(practices.keys())])
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
@@ -124,6 +143,9 @@ def write_bundle(
     metadata: dict[str, Any] | None = None,
     exist_ok: bool = True,
 ) -> Bundle:
+    """
+    Persist a bundle to disk under bundles/<bundle_id>/practices.
+    """
     bundle_root.mkdir(parents=True, exist_ok=True)
 
     content_hash = hash_bundle(bundle.practices)

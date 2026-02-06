@@ -7,6 +7,13 @@ from promptopt.models import RunArtifact
 
 
 def load_run_artifact(runs_root: Path, run_id: str) -> RunArtifact:
+    """
+    Load a recorded run from .bendover/promptopt/runs/<run_id>.
+
+    Required:
+    - goal.txt
+    - base_commit.txt (or run_meta.json with base_commit)
+    """
     run_dir = runs_root / run_id
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")

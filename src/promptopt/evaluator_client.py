@@ -9,6 +9,7 @@ from promptopt.models import EvaluationResult, PracticeAttribution
 
 
 def _get_ci(data: dict, key: str, default=None):
+    """Case-insensitive lookup helper for evaluator.json fields."""
     for candidate in (key, key.lower(), key.upper()):
         if candidate in data:
             return data[candidate]
@@ -19,6 +20,7 @@ def _get_ci(data: dict, key: str, default=None):
 
 
 def _parse_practice_attribution(data: dict) -> PracticeAttribution:
+    """Normalize practice attribution block from evaluator.json."""
     practice = _get_ci(data, "practice_attribution", {}) or {}
     selected = _get_ci(practice, "selected_practices", []) or []
     offending = _get_ci(practice, "offending_practices", []) or []
@@ -37,6 +39,7 @@ def _parse_practice_attribution(data: dict) -> PracticeAttribution:
 
 
 def parse_evaluator_json(path: Path) -> EvaluationResult:
+    """Parse evaluator.json into a typed EvaluationResult."""
     data = json.loads(path.read_text())
     passed = bool(_get_ci(data, "pass", False))
     score = float(_get_ci(data, "score", 0.0))
@@ -61,6 +64,11 @@ def evaluate_bundle(
     log_dir: Path,
     timeout_seconds: int,
 ) -> EvaluationResult:
+    """
+    Execute the PromptOpt CLI against a bundle + task and parse evaluator.json.
+
+    This function is the bridge between GEPA and the real agentic evaluation loop.
+    """
     bundle_path = Path(bundle_path)
     task_path = Path(task_path)
     log_dir = Path(log_dir)
