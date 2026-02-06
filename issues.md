@@ -31,10 +31,11 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] Rule for building solution successfully `dotnet build Bendover.sln`
 - [ ] Rule for running test at solution successfully `dotnet test Bendover.sln`
 - [x] Using a StubAgentRunner. Needs to use the actual AgentOrchestrator 
+- [ ] Ensure metric_fn & design is correct for practice specific mutation
 
 ## SDK
 - [ ]
 
 ## promptopt (Python)
-- [ ] --target-practice-file limits to just 1 practice update. Auto choose based on evaluator flags (i.e. SkippingTDD -> tdd_spirit.md)
+- [x] --target-practice-file limits to just 1 practice update. Auto choose based on evaluator flags (i.e. SkippingTDD -> tdd_spirit.md)
 - [x] missing a way to configure the reflection lm to use gpt oss
