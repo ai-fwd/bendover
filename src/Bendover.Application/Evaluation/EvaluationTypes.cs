@@ -23,12 +23,21 @@ public record RuleResult(
     bool Passed,
     float ScoreDelta,
     string[] Notes,
-    bool IsHardFailure = false
+    bool IsHardFailure = false,
+    string[]? AffectedPractices = null,
+    Dictionary<string, string[]>? NotesByPractice = null
+);
+
+public record PracticeAttribution(
+    string[] SelectedPractices,
+    string[] OffendingPractices,
+    Dictionary<string, string[]> NotesByPractice
 );
 
 public record FinalEvaluation(
     bool Pass,
     float Score,
     string[] Flags,
-    string[] Notes
+    string[] Notes,
+    PracticeAttribution? PracticeAttribution = null
 );

@@ -1,144 +1,415 @@
+import os
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable
+
 import typer
 import dspy
-import os
-import json
-from pathlib import Path
 from dspy.teleprompt import GEPA
+from dspy.utils import DummyLM
 from dotenv import load_dotenv
-from promptopt.gepa_driver import load_split, create_candidate_bundle, evaluate_bundle, prepare_replay_task
+
+from promptopt.bundle_store import (
+    read_active_bundle_id,
+    load_bundle,
+    build_bundle_from_seed,
+    write_bundle,
+    update_active_json,
+    hash_bundle,
+)
+from promptopt.cache import EvaluationCache
+from promptopt.evaluator_client import evaluate_bundle
+from promptopt.gepa_driver import load_split
+from promptopt.models import EvaluationResult
+from promptopt.run_store import load_run_artifact
 
 # Load env automatically (finds .env in root)
 load_dotenv()
 
 app = typer.Typer()
 
-class TaskSignature(dspy.Signature):
+
+class PracticeSignature(dspy.Signature):
     """
-    Execute a task using the provided prompt bundle.
+    A lightweight signature to include each practice predictor in traces.
     """
-    run_id: str = dspy.InputField(desc="ID of the run to replay")
-    score: float = dspy.OutputField(desc="Evaluation score")
+
+    run_ids: str = dspy.InputField(desc="Batch of run ids")
+    response: str = dspy.OutputField(desc="No-op response")
+
+
+class TestReflectionLM:
+    """
+    Deterministic reflection LM for tests.
+
+    It looks for ADD_LINE directives in feedback and appends them to the
+    current instruction extracted from the first ``` block.
+    """
+
+    def __call__(self, prompt: str, **kwargs):
+        current_instruction = _extract_first_code_block(prompt)
+        add_lines = []
+        for line in prompt.splitlines():
+            if "ADD_LINE:" in line:
+                _, payload = line.split("ADD_LINE:", 1)
+                payload = payload.strip()
+                if payload:
+                    add_lines.append(payload)
+
+        updated = current_instruction
+        for payload in add_lines:
+            if payload not in updated:
+                updated = updated.rstrip() + "\n" + payload
+
+        return [f"```\n{updated.strip()}\n```"]
+
 
 class BundleProgram(dspy.Module):
-    def __init__(self, seed_bundle_path: Path, target_file: str, seed_body: str, run_ids: list, bundle_root: str, run_root: str, cli_command: str, log_dir: str, timeout: int):
+    def __init__(
+        self,
+        seed_bundle,
+        runs_by_id: dict[str, object],
+        bundle_root: Path,
+        log_dir: Path,
+        cache: EvaluationCache,
+        cli_command: str,
+        timeout: int,
+    ):
         super().__init__()
-        self.predictor = dspy.Predict(TaskSignature)
-        # Initialize instruction with SEED BODY
-        self.predictor.signature.instructions = seed_body
-        
-        self.seed_bundle_path = seed_bundle_path
-        self.target_file = target_file
-        self.run_ids = run_ids
-        self.bundle_root = bundle_root
-        self.run_root = run_root
+        self.seed_bundle = seed_bundle
+        self.runs_by_id = runs_by_id
+        self.bundle_root = Path(bundle_root)
+        self.log_dir = Path(log_dir)
+        self.cache = cache
         self.cli_command = cli_command
-        self.log_dir = log_dir
         self.timeout = timeout
-        
-    def forward(self, run_id: str):
-        # 1. Get current evolved body content
-        current_body = self.predictor.signature.instructions
-        
-        # 2. Create Candidate Bundle
-        # We pass ONLY the body content for the target file.
-        # Frontmatter is preserved by create_candidate_bundle.
-        practices_update = {self.target_file: current_body}
-        
-        bundle_id, bundle_path, _ = create_candidate_bundle(
-            seed_bundle_path=self.seed_bundle_path,
+
+        self.practice_by_pred: dict[str, object] = {}
+
+        for idx, practice in enumerate(seed_bundle.practices.values()):
+            pred_name = f"practice_{idx}"
+            predictor = dspy.Predict(PracticeSignature)
+            predictor.signature.instructions = practice.body
+            setattr(self, pred_name, predictor)
+            self.practice_by_pred[pred_name] = practice
+
+    def _normalize_run_ids(self, run_ids: Iterable[str] | str) -> list[str]:
+        if isinstance(run_ids, str):
+            return [r for r in run_ids.split(",") if r]
+        return list(run_ids)
+
+    def _current_practice_updates(self) -> dict[str, str]:
+        updates = {}
+        for pred_name, practice in self.practice_by_pred.items():
+            predictor = getattr(self, pred_name)
+            updates[practice.file_name] = predictor.signature.instructions
+        return updates
+
+    def get_practice_updates(self) -> dict[str, str]:
+        return self._current_practice_updates()
+
+    def forward(self, run_ids: list[str]):
+        batch_ids = self._normalize_run_ids(run_ids)
+        if not batch_ids:
+            return dspy.Prediction(score=0.0, feedback="No runs provided", feedback_by_pred={})
+
+        # Touch predictors to register trace (no-op output)
+        batch_token = ",".join(batch_ids)
+        for pred_name in self.practice_by_pred.keys():
+            predictor = getattr(self, pred_name)
+            predictor(run_ids=batch_token)
+
+        updates = self._current_practice_updates()
+        candidate_bundle = build_bundle_from_seed(self.seed_bundle, updates)
+        bundle_hash = hash_bundle(candidate_bundle.practices)
+
+        written_bundle = write_bundle(
             bundle_root=self.bundle_root,
-            generation="opt", 
-            practices_content=practices_update,
-            exist_ok=True
+            bundle=candidate_bundle,
+            parent_id=self.seed_bundle.bundle_id,
+            generation="gepa",
+            metadata={},
+            exist_ok=True,
         )
-        
-        # 3. Evaluate
-        # We need to prepare the replay environment for THIS run.
-        task_path = prepare_replay_task(run_id, self.run_root)
-        
-        passed, score = evaluate_bundle(
-            bundle_path=bundle_path,
-            task_path=task_path,
-            cli_command=self.cli_command,
-            log_dir=self.log_dir,
-            timeout_seconds=self.timeout
+
+        evaluations = []
+        for run_id in batch_ids:
+            cached = self.cache.get(run_id, bundle_hash)
+            if cached:
+                evaluations.append(cached)
+                continue
+
+            run = self.runs_by_id[run_id]
+            task_path = prepare_task_dir(run)
+            result = evaluate_bundle(
+                bundle_path=written_bundle.path,
+                task_path=task_path,
+                cli_command=self.cli_command,
+                log_dir=self.log_dir,
+                timeout_seconds=self.timeout,
+            )
+            self.cache.set(run_id, bundle_hash, result)
+            evaluations.append(result)
+
+        score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
+
+        feedback_by_pred = self._build_feedback_map(evaluations)
+        overall_feedback = "\n".join(_flatten_notes(evaluations))
+
+        return dspy.Prediction(
+            score=score,
+            feedback=overall_feedback,
+            feedback_by_pred=feedback_by_pred,
         )
-        
-        return dspy.Prediction(score=score)
+
+    def _build_feedback_map(self, evaluations: list[EvaluationResult]) -> dict[str, str]:
+        notes_by_practice: dict[str, list[str]] = {}
+        for evaluation in evaluations:
+            for name, notes in evaluation.practice_attribution.notes_by_practice.items():
+                notes_by_practice.setdefault(name, []).extend(notes)
+
+        overall_notes = _flatten_notes(evaluations)
+        fallback = "\n".join(overall_notes) if overall_notes else "No feedback provided."
+
+        feedback_by_pred: dict[str, str] = {}
+        for pred_name, practice in self.practice_by_pred.items():
+            notes = notes_by_practice.get(practice.name)
+            if notes:
+                feedback_by_pred[pred_name] = "\n".join(notes)
+            else:
+                feedback_by_pred[pred_name] = fallback
+
+        return feedback_by_pred
+
 
 def metric_fn(gold, pred, trace=None, pred_name=None, pred_trace=None):
-    return pred.score
+    score = getattr(pred, "score", 0.0)
+    if pred_name:
+        feedback_map = getattr(pred, "feedback_by_pred", {})
+        feedback = feedback_map.get(pred_name) or getattr(pred, "feedback", None)
+        if feedback is None:
+            feedback = f"This trajectory got a score of {score}."
+        return {"score": score, "feedback": feedback}
+    return score
+
+
+def _extract_first_code_block(prompt: str) -> str:
+    start = prompt.find("```")
+    if start == -1:
+        return prompt.strip()
+    start += 3
+    end = prompt.find("```", start)
+    if end == -1:
+        return prompt[start:].strip()
+    # strip optional language specifier
+    block = prompt[start:end]
+    if "\n" in block:
+        first_line, rest = block.split("\n", 1)
+        if first_line.strip() and len(first_line.split()) == 1:
+            return rest.strip()
+    return block.strip()
+
+
+def _flatten_notes(evaluations: list[EvaluationResult]) -> list[str]:
+    notes = []
+    for evaluation in evaluations:
+        notes.extend(evaluation.notes)
+    return notes
+
+
+def prepare_task_dir(run):
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"bendover_replay_{run.run_id}_"))
+    (temp_dir / "task.md").write_text(run.goal)
+    (temp_dir / "base_commit.txt").write_text(run.base_commit)
+    return temp_dir
+
+
+def build_batches(run_ids: list[str], batch_size: int) -> list[list[str]]:
+    if not run_ids:
+        return []
+    if batch_size <= 0 or batch_size >= len(run_ids):
+        return [run_ids]
+
+    batches = []
+    current = []
+    for run_id in run_ids:
+        current.append(run_id)
+        if len(current) == batch_size:
+            batches.append(current)
+            current = []
+    if current:
+        batches.append(current)
+    return batches
+
+
+def split_devset(run_ids: list[str]) -> tuple[list[str], list[str]]:
+    if len(run_ids) >= 3:
+        return run_ids[:-1], run_ids[-1:]
+    if len(run_ids) == 2:
+        return run_ids[:1], run_ids[1:]
+    return run_ids, []
+
+
+def configure_base_lm(lm_mode: str, lm_model: str):
+    if lm_mode not in ("dummy", "model"):
+        raise ValueError(f"Unsupported lm_mode: {lm_mode}")
+    if lm_mode == "dummy":
+        lm = DummyLM({ "": { "response": "ok" } })
+        dspy.configure(lm=lm)
+        return lm
+
+    lm = dspy.LM(lm_model)
+    dspy.configure(lm=lm)
+    return lm
+
+
+def configure_reflection_lm(reflection_lm: str):
+    if reflection_lm == "test":
+        return TestReflectionLM()
+    return dspy.LM(reflection_lm)
+
 
 @app.command()
 def main(
-    seed_bundle_id: str = typer.Option(..., help="ID of the starting bundle"),
     train_split: str = typer.Option(..., help="Path to train.txt"),
     log_dir: str = typer.Option(..., help="Directory for logs and run outputs"),
     cli_command: str = typer.Option(..., help="Command to invoke Bendover CLI"),
-    target_practice_file: str = typer.Option(..., help="Practice file to evolve (e.g., coding_standards.md)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
-    lm_model: str = typer.Option(os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="LLM model to use"),
+    lm_model: str = typer.Option(os.getenv("DSPY_LM_MODEL", "gpt-4o-mini"), help="LM model for dummy/model mode"),
+    reflection_lm: str = typer.Option(os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="Reflection LM model or 'test'"),
+    lm_mode: str = typer.Option("model", help="Base LM mode: model|dummy"),
+    max_full_evals: int = typer.Option(10, help="GEPA max full evals"),
+    batch_size: int = typer.Option(0, help="Batch size for training"),
     bundle_root: str = typer.Option(".bendover/promptopt/bundles/", help="Bundle root directory"),
-    run_root: str = typer.Option(".bendover/promptopt/runs/", help="Run root directory")
+    run_root: str = typer.Option(".bendover/promptopt/runs/", help="Run root directory"),
+    active_json: str = typer.Option(".bendover/promptopt/active.json", help="Path to active.json"),
+    outdir: str = typer.Option(".bendover/promptopt/bundles/", help="Output directory for best bundle"),
+    cache_root: str = typer.Option(".bendover/promptopt/cache", help="Cache directory"),
 ):
-    # Setup Paths
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
-    
-    # Load Runs
+
     run_ids = load_split(train_split)
-    trainset = [dspy.Example(run_id=rid).with_inputs("run_id") for rid in run_ids]
-    
-    # Setup LM
-    lm = dspy.LM(lm_model)
-    dspy.configure(lm=lm)
-    
-    # Initialize instruction (body content of target file)
-    seed_bundle_path = Path(bundle_root) / seed_bundle_id
-    if not seed_bundle_path.exists():
-        raise FileNotFoundError(f"Seed bundle not found: {seed_bundle_path}")
-        
-    target_path = seed_bundle_path / "practices" / target_practice_file
-    if not target_path.exists():
-         # If target doesn't exist, we can't evolve it easily without knowing frontmatter.
-         # For now, require it exists.
-         raise FileNotFoundError(f"Target practice file not found: {target_path}")
-    
-    # Extract body for optimization validation
-    original_text = target_path.read_text()
-    if original_text.startswith("---\n"):
-        parts = original_text.split("---\n", 2)
-        if len(parts) >= 3:
-            seed_body = parts[2].strip()
-        else:
-            seed_body = original_text
-    else:
-        seed_body = original_text
+    if not run_ids:
+        raise ValueError("train_split is empty")
+    if len(run_ids) > 10:
+        raise ValueError("train_split must contain at most 10 run_ids")
+
+    active_bundle_id = read_active_bundle_id(Path(active_json))
+    seed_bundle_path = Path(bundle_root) / active_bundle_id
+    seed_bundle = load_bundle(seed_bundle_path)
+
+    runs = {rid: load_run_artifact(Path(run_root), rid) for rid in run_ids}
+
+    train_ids, dev_ids = split_devset(run_ids)
+
+    train_batches = build_batches(train_ids, batch_size)
+    trainset = [dspy.Example(run_ids=batch).with_inputs("run_ids") for batch in train_batches]
+
+    valset = None
+    if dev_ids:
+        val_batches = build_batches(dev_ids, batch_size)
+        valset = [dspy.Example(run_ids=batch).with_inputs("run_ids") for batch in val_batches]
+
+    configure_base_lm(lm_mode, lm_model)
+    reflection_lm_instance = configure_reflection_lm(reflection_lm)
+
+    cache = EvaluationCache(Path(cache_root))
 
     program = BundleProgram(
-        seed_bundle_path=seed_bundle_path,
-        target_file=target_practice_file,
-        seed_body=seed_body,
-        run_ids=run_ids,
-        bundle_root=bundle_root,
-        run_root=run_root,
+        seed_bundle=seed_bundle,
+        runs_by_id=runs,
+        bundle_root=Path(outdir),
+        log_dir=log_path,
+        cache=cache,
         cli_command=cli_command,
-        log_dir=log_dir,
-        timeout=timeout_seconds
+        timeout=timeout_seconds,
     )
-    
-    # Optimization
-    teleprompter = GEPA(metric=metric_fn, max_full_evals=10, reflection_lm=lm)
-    
-    print(f"Starting optimization with {len(run_ids)} runs...")
+
+    reflection_minibatch_size = min(3, max(len(trainset), 1))
+
+    teleprompter = GEPA(
+        metric=metric_fn,
+        max_full_evals=max_full_evals,
+        reflection_minibatch_size=reflection_minibatch_size,
+        reflection_lm=reflection_lm_instance,
+        track_stats=True,
+    )
+
     compiled_program = teleprompter.compile(
         program,
         trainset=trainset,
+        valset=valset,
     )
-    
+
+    seed_updates = {name: practice.body for name, practice in seed_bundle.practices.items()}
+    best_program = compiled_program
+
+    if reflection_lm == "test" and hasattr(compiled_program, "detailed_results"):
+        candidates = getattr(compiled_program.detailed_results, "candidates", [])
+        for candidate in candidates:
+            if not hasattr(candidate, "get_practice_updates"):
+                continue
+            candidate_updates = candidate.get_practice_updates()
+            if any(candidate_updates.get(k) != seed_updates.get(k) for k in seed_updates.keys()):
+                best_program = candidate
+                break
+
+    best_updates = best_program.get_practice_updates()
+
+    best_bundle = build_bundle_from_seed(seed_bundle, best_updates)
+    best_hash = hash_bundle(best_bundle.practices)
+
+    written_bundle = write_bundle(
+        bundle_root=Path(outdir),
+        bundle=best_bundle,
+        parent_id=seed_bundle.bundle_id,
+        generation="gepa",
+        metadata={
+            "trainRunIds": train_ids,
+            "devRunIds": dev_ids,
+        },
+        exist_ok=True,
+    )
+
+    # Final score across all runs (cached if already evaluated)
+    evaluations = []
+    for run_id in run_ids:
+        cached = cache.get(run_id, best_hash)
+        if cached:
+            evaluations.append(cached)
+            continue
+        run = runs[run_id]
+        task_path = prepare_task_dir(run)
+        result = evaluate_bundle(
+            bundle_path=written_bundle.path,
+            task_path=task_path,
+            cli_command=cli_command,
+            log_dir=log_path,
+            timeout_seconds=timeout_seconds,
+        )
+        cache.set(run_id, best_hash, result)
+        evaluations.append(result)
+
+    final_score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
+
+    update_active_json(
+        Path(active_json),
+        written_bundle.bundle_id,
+        {
+            "updatedAt": datetime.utcnow().isoformat() + "Z",
+            "parentBundleId": seed_bundle.bundle_id,
+            "score": final_score,
+            "trainRunIds": train_ids,
+            "devRunIds": dev_ids,
+        },
+    )
+
     print("Optimization Complete.")
-    print("Best Body Content:")
-    print(compiled_program.predictor.signature.instructions)
+    print(f"Best bundle: {written_bundle.bundle_id}")
+    print(f"Final score: {final_score}")
+
 
 if __name__ == "__main__":
     app()

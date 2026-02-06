@@ -18,6 +18,8 @@ public class EvaluatorEngine
         float score = 1.0f;
         var notes = new List<string>();
         var flags = new List<string>();
+        var offendingPractices = new HashSet<string>();
+        var notesByPractice = new Dictionary<string, List<string>>();
         bool hardFailure = false;
 
         foreach (var rule in _rules)
@@ -52,17 +54,49 @@ public class EvaluatorEngine
             {
                 notes.AddRange(result.Notes);
             }
+
+            if (result.AffectedPractices != null && !result.Passed)
+            {
+                foreach (var practice in result.AffectedPractices)
+                {
+                    offendingPractices.Add(practice);
+                }
+            }
+
+            if (result.NotesByPractice != null)
+            {
+                foreach (var entry in result.NotesByPractice)
+                {
+                    if (!notesByPractice.TryGetValue(entry.Key, out var list))
+                    {
+                        list = new List<string>();
+                        notesByPractice[entry.Key] = list;
+                    }
+
+                    list.AddRange(entry.Value);
+                }
+            }
+        }
+
+        PracticeAttribution? attribution = null;
+        if (offendingPractices.Count > 0 || notesByPractice.Count > 0)
+        {
+            attribution = new PracticeAttribution(
+                SelectedPractices: Array.Empty<string>(),
+                OffendingPractices: offendingPractices.ToArray(),
+                NotesByPractice: notesByPractice.ToDictionary(k => k.Key, v => v.Value.ToArray())
+            );
         }
 
         if (hardFailure)
         {
-            return new FinalEvaluation(false, 0.0f, flags.ToArray(), notes.ToArray());
+            return new FinalEvaluation(false, 0.0f, flags.ToArray(), notes.ToArray(), attribution);
         }
 
         // Clamp
         if (score < 0.0f) score = 0.0f;
         if (score > 1.0f) score = 1.0f;
 
-        return new FinalEvaluation(true, score, flags.ToArray(), notes.ToArray());
+        return new FinalEvaluation(true, score, flags.ToArray(), notes.ToArray(), attribution);
     }
 }

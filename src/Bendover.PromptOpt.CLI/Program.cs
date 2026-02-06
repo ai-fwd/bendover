@@ -1,5 +1,7 @@
 ﻿using System.ComponentModel;
 using System.IO.Abstractions;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Bendover.Application;
@@ -34,6 +36,49 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, RunCommandSettings settings, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(settings.StubEvalJson))
+        {
+            if (string.IsNullOrWhiteSpace(settings.Out))
+            {
+                throw new InvalidOperationException("--out is required when using --stub-eval-json.");
+            }
+
+            Directory.CreateDirectory(settings.Out);
+            var targetPath = Path.Combine(settings.Out, "evaluator.json");
+
+            var jsonText = File.ReadAllText(settings.StubEvalJson);
+            var node = JsonNode.Parse(jsonText) as JsonObject ?? new JsonObject();
+
+            if (node.TryGetPropertyValue("score_if_contains", out var ruleNode) && ruleNode is JsonObject rule)
+            {
+                var file = rule["file"]?.GetValue<string>();
+                var needle = rule["needle"]?.GetValue<string>();
+                var score = rule["score"]?.GetValue<double>();
+
+                if (!string.IsNullOrWhiteSpace(file) && !string.IsNullOrWhiteSpace(needle) && score.HasValue)
+                {
+                    if (!string.IsNullOrWhiteSpace(settings.Bundle))
+                    {
+                        var practicePath = Path.Combine(settings.Bundle, "practices", file);
+                        if (File.Exists(practicePath))
+                        {
+                            var content = File.ReadAllText(practicePath);
+                            if (content.Contains(needle, StringComparison.Ordinal))
+                            {
+                                node["score"] = score.Value;
+                                node["pass"] = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            node.Remove("score_if_contains");
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(targetPath, node.ToJsonString(options));
+            return 0;
+        }
+
         var services = new ServiceCollection();
 
         Env.TraversePath().Load();
@@ -108,4 +153,8 @@ public class RunCommandSettings : CommandSettings
     [CommandOption("--out <PATH>")]
     [Description("Path to the output directory")]
     public required string Out { get; init; }
+
+    [CommandOption("--stub-eval-json <PATH>")]
+    [Description("Write evaluator.json from a stub file and exit")]
+    public string? StubEvalJson { get; init; }
 }
