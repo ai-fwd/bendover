@@ -195,25 +195,22 @@ Bendover uses a unified **Replay Workflow** to optimize agent practices using [D
    - `OPENAI_*` / `DSPY_*`: For reflection models used by GEPA.
 
 #### 2. Create a Split
-Create a text file (e.g., `promptopt/datasets/train.txt`) listing the IDs of the runs you want to optimize against:
+Create a text file at `.bendover/promptopt/datasets/train.txt` listing the IDs of the runs you want to optimize against:
 ```text
 20260130_100000_abc123
 20260130_110000_def456
 ```
 
 #### 3. Run GEPA
-Execute the optimization script, specifying the target practice file you want to evolve.
+Execute the optimization script using the prompt optimization root. By default it reads `datasets/train.txt` under that root.
 
 ```bash
 export PYTHONPATH=$PYTHONPATH:$(pwd)/src && ./src/promptopt/.venv/bin/python -m promptopt.run_gepa \
-  --seed-bundle-id seed_bundle_1 \
-  --train-split .bendover/promptopt/datasets/train.txt \
-  --log-dir .bendover/promptopt/logs \
+  --promptopt-root .bendover/promptopt \
   --cli-command "dotnet run --project src/Bendover.PromptOpt.CLI --" \
-  --target-practice-file tdd_spirit.md \
-  --timeout-seconds 900 \
-  --bundle-root .bendover/promptopt/bundles \
-  --run-root .bendover/promptopt/runs
+  --max-full-evals 10
 ```
 
-The optimizer will output the evolved body content for the target practice file.
+Logs (GEPA + evaluator output) are written under `.bendover/promptopt/logs`.
+
+If you need to bypass DSPy caches (e.g., for testing), add `--disable-dspy-cache`.

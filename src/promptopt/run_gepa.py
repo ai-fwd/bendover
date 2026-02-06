@@ -6,6 +6,7 @@ from typing import Iterable
 
 import typer
 import dspy
+from dspy.clients import configure_cache
 from dspy.teleprompt import GEPA
 from dspy.utils import DummyLM
 from dotenv import load_dotenv
@@ -251,7 +252,7 @@ def split_devset(run_ids: list[str]) -> tuple[list[str], list[str]]:
     return run_ids, []
 
 
-def configure_base_lm(lm_mode: str, lm_model: str):
+def configure_base_lm(lm_mode: str, lm_model: str, cache_enabled: bool = True):
     if lm_mode not in ("dummy", "model"):
         raise ValueError(f"Unsupported lm_mode: {lm_mode}")
     if lm_mode == "dummy":
@@ -259,48 +260,64 @@ def configure_base_lm(lm_mode: str, lm_model: str):
         dspy.configure(lm=lm)
         return lm
 
-    lm = dspy.LM(lm_model)
+    lm = dspy.LM(lm_model, cache=cache_enabled)
     dspy.configure(lm=lm)
     return lm
 
 
-def configure_reflection_lm(reflection_lm: str):
+def configure_reflection_lm(reflection_lm: str, cache_enabled: bool = True):
     if reflection_lm == "test":
         return TestReflectionLM()
-    return dspy.LM(reflection_lm)
+    return dspy.LM(reflection_lm, cache=cache_enabled)
 
 
 @app.command()
 def main(
-    train_split: str = typer.Option(..., help="Path to train.txt"),
-    log_dir: str = typer.Option(..., help="Directory for logs and run outputs"),
     cli_command: str = typer.Option(..., help="Command to invoke Bendover CLI"),
+    promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
+    train_split: str | None = typer.Option(None, help="Path to train.txt (defaults to datasets/train.txt)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
     lm_model: str = typer.Option(os.getenv("DSPY_LM_MODEL", "gpt-4o-mini"), help="LM model for dummy/model mode"),
     reflection_lm: str = typer.Option(os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="Reflection LM model or 'test'"),
     lm_mode: str = typer.Option("model", help="Base LM mode: model|dummy"),
     max_full_evals: int = typer.Option(10, help="GEPA max full evals"),
     batch_size: int = typer.Option(0, help="Batch size for training"),
-    bundle_root: str = typer.Option(".bendover/promptopt/bundles/", help="Bundle root directory"),
-    run_root: str = typer.Option(".bendover/promptopt/runs/", help="Run root directory"),
-    active_json: str = typer.Option(".bendover/promptopt/active.json", help="Path to active.json"),
-    outdir: str = typer.Option(".bendover/promptopt/bundles/", help="Output directory for best bundle"),
-    cache_root: str = typer.Option(".bendover/promptopt/cache", help="Cache directory"),
+    disable_dspy_cache: bool = typer.Option(False, help="Disable DSPy memory/disk caches"),
 ):
-    log_path = Path(log_dir)
-    log_path.mkdir(parents=True, exist_ok=True)
+    root = Path(promptopt_root)
+    bundles_root = root / "bundles"
+    runs_root = root / "runs"
+    datasets_root = root / "datasets"
+    logs_root = root / "logs"
+    cache_root = root / "cache"
+    active_json = root / "active.json"
 
-    run_ids = load_split(train_split)
+    bundles_root.mkdir(parents=True, exist_ok=True)
+    logs_root.mkdir(parents=True, exist_ok=True)
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    if train_split:
+        train_split_path = Path(train_split)
+        if not train_split_path.is_absolute():
+            train_split_path = root / train_split_path
+    else:
+        train_split_path = datasets_root / "train.txt"
+
+    run_ids = load_split(str(train_split_path))
     if not run_ids:
         raise ValueError("train_split is empty")
     if len(run_ids) > 10:
         raise ValueError("train_split must contain at most 10 run_ids")
 
-    active_bundle_id = read_active_bundle_id(Path(active_json))
-    seed_bundle_path = Path(bundle_root) / active_bundle_id
+    try:
+        active_bundle_id = read_active_bundle_id(active_json)
+        seed_bundle_path = bundles_root / active_bundle_id
+    except FileNotFoundError:
+        seed_bundle_path = root
+
     seed_bundle = load_bundle(seed_bundle_path)
 
-    runs = {rid: load_run_artifact(Path(run_root), rid) for rid in run_ids}
+    runs = {rid: load_run_artifact(runs_root, rid) for rid in run_ids}
 
     train_ids, dev_ids = split_devset(run_ids)
 
@@ -312,16 +329,20 @@ def main(
         val_batches = build_batches(dev_ids, batch_size)
         valset = [dspy.Example(run_ids=batch).with_inputs("run_ids") for batch in val_batches]
 
-    configure_base_lm(lm_mode, lm_model)
-    reflection_lm_instance = configure_reflection_lm(reflection_lm)
+    cache_enabled = not disable_dspy_cache
+    if disable_dspy_cache:
+        configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
-    cache = EvaluationCache(Path(cache_root))
+    configure_base_lm(lm_mode, lm_model, cache_enabled=cache_enabled)
+    reflection_lm_instance = configure_reflection_lm(reflection_lm, cache_enabled=cache_enabled)
+
+    cache = EvaluationCache(cache_root)
 
     program = BundleProgram(
         seed_bundle=seed_bundle,
         runs_by_id=runs,
-        bundle_root=Path(outdir),
-        log_dir=log_path,
+        bundle_root=bundles_root,
+        log_dir=logs_root,
         cache=cache,
         cli_command=cli_command,
         timeout=timeout_seconds,
@@ -334,6 +355,7 @@ def main(
         max_full_evals=max_full_evals,
         reflection_minibatch_size=reflection_minibatch_size,
         reflection_lm=reflection_lm_instance,
+        log_dir=str(logs_root),
         track_stats=True,
     )
 
@@ -362,7 +384,7 @@ def main(
     best_hash = hash_bundle(best_bundle.practices)
 
     written_bundle = write_bundle(
-        bundle_root=Path(outdir),
+        bundle_root=bundles_root,
         bundle=best_bundle,
         parent_id=seed_bundle.bundle_id,
         generation="gepa",
@@ -386,7 +408,7 @@ def main(
             bundle_path=written_bundle.path,
             task_path=task_path,
             cli_command=cli_command,
-            log_dir=log_path,
+            log_dir=logs_root,
             timeout_seconds=timeout_seconds,
         )
         cache.set(run_id, best_hash, result)
@@ -395,7 +417,7 @@ def main(
     final_score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
 
     update_active_json(
-        Path(active_json),
+        active_json,
         written_bundle.bundle_id,
         {
             "updatedAt": datetime.utcnow().isoformat() + "Z",

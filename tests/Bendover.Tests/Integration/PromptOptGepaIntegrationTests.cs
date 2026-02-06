@@ -20,7 +20,6 @@ public class PromptOptGepaIntegrationTests
             var runsRoot = Path.Combine(promptOptRoot, "runs");
             var datasetsRoot = Path.Combine(promptOptRoot, "datasets");
             var logsRoot = Path.Combine(promptOptRoot, "logs");
-            var cacheRoot = Path.Combine(promptOptRoot, "cache");
             Directory.CreateDirectory(bundlesRoot);
             Directory.CreateDirectory(runsRoot);
             Directory.CreateDirectory(datasetsRoot);
@@ -88,28 +87,17 @@ public class PromptOptGepaIntegrationTests
 
             startInfo.ArgumentList.Add("-m");
             startInfo.ArgumentList.Add("promptopt.run_gepa");
-            startInfo.ArgumentList.Add("--train-split");
-            startInfo.ArgumentList.Add(trainTxt);
-            startInfo.ArgumentList.Add("--log-dir");
-            startInfo.ArgumentList.Add(logsRoot);
             startInfo.ArgumentList.Add("--cli-command");
             startInfo.ArgumentList.Add(cliCommand);
-            startInfo.ArgumentList.Add("--bundle-root");
-            startInfo.ArgumentList.Add(bundlesRoot);
-            startInfo.ArgumentList.Add("--run-root");
-            startInfo.ArgumentList.Add(runsRoot);
-            startInfo.ArgumentList.Add("--active-json");
-            startInfo.ArgumentList.Add(activeJsonPath);
-            startInfo.ArgumentList.Add("--outdir");
-            startInfo.ArgumentList.Add(bundlesRoot);
-            startInfo.ArgumentList.Add("--cache-root");
-            startInfo.ArgumentList.Add(cacheRoot);
+            startInfo.ArgumentList.Add("--promptopt-root");
+            startInfo.ArgumentList.Add(promptOptRoot);
+            startInfo.ArgumentList.Add("--disable-dspy-cache");
             startInfo.ArgumentList.Add("--max-full-evals");
             startInfo.ArgumentList.Add("4");
 
             var pythonPath = Path.Combine(repoRoot, "src");
             startInfo.Environment["PYTHONPATH"] = pythonPath;
-            startInfo.Environment["DSPY_CACHE_DIR"] = Path.Combine(tempRoot, ".dspy_cache");
+            startInfo.Environment["DSPY_CACHEDIR"] = Path.Combine(tempRoot, ".dspy_cache");
 
             using var process = Process.Start(startInfo);
             if (process == null)

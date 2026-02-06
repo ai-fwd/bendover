@@ -78,23 +78,18 @@ def mock_dependencies(tmp_path):
 
 def test_cli_invocation_format(mock_dependencies, tmp_path):
     deps = mock_dependencies
+    promptopt_root = tmp_path / "promptopt"
 
     result = runner.invoke(app, [
-        "--train-split", "train.txt",
-        "--log-dir", str(tmp_path / "logs"),
+        "--promptopt-root", str(promptopt_root),
         "--cli-command", "bendover-cli",
-        "--active-json", str(tmp_path / "active.json"),
-        "--bundle-root", str(tmp_path / "bundles"),
-        "--run-root", str(tmp_path / "runs"),
-        "--outdir", str(tmp_path / "out"),
-        "--cache-root", str(tmp_path / "cache"),
         "--lm-mode", "dummy",
         "--reflection-lm", "test",
         "--max-full-evals", "1",
     ])
 
     assert result.exit_code == 0
-    deps["load_split"].assert_called_with("train.txt")
+    deps["load_split"].assert_called_with(str(promptopt_root / "datasets" / "train.txt"))
     deps["GEPA"].assert_called_once()
     deps["teleprompter"].compile.assert_called_once()
 
