@@ -29,10 +29,15 @@ public class PromptOptGepaIntegrationTests
             var seedPracticesDir = Path.Combine(bundlesRoot, seedBundleId, "practices");
             Directory.CreateDirectory(seedPracticesDir);
 
-            var practiceBody = "ORIGINAL";
-            var practiceContent = "---\nName: simple_practice\nTargetRole: Engineer\nAreaOfConcern: Test\n---\n\n" + practiceBody;
-            var practicePath = Path.Combine(seedPracticesDir, "simple_practice.md");
-            File.WriteAllText(practicePath, practiceContent);
+            var primaryPracticeBody = "ORIGINAL";
+            var primaryPracticeContent = "---\nName: simple_practice\nTargetRole: Engineer\nAreaOfConcern: Test\n---\n\n" + primaryPracticeBody;
+            var primaryPracticePath = Path.Combine(seedPracticesDir, "simple_practice.md");
+            File.WriteAllText(primaryPracticePath, primaryPracticeContent);
+
+            var staticPracticeBody = "STATIC";
+            var staticPracticeContent = "---\nName: static_practice\nTargetRole: Engineer\nAreaOfConcern: Test\n---\n\n" + staticPracticeBody;
+            var staticPracticePath = Path.Combine(seedPracticesDir, "static_practice.md");
+            File.WriteAllText(staticPracticePath, staticPracticeContent);
 
             var activeJsonPath = Path.Combine(promptOptRoot, "active.json");
             File.WriteAllText(activeJsonPath, "{\"bundleId\":\"seed\"}");
@@ -40,8 +45,28 @@ public class PromptOptGepaIntegrationTests
             var runId = "run-1";
             var runDir = Path.Combine(runsRoot, runId);
             Directory.CreateDirectory(runDir);
-            File.WriteAllText(Path.Combine(runDir, "goal.txt"), "Do the thing");
+            File.WriteAllText(Path.Combine(runDir, "goal.txt"), "create the smallest hello world app in C#");
             File.WriteAllText(Path.Combine(runDir, "base_commit.txt"), "abc123");
+            File.WriteAllText(Path.Combine(runDir, "git_diff.patch"),
+                @"diff --git a/Program.cs b/Program.cs
+                new file mode 100644
+                index 0000000..1111111
+                --- /dev/null
+                +++ b/Program.cs
+                @@
+                +Console.WriteLine(""Hello, world!"");"
+            );
+            File.WriteAllText(Path.Combine(runDir, "dotnet_test.txt"), "Test run passed");
+            File.WriteAllText(Path.Combine(runDir, "dotnet_build.txt"), "Build succeeded");
+            File.WriteAllText(
+                Path.Combine(runDir, "outputs.json"),
+                "{\n" +
+                "  \"lead\": \"[\\\"simple_practice\\\"]\",\n" +
+                "  \"architect\": \"architecture plan\",\n" +
+                "  \"engineer\": \"implementation details\",\n" +
+                "  \"reviewer\": \"review summary\"\n" +
+                "}\n"
+            );
 
             var trainTxt = Path.Combine(datasetsRoot, "train.txt");
             File.WriteAllText(trainTxt, runId);
@@ -53,8 +78,8 @@ public class PromptOptGepaIntegrationTests
                            "  \"flags\": [],\n" +
                            "  \"notes\": [\"Needs improvement\"],\n" +
                            "  \"practice_attribution\": {\n" +
-                           "    \"selected_practices\": [\"simple_practice\"],\n" +
-                           "    \"offending_practices\": [\"simple_practice\"],\n" +
+                           "    \"selected_practices\": [\"simple_practice\", \"static_practice\"],\n" +
+                           "    \"offending_practices\": [\"simple_practice\", \"static_practice\"],\n" +
                            "    \"notes_by_practice\": {\n" +
                            "      \"simple_practice\": [\"ADD_LINE: include_reflected_line\"]\n" +
                            "    }\n" +
@@ -120,6 +145,11 @@ public class PromptOptGepaIntegrationTests
             var mutatedPractice = Path.Combine(bundlesRoot, bundleId!, "practices", "simple_practice.md");
             var mutatedContent = File.ReadAllText(mutatedPractice);
             Assert.Contains("include_reflected_line", mutatedContent);
+
+            var staticPractice = Path.Combine(bundlesRoot, bundleId!, "practices", "static_practice.md");
+            var staticContent = File.ReadAllText(staticPractice);
+            Assert.DoesNotContain("include_reflected_line", staticContent);
+            Assert.Contains(staticPracticeBody, staticContent);
         }
         finally
         {

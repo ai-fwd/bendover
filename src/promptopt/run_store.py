@@ -53,6 +53,28 @@ def load_run_artifact(runs_root: Path, run_id: str) -> RunArtifact:
     git_diff_path = run_dir / "git_diff.patch"
     git_diff = git_diff_path.read_text() if git_diff_path.exists() else None
 
+    outputs_path = run_dir / "outputs.json"
+    outputs = None
+    if outputs_path.exists():
+        try:
+            raw_outputs = json.loads(outputs_path.read_text())
+            if isinstance(raw_outputs, dict):
+                outputs = {str(k): str(v) for k, v in raw_outputs.items()}
+        except json.JSONDecodeError:
+            outputs = None
+
+    dotnet_test_path = run_dir / "dotnet_test.txt"
+    dotnet_test = dotnet_test_path.read_text() if dotnet_test_path.exists() else None
+
+    dotnet_test_error_path = run_dir / "dotnet_test_error.txt"
+    dotnet_test_error = dotnet_test_error_path.read_text() if dotnet_test_error_path.exists() else None
+
+    dotnet_build_path = run_dir / "dotnet_build.txt"
+    dotnet_build = dotnet_build_path.read_text() if dotnet_build_path.exists() else None
+
+    dotnet_build_error_path = run_dir / "dotnet_build_error.txt"
+    dotnet_build_error = dotnet_build_error_path.read_text() if dotnet_build_error_path.exists() else None
+
     evaluator_path = run_dir / "evaluator.json"
     evaluator = None
     if evaluator_path.exists():
@@ -68,6 +90,11 @@ def load_run_artifact(runs_root: Path, run_id: str) -> RunArtifact:
         base_commit=base_commit,
         bundle_id=bundle_id,
         meta=meta,
+        outputs=outputs,
         git_diff=git_diff,
+        dotnet_test=dotnet_test,
+        dotnet_test_error=dotnet_test_error,
+        dotnet_build=dotnet_build,
+        dotnet_build_error=dotnet_build_error,
         evaluator=evaluator,
     )

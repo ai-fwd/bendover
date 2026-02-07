@@ -83,7 +83,6 @@ def test_cli_invocation_format(mock_dependencies, tmp_path):
     result = runner.invoke(app, [
         "--promptopt-root", str(promptopt_root),
         "--cli-command", "bendover-cli",
-        "--lm-mode", "dummy",
         "--reflection-lm", "test",
         "--max-full-evals", "1",
     ])
@@ -145,3 +144,242 @@ def test_bundle_program_forward_uses_feedback(tmp_path):
 
     assert pred.score == 0.5
     assert pred.feedback_by_pred
+
+
+def test_bundle_program_targets_only_implicated_practices(tmp_path):
+    dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
+
+    simple = PracticeFile(
+        file_name="simple.md",
+        name="simple",
+        frontmatter="Name: simple",
+        body="Hello",
+    )
+    static = PracticeFile(
+        file_name="static.md",
+        name="static",
+        frontmatter="Name: static",
+        body="Static",
+    )
+
+    seed_bundle = Bundle(
+        bundle_id="seed",
+        path=tmp_path / "seed",
+        practices={"simple.md": simple, "static.md": static},
+        meta={},
+    )
+    run = RunArtifact(
+        run_id="run1",
+        run_dir=tmp_path / "run1",
+        goal="Do it",
+        base_commit="abc",
+    )
+
+    cache = MagicMock()
+    cache.get.return_value = None
+
+    program = BundleProgram(
+        seed_bundle=seed_bundle,
+        runs_by_id={"run1": run},
+        bundle_root=tmp_path / "bundles",
+        log_dir=tmp_path / "logs",
+        cache=cache,
+        cli_command="cli",
+        timeout=5,
+    )
+
+    pred_by_file = {practice.file_name: pred_name for pred_name, practice in program.practice_by_pred.items()}
+    getattr(program, pred_by_file["simple.md"]).signature.instructions = "Hello\nADD_LINE: target_only"
+    getattr(program, pred_by_file["static.md"]).signature.instructions = "Static\nADD_LINE: should_not_persist"
+
+    eval_result = EvaluationResult(
+        passed=True,
+        score=0.8,
+        notes=["global note"],
+        practice_attribution=PracticeAttribution(
+            offending_practices=["simple"],
+            notes_by_practice={"simple": ["ADD_LINE: target_only"]},
+        ),
+    )
+
+    with patch("promptopt.run_gepa.evaluate_bundle", return_value=eval_result):
+        pred = program.forward(["run1"])
+
+    assert program._mutable_files == {"simple.md"}
+    assert program._fixed_updates["simple.md"] == "Hello\nADD_LINE: target_only"
+    assert program._fixed_updates["static.md"] == "Static"
+    assert pred_by_file["static.md"] not in pred.feedback_by_pred
+    assert "ADD_LINE: target_only" in pred.feedback_by_pred[pred_by_file["simple.md"]]
+
+    getattr(program, pred_by_file["static.md"]).signature.instructions = "Mutated static content"
+    updates = program.get_practice_updates()
+    assert updates["simple.md"] == "Hello\nADD_LINE: target_only"
+    assert updates["static.md"] == "Static"
+
+
+def test_bundle_program_no_attribution_warns_and_freezes(tmp_path, capsys):
+    dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
+
+    practice = PracticeFile(
+        file_name="simple.md",
+        name="simple",
+        frontmatter="Name: simple",
+        body="Hello",
+    )
+    seed_bundle = Bundle(
+        bundle_id="seed",
+        path=tmp_path / "seed",
+        practices={"simple.md": practice},
+        meta={},
+    )
+    run = RunArtifact(
+        run_id="run1",
+        run_dir=tmp_path / "run1",
+        goal="Do it",
+        base_commit="abc",
+    )
+
+    cache = MagicMock()
+    cache.get.return_value = None
+
+    program = BundleProgram(
+        seed_bundle=seed_bundle,
+        runs_by_id={"run1": run},
+        bundle_root=tmp_path / "bundles",
+        log_dir=tmp_path / "logs",
+        cache=cache,
+        cli_command="cli",
+        timeout=5,
+    )
+
+    pred_name = next(iter(program.practice_by_pred.keys()))
+    getattr(program, pred_name).signature.instructions = "Hello\nADD_LINE: should_not_apply"
+
+    eval_result = EvaluationResult(
+        passed=False,
+        score=0.2,
+        notes=["global only"],
+        practice_attribution=PracticeAttribution(),
+    )
+
+    with patch("promptopt.run_gepa.evaluate_bundle", return_value=eval_result):
+        pred = program.forward(["run1"])
+
+    captured = capsys.readouterr()
+    assert "[GEPA] No practice notes for run run1; skipping mutations for this run." in captured.out
+    assert program._mutable_files == set()
+    assert pred.feedback_by_pred == {}
+
+    getattr(program, pred_name).signature.instructions = "changed_again"
+    updates = program.get_practice_updates()
+    assert updates["simple.md"] == "Hello"
+
+
+def test_bundle_program_offending_without_notes_does_not_mutate(tmp_path, capsys):
+    dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
+
+    simple = PracticeFile(
+        file_name="simple.md",
+        name="simple",
+        frontmatter="Name: simple",
+        body="Hello",
+    )
+
+    seed_bundle = Bundle(
+        bundle_id="seed",
+        path=tmp_path / "seed",
+        practices={"simple.md": simple},
+        meta={},
+    )
+    run = RunArtifact(
+        run_id="run1",
+        run_dir=tmp_path / "run1",
+        goal="Do it",
+        base_commit="abc",
+    )
+
+    cache = MagicMock()
+    cache.get.return_value = None
+
+    program = BundleProgram(
+        seed_bundle=seed_bundle,
+        runs_by_id={"run1": run},
+        bundle_root=tmp_path / "bundles",
+        log_dir=tmp_path / "logs",
+        cache=cache,
+        cli_command="cli",
+        timeout=5,
+    )
+
+    pred_name = next(iter(program.practice_by_pred.keys()))
+    getattr(program, pred_name).signature.instructions = "Hello\nADD_LINE: should_not_apply"
+
+    eval_result = EvaluationResult(
+        passed=False,
+        score=0.2,
+        notes=["global only"],
+        practice_attribution=PracticeAttribution(
+            offending_practices=["simple"],
+            notes_by_practice={},
+        ),
+    )
+
+    with patch("promptopt.run_gepa.evaluate_bundle", return_value=eval_result):
+        pred = program.forward(["run1"])
+
+    captured = capsys.readouterr()
+    assert "[GEPA] No practice notes for run run1; skipping mutations for this run." in captured.out
+    assert program._mutable_files == set()
+    assert pred.feedback_by_pred == {}
+
+    getattr(program, pred_name).signature.instructions = "changed_again"
+    updates = program.get_practice_updates()
+    assert updates["simple.md"] == "Hello"
+
+
+def test_bundle_program_run_context_contains_artifacts(tmp_path):
+    dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
+
+    practice = PracticeFile(
+        file_name="simple.md",
+        name="simple",
+        frontmatter="Name: simple",
+        body="Hello",
+    )
+    seed_bundle = Bundle(
+        bundle_id="seed",
+        path=tmp_path / "seed",
+        practices={"simple.md": practice},
+        meta={},
+    )
+    run = RunArtifact(
+        run_id="run1",
+        run_dir=tmp_path / "run1",
+        goal="Build login flow",
+        base_commit="abc123",
+        git_diff="diff --git a/foo b/foo\n+line",
+        dotnet_test="test output",
+        dotnet_build="build output",
+        outputs={"architect": "plan details", "engineer": "impl details"},
+    )
+    cache = MagicMock()
+    program = BundleProgram(
+        seed_bundle=seed_bundle,
+        runs_by_id={"run1": run},
+        bundle_root=tmp_path / "bundles",
+        log_dir=tmp_path / "logs",
+        cache=cache,
+        cli_command="cli",
+        timeout=5,
+    )
+
+    context = program._build_run_context(["run1"])
+    assert "run_id: run1" in context
+    assert "Build login flow" in context
+    assert "abc123" in context
+    assert "diff --git a/foo b/foo" in context
+    assert "test output" in context
+    assert "build output" in context
+    assert "[architect]" in context
+    assert "[engineer]" in context
+    assert "prompts.json" not in context

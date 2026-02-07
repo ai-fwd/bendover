@@ -39,7 +39,12 @@ class RunArtifact:
     base_commit: str
     bundle_id: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    outputs: dict[str, str] | None = None
     git_diff: str | None = None
+    dotnet_test: str | None = None
+    dotnet_test_error: str | None = None
+    dotnet_build: str | None = None
+    dotnet_build_error: str | None = None
     evaluator: dict[str, Any] | None = None
 
 

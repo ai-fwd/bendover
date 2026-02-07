@@ -41,7 +41,7 @@ class PracticeSignature(dspy.Signature):
     that still produces a trace entry.
     """
 
-    run_ids: str = dspy.InputField(desc="Batch of run ids")
+    run_context: str = dspy.InputField(desc="Structured replay context for a batch of runs")
     response: str = dspy.OutputField(desc="No-op response")
 
 
@@ -72,6 +72,9 @@ class TestReflectionLM:
 
 
 class BundleProgram(dspy.Module):
+    _TEXT_LIMIT = 1200
+    _OUTPUT_LIMIT = 800
+
     def __init__(
         self,
         seed_bundle: Bundle,
@@ -93,28 +96,104 @@ class BundleProgram(dspy.Module):
 
         # Map predictor name -> PracticeFile for later feedback attribution.
         self.practice_by_pred: dict[str, PracticeFile] = {}
+        self.file_by_alias: dict[str, str] = {}
+        self._fixed_updates: dict[str, str] = {
+            file_name: practice.body for file_name, practice in seed_bundle.practices.items()
+        }
+        self._mutable_files: set[str] = set(seed_bundle.practices.keys())
 
         for idx, practice in enumerate(seed_bundle.practices.values()):
             pred_name = f"practice_{idx}"
-            predictor = dspy.Predict(PracticeSignature)
-            predictor.signature.instructions = practice.body
+            predictor = dspy.Predict(PracticeSignature.with_instructions(practice.body))
             setattr(self, pred_name, predictor)
             self.practice_by_pred[pred_name] = practice
+            self._register_alias(practice.name, practice.file_name)
+            self._register_alias(practice.file_name, practice.file_name)
+            self._register_alias(Path(practice.file_name).stem, practice.file_name)
 
     def _normalize_run_ids(self, run_ids: Iterable[str] | str) -> list[str]:
         if isinstance(run_ids, str):
             return [r for r in run_ids.split(",") if r]
         return list(run_ids)
 
+    def _register_alias(self, alias: str, file_name: str) -> None:
+        key = alias.strip().lower()
+        if key and key not in self.file_by_alias:
+            self.file_by_alias[key] = file_name
+
+    def _resolve_practice_file(self, practice_name: str) -> str | None:
+        return self.file_by_alias.get(practice_name.strip().lower())
+
+    def _extract_targeted_files(self, run_id: str, evaluation: EvaluationResult) -> set[str]:
+        attribution = evaluation.practice_attribution
+        attribution_names = list(attribution.notes_by_practice.keys())
+
+        if not attribution_names:
+            print(f"[GEPA] No practice notes for run {run_id}; skipping mutations for this run.")
+            return set()
+
+        targeted: set[str] = set()
+        for name in attribution_names:
+            resolved = self._resolve_practice_file(name)
+            if resolved:
+                targeted.add(resolved)
+            else:
+                print(f"[GEPA] Unrecognized practice attribution '{name}' for run {run_id}; ignoring.")
+        return targeted
+
+    def _collect_targeted_files(self, evaluations_by_run: list[tuple[str, EvaluationResult]]) -> set[str]:
+        targeted: set[str] = set()
+        for run_id, evaluation in evaluations_by_run:
+            targeted.update(self._extract_targeted_files(run_id, evaluation))
+        return targeted
+
     def _current_practice_updates(self) -> dict[str, str]:
         updates = {}
         for pred_name, practice in self.practice_by_pred.items():
-            predictor = getattr(self, pred_name)
-            updates[practice.file_name] = predictor.signature.instructions
+            if practice.file_name in self._mutable_files:
+                predictor = getattr(self, pred_name)
+                updates[practice.file_name] = predictor.signature.instructions
+            else:
+                updates[practice.file_name] = self._fixed_updates.get(practice.file_name, practice.body)
         return updates
 
     def get_practice_updates(self) -> dict[str, str]:
         return self._current_practice_updates()
+
+    def _truncate(self, value: str | None, limit: int) -> str:
+        if not value:
+            return "(none)"
+        text = value.strip()
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit]}...(truncated)"
+
+    def _build_outputs_summary(self, run: RunArtifact) -> str:
+        if not run.outputs:
+            return "(none)"
+        lines = []
+        for phase in sorted(run.outputs.keys()):
+            lines.append(f"[{phase}]")
+            lines.append(self._truncate(run.outputs[phase], self._OUTPUT_LIMIT))
+        return "\n".join(lines)
+
+    def _build_run_context(self, batch_ids: list[str]) -> str:
+        sections = []
+        for run_id in batch_ids:
+            run = self.runs_by_id[run_id]
+            test_signal = run.dotnet_test if run.dotnet_test is not None else run.dotnet_test_error
+            build_signal = run.dotnet_build if run.dotnet_build is not None else run.dotnet_build_error
+            section = [
+                f"run_id: {run.run_id}",
+                f"goal:\n{self._truncate(run.goal, self._TEXT_LIMIT)}",
+                f"base_commit: {run.base_commit}",
+                f"git_diff:\n{self._truncate(run.git_diff, self._TEXT_LIMIT)}",
+                f"dotnet_test:\n{self._truncate(test_signal, self._TEXT_LIMIT)}",
+                f"dotnet_build:\n{self._truncate(build_signal, self._TEXT_LIMIT)}",
+                f"outputs:\n{self._build_outputs_summary(run)}",
+            ]
+            sections.append("\n".join(section))
+        return "\n\n---\n\n".join(sections)
 
     def forward(self, run_ids: list[str]) -> dspy.Prediction:
         """
@@ -126,13 +205,6 @@ class BundleProgram(dspy.Module):
         batch_ids = self._normalize_run_ids(run_ids)
         if not batch_ids:
             return dspy.Prediction(score=0.0, feedback="No runs provided", feedback_by_pred={})
-
-        # Touch predictors so DSPy captures a trace for each practice predictor.
-        # GEPA uses these traces to decide what to update.
-        batch_token = ",".join(batch_ids)
-        for pred_name in self.practice_by_pred.keys():
-            predictor = getattr(self, pred_name)
-            predictor(run_ids=batch_token)
 
         # Build a candidate bundle from the latest predictor instructions.
         updates = self._current_practice_updates()
@@ -149,11 +221,11 @@ class BundleProgram(dspy.Module):
             exist_ok=True,
         )
 
-        evaluations: list[EvaluationResult] = []
+        evaluations_by_run: list[tuple[str, EvaluationResult]] = []
         for run_id in batch_ids:
             cached = self.cache.get(run_id, bundle_hash)
             if cached:
-                evaluations.append(cached)
+                evaluations_by_run.append((run_id, cached))
                 continue
 
             # Replay the run using the external evaluator (PromptOpt.CLI).
@@ -167,14 +239,29 @@ class BundleProgram(dspy.Module):
                 timeout_seconds=self.timeout,
             )
             self.cache.set(run_id, bundle_hash, result)
-            evaluations.append(result)
+            evaluations_by_run.append((run_id, result))
+
+        evaluations = [evaluation for _, evaluation in evaluations_by_run]
 
         # Aggregate per-run scores into a single GEPA fitness score.
         score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
+        targeted_files = self._collect_targeted_files(evaluations_by_run)
 
-        # Route per-practice feedback into the correct predictor slot.
-        feedback_by_pred = self._build_feedback_map(evaluations)
+        # Route per-practice feedback only for targeted predictors.
+        feedback_by_pred = self._build_feedback_map(evaluations_by_run, targeted_files)
         overall_feedback = "\n".join(_flatten_notes(evaluations))
+
+        run_context = self._build_run_context(batch_ids)
+        for pred_name, practice in self.practice_by_pred.items():
+            if practice.file_name not in targeted_files:
+                continue
+            predictor = getattr(self, pred_name)
+            predictor(run_context=run_context)
+
+        for file_name in targeted_files:
+            if file_name in updates:
+                self._fixed_updates[file_name] = updates[file_name]
+        self._mutable_files = targeted_files
 
         return dspy.Prediction(
             score=score,
@@ -182,22 +269,38 @@ class BundleProgram(dspy.Module):
             feedback_by_pred=feedback_by_pred,
         )
 
-    def _build_feedback_map(self, evaluations: list[EvaluationResult]) -> dict[str, str]:
-        notes_by_practice: dict[str, list[str]] = {}
-        for evaluation in evaluations:
-            for name, notes in evaluation.practice_attribution.notes_by_practice.items():
-                notes_by_practice.setdefault(name, []).extend(notes)
-
-        overall_notes = _flatten_notes(evaluations)
-        fallback = "\n".join(overall_notes) if overall_notes else "No feedback provided."
+    def _build_feedback_map(
+        self,
+        evaluations_by_run: list[tuple[str, EvaluationResult]],
+        targeted_files: set[str],
+    ) -> dict[str, str]:
+        notes_by_file: dict[str, list[str]] = {}
+        summary_lines: list[str] = []
+        for run_id, evaluation in evaluations_by_run:
+            flags = ", ".join(evaluation.flags) if evaluation.flags else "none"
+            notes = " | ".join(evaluation.notes) if evaluation.notes else "none"
+            summary_lines.append(
+                f"[run={run_id}] pass={evaluation.passed} score={evaluation.score} flags={flags} notes={notes}"
+            )
+            for name, notes_for_practice in evaluation.practice_attribution.notes_by_practice.items():
+                resolved = self._resolve_practice_file(name)
+                if resolved:
+                    prefixed = [f"[run={run_id}] {note}" for note in notes_for_practice]
+                    notes_by_file.setdefault(resolved, []).extend(prefixed)
 
         feedback_by_pred: dict[str, str] = {}
         for pred_name, practice in self.practice_by_pred.items():
-            notes = notes_by_practice.get(practice.name)
-            if notes:
-                feedback_by_pred[pred_name] = "\n".join(notes)
-            else:
-                feedback_by_pred[pred_name] = fallback
+            if practice.file_name not in targeted_files:
+                continue
+
+            practice_notes = notes_by_file.get(practice.file_name, [])
+            blocks = [
+                "evaluation_summary:",
+                "\n".join(summary_lines) if summary_lines else "no evaluations",
+                "practice_notes:",
+                "\n".join(practice_notes) if practice_notes else "none",
+            ]
+            feedback_by_pred[pred_name] = "\n".join(blocks)
 
         return feedback_by_pred
 
@@ -212,9 +315,9 @@ def metric_fn(gold, pred, trace=None, pred_name=None, pred_trace=None):
     score = getattr(pred, "score", 0.0)
     if pred_name:
         feedback_map = getattr(pred, "feedback_by_pred", {})
-        feedback = feedback_map.get(pred_name) or getattr(pred, "feedback", None)
+        feedback = feedback_map.get(pred_name)
         if feedback is None:
-            feedback = f"This trajectory got a score of {score}."
+            feedback = "No targeted feedback for this predictor."
         return {"score": score, "feedback": feedback}
     return score
 
@@ -281,18 +384,12 @@ def split_devset(run_ids: list[str]) -> tuple[list[str], list[str]]:
     return run_ids, []
 
 
-def configure_base_lm(lm_mode: str, lm_model: str, cache_enabled: bool = True) -> BaseLM:
+def configure_base_lm() -> BaseLM:
     """
-    Base LM is used to generate traces for the predictors (not reflection).
+    Base LM is used only to generate DSPy traces for predictors.
+    We intentionally keep this as DummyLM because evaluation happens via PromptOpt.CLI.
     """
-    if lm_mode not in ("dummy", "model"):
-        raise ValueError(f"Unsupported lm_mode: {lm_mode}")
-    if lm_mode == "dummy":
-        lm = DummyLM({ "": { "response": "ok" } })
-        dspy.configure(lm=lm)
-        return lm
-
-    lm = dspy.LM(lm_model, cache=cache_enabled)
+    lm = DummyLM({ "": { "response": "ok" } })
     dspy.configure(lm=lm)
     return lm
 
@@ -312,9 +409,7 @@ def main(
     promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
     train_split: str | None = typer.Option(None, help="Path to train.txt (defaults to datasets/train.txt)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
-    lm_model: str = typer.Option(os.getenv("DSPY_LM_MODEL", "gpt-4o-mini"), help="LM model for dummy/model mode"),
     reflection_lm: str = typer.Option(os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="Reflection LM model or 'test'"),
-    lm_mode: str = typer.Option("model", help="Base LM mode: model|dummy"),
     max_full_evals: int = typer.Option(10, help="GEPA max full evals"),
     batch_size: int = typer.Option(0, help="Batch size for training"),
     disable_dspy_cache: bool = typer.Option(False, help="Disable DSPy memory/disk caches"),
@@ -381,7 +476,7 @@ def main(
     if disable_dspy_cache:
         configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
-    configure_base_lm(lm_mode, lm_model, cache_enabled=cache_enabled)
+    configure_base_lm()
     reflection_lm_instance = configure_reflection_lm(reflection_lm, cache_enabled=cache_enabled)
 
     cache = EvaluationCache(cache_root)

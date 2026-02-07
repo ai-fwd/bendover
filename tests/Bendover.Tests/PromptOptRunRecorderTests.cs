@@ -75,6 +75,8 @@ public class PromptOptRunRecorderTests
             .ReturnsAsync("diff content");
         _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string?>()))
             .ReturnsAsync("test passed");
+        _dotNetRunnerMock.Setup(x => x.RunAsync("build Bendover.sln", It.IsAny<string?>()))
+            .ReturnsAsync("build passed");
 
         // Act
         await _sut.FinalizeRunAsync();
@@ -84,9 +86,36 @@ public class PromptOptRunRecorderTests
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "git_diff.patch")));
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_test.txt")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_build.txt")));
 
         _gitRunnerMock.Verify(x => x.RunAsync("diff", It.IsAny<string?>()), Times.Once);
         _dotNetRunnerMock.Verify(x => x.RunAsync("test", It.IsAny<string?>()), Times.Once);
+        _dotNetRunnerMock.Verify(x => x.RunAsync("build Bendover.sln", It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FinalizeRunAsync_BuildFailure_WritesBuildErrorArtifact()
+    {
+        // Arrange
+        var outDir = "/runs/out-2-build-fail";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string?>()))
+            .ReturnsAsync("diff content");
+        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string?>()))
+            .ReturnsAsync("test passed");
+        _dotNetRunnerMock.Setup(x => x.RunAsync("build Bendover.sln", It.IsAny<string?>()))
+            .ThrowsAsync(new Exception("build failed"));
+
+        // Act
+        await _sut.FinalizeRunAsync();
+
+        // Assert
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_build_error.txt")));
+        var error = _fileSystem.File.ReadAllText(Path.Combine(outDir, "dotnet_build_error.txt"));
+        Assert.Contains("build failed", error);
     }
 
     [Fact]

@@ -171,10 +171,12 @@ Bendover uses a unified **Replay Workflow** to optimize agent practices using [D
 3.  **Optimize**: The `run_gepa.py` script:
     *   Loads the training runs.
     *   Starts with a **Seed Bundle** of practices.
-    *   Proposes changes to a specific **Target Practice File** (e.g., `coding_standards.md`).
+    *   Builds GEPA reflection context from run artifacts (`goal`, `base_commit`, `git_diff`, `dotnet_test`/error, `dotnet_build`/error, and `outputs.json` summary).
+    *   Proposes changes only for practices with evaluator `notes_by_practice` feedback in the current GEPA batch.
+    *   Treats practices without practice-specific notes as fixed (no reflection trace, no mutation).
     *   **Replays** each run by creating a temporary task environment with the original goal and commit.
     *   Evaluates the candidate bundle using `Bendover.PromptOpt.CLI`.
-    *   Uses feedback to evolve the practice content further.
+    *   Uses the evaluation (score + notes + practice attribution) to evolve practice content for the next generation.
 
 ### Running Optimization
 

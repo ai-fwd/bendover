@@ -125,6 +125,18 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
                 var testOutput = $"Error running tests: {ex.Message}";
                 await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "dotnet_test_error.txt"), testOutput);
             }
+
+            // Run dotnet build
+            try
+            {
+                var buildOutput = await _dotNetRunner.RunAsync("build Bendover.sln");
+                await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "dotnet_build.txt"), buildOutput);
+            }
+            catch (Exception ex)
+            {
+                var buildOutput = $"Error running build: {ex.Message}";
+                await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "dotnet_build_error.txt"), buildOutput);
+            }
         }
 
     }
