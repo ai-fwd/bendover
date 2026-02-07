@@ -86,6 +86,6 @@ public class BenchmarkRunOrchestrator
             // Cleanup if needed
         }
 
-        await _runEvaluator.EvaluateAsync(outputPath);
+        await _runEvaluator.EvaluateAsync(outputPath, bundlePath);
     }
 }

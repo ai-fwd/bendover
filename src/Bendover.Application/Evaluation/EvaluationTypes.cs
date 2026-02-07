@@ -15,7 +15,9 @@ public enum FileStatus
 public record EvaluationContext(
     string DiffContent,
     string TestOutput,
-    IEnumerable<FileDiff> ChangedFiles
+    IEnumerable<FileDiff> ChangedFiles,
+    IReadOnlyList<string>? SelectedPractices = null,
+    IReadOnlyList<string>? AllPractices = null
 );
 
 public record RuleResult(

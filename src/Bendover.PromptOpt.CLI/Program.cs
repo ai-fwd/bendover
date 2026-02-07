@@ -1,17 +1,10 @@
 ﻿using System.ComponentModel;
-using System.IO.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Bendover.Application;
-using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
-using Bendover.Domain;
-using Bendover.Domain.Interfaces;
-using Bendover.Infrastructure;
-using Bendover.Infrastructure.Configuration;
-using Bendover.Infrastructure.Services;
 using DotNetEnv;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -88,25 +81,7 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             .AddEnvironmentVariables()
             .Build();
 
-        services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.SectionName));
-        services.AddSingleton<IChatClientResolver, ChatClientResolver>();
-        services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
-        services.AddSingleton<IContainerService, DockerContainerService>();
-        services.AddSingleton<IAgentOrchestratorFactory, PromptOptAgentOrchestratorFactory>();
-        services.AddSingleton<ScriptGenerator>();
-        services.AddSingleton<IAgentObserver, NoOpAgentObserver>();
-        services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
-        services.AddSingleton<IFileService, FileService>();
-        services.AddSingleton<ILeadAgent, LeadAgent>();
-        services.AddSingleton<IPracticeService, PracticeService>();
-        services.AddSingleton<IGitRunner, GitRunner>();
-        services.AddSingleton<IDotNetRunner, DotNetRunner>();
-        services.AddSingleton<IPromptBundleResolver>(_ => new PromptBundleResolver(Directory.GetCurrentDirectory()));
-        services.AddSingleton<EvaluatorEngine>();
-        services.AddSingleton<IEnumerable<IEvaluatorRule>>(Enumerable.Empty<IEvaluatorRule>());
-        services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
-        services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
-        services.AddSingleton<IPromptOptRunEvaluator, PromptOptRunEvaluator>();
+        ProgramServiceRegistration.RegisterServices(services, configuration, Directory.GetCurrentDirectory());
 
         var serviceProvider = services.BuildServiceProvider();
 

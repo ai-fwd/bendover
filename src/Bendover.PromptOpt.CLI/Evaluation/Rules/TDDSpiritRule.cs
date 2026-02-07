@@ -5,7 +5,7 @@ using Bendover.Application.Evaluation;
 
 namespace Bendover.PromptOpt.CLI.Evaluation.Rules;
 
-public class TestFailureRule : IEvaluatorRule
+public class TDDSpiritRule : IEvaluatorRule
 {
     public RuleResult Evaluate(EvaluationContext context)
     {

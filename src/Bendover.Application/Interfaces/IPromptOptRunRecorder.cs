@@ -28,5 +28,5 @@ public record PromptOptRunContext(
 
 public interface IPromptOptRunEvaluator
 {
-    Task EvaluateAsync(string outDir);
+    Task EvaluateAsync(string outDir, string bundlePath);
 }

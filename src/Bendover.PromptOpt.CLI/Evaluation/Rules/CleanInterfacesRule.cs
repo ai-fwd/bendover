@@ -6,7 +6,7 @@ using Bendover.Application.Evaluation;
 
 namespace Bendover.PromptOpt.CLI.Evaluation.Rules;
 
-public class SingleImplInterfaceRule : IEvaluatorRule
+public class CleanInterfacesRule : IEvaluatorRule
 {
     public RuleResult Evaluate(EvaluationContext context)
     {

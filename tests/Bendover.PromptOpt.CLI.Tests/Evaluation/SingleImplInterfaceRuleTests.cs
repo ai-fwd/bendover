@@ -8,7 +8,7 @@ namespace Bendover.PromptOpt.CLI.Tests.Evaluation;
 
 public class SingleImplInterfaceRuleTests
 {
-    private readonly SingleImplInterfaceRule _sut = new();
+    private readonly CleanInterfacesRule _sut = new();
 
     private EvaluationContext MakeContext(string diffContent)
     {

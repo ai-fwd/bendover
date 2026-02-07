@@ -8,7 +8,7 @@ namespace Bendover.PromptOpt.CLI.Tests.Evaluation;
 
 public class TestFailureRuleTests
 {
-    private readonly TestFailureRule _sut = new();
+    private readonly TDDSpiritRule _sut = new();
 
     private EvaluationContext MakeContext(string testOutput)
     {

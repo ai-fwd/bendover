@@ -78,6 +78,6 @@ public class BenchmarkRunOrchestratorTests
                 ctx => ctx.OutDir == outputPath && ctx.Capture && ctx.BundleId == "bundle-456"
             ),
             Times.Once);
-        _runEvaluatorMock.Verify(x => x.EvaluateAsync(outputPath), Times.Once);
+        _runEvaluatorMock.Verify(x => x.EvaluateAsync(outputPath, bundlePath), Times.Once);
     }
 }

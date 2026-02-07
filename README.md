@@ -178,6 +178,35 @@ Bendover uses a unified **Replay Workflow** to optimize agent practices using [D
     *   Evaluates the candidate bundle using `Bendover.PromptOpt.CLI`.
     *   Uses the evaluation (score + notes + practice attribution) to evolve practice content for the next generation.
 
+### How Practices And Rules Work
+
+PromptOpt.CLI discovers evaluator rules automatically by loading all `IEvaluatorRule` implementations from the assembly. No manual rule list is required.
+
+Rule execution is convention-driven:
+
+- Practice name format: `practice_name`
+- Rule class format: `PracticeNameRule`
+- Matching is case-insensitive and separator-insensitive (`_`, `-`, casing differences are normalized)
+
+Examples:
+
+- `tdd_spirit` -> `TDDSpiritRule`
+- `readme_hygiene` -> `ReadmeHygieneRule`
+
+At evaluation time:
+
+1. `selected_practices` are read from run artifacts (`outputs.json` lead output).
+2. `all_practices` are read from the bundle under `practices/*.md` (frontmatter `Name`, fallback to filename stem).
+3. If a rule matches at least one practice in `all_practices`, it is treated as practice-bound and runs only when a matching practice is selected.
+4. If a rule matches no practice in `all_practices`, it is treated as a global rule and always runs (e.g., `ForbiddenFilesRule`).
+
+Evaluator output is written as `evaluator.json` with stable snake_case fields:
+
+- `pass`, `score`, `flags`, `notes`
+- `practice_attribution.selected_practices`
+- `practice_attribution.offending_practices`
+- `practice_attribution.notes_by_practice`
+
 ### Running Optimization
 
 #### 1. Requirements
