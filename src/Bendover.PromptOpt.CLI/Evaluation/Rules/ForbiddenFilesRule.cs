@@ -16,10 +16,10 @@ public class ForbiddenFilesRule : IEvaluatorRule
         if (forbidden.Any())
         {
              var notes = forbidden.Select(f => $"Forbidden file modified: {f.Path}").ToArray();
-             return new RuleResult("ForbiddenFilesRule", false, 0f, notes, IsHardFailure: true);
+             return this.CreateRuleResult(false, 0f, notes, isHardFailure: true);
         }
 
-        return new RuleResult("ForbiddenFilesRule", true, 0f, Array.Empty<string>());
+        return this.CreateRuleResult(true, 0f, Array.Empty<string>());
     }
 
     private bool IsForbidden(string path)

@@ -19,16 +19,15 @@ public class MissingTestsRule : IEvaluatorRule
 
         if (prodChanges.Any() && !testChanges.Any())
         {
-            return new RuleResult(
-                "MissingTestsRule",
+            return this.CreateRuleResult(
                 true, // Passed "Hard gate", but applies penalty
                 -0.2f,
                 new[] { "Production code changed without accompanying tests." },
-                IsHardFailure: false
+                isHardFailure: false
             );
         }
 
-        return new RuleResult("MissingTestsRule", true, 0f, Array.Empty<string>());
+        return this.CreateRuleResult(true, 0f, Array.Empty<string>());
     }
 
     private bool IsProductionCode(string path)

@@ -21,8 +21,8 @@ public class ProgramServiceRegistrationTests
         var rules = serviceProvider.GetServices<IEvaluatorRule>().ToList();
 
         Assert.Contains(rules, r => r.GetType().Name == "MissingTestsRule");
-        Assert.Contains(rules, r => r.GetType().Name == "TestFailureRule");
-        Assert.Contains(rules, r => r.GetType().Name == "SingleImplInterfaceRule");
+        Assert.Contains(rules, r => r.GetType().Name == "TDDSpiritRule");
+        Assert.Contains(rules, r => r.GetType().Name == "CleanInterfacesRule");
         Assert.Contains(rules, r => r.GetType().Name == "ForbiddenFilesRule");
     }
 }

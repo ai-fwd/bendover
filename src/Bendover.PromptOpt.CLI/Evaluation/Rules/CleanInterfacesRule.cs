@@ -14,7 +14,7 @@ public class CleanInterfacesRule : IEvaluatorRule
         // Regex: ^\+\s*public\s+interface\s+(I\w+)
         
         var diff = context.DiffContent;
-        if (string.IsNullOrEmpty(diff)) return new RuleResult("SingleImplInterfaceRule", true, 0f, Array.Empty<string>());
+        if (string.IsNullOrEmpty(diff)) return this.CreateRuleResult(true, 0f, Array.Empty<string>());
 
         var matches = Regex.Matches(diff, @"^\+\s*.*interface\s+(I\w+)", RegexOptions.Multiline);
         
@@ -52,9 +52,9 @@ public class CleanInterfacesRule : IEvaluatorRule
         {
             // Apply penalty once or per interface? Requirement says "apply penalty".
             // Weight 0.1. I'll apply flat 0.1 if ANY found, as weights are usually per rule.
-            return new RuleResult("SingleImplInterfaceRule", true, -0.1f, penalties.ToArray());
+            return this.CreateRuleResult(true, -0.1f, penalties.ToArray());
         }
 
-        return new RuleResult("SingleImplInterfaceRule", true, 0f, Array.Empty<string>());
+        return this.CreateRuleResult(true, 0f, Array.Empty<string>());
     }
 }

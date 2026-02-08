@@ -39,7 +39,7 @@ public class TDDSpiritRule : IEvaluatorRule
         // Let's look for "Failed: 0"
         if (Regex.IsMatch(output, @"Failed:\s*0", RegexOptions.IgnoreCase))
         {
-             return new RuleResult("TestFailureRule", true, 0f, new string[0]);
+             return this.CreateRuleResult(true, 0f, Array.Empty<string>());
         }
 
         return Fail("Unable to determine test result");
@@ -47,6 +47,6 @@ public class TDDSpiritRule : IEvaluatorRule
 
     private RuleResult Fail(string reason)
     {
-        return new RuleResult("TestFailureRule", false, 0f, new[] { reason }, IsHardFailure: true);
+        return this.CreateRuleResult(false, 0f, new[] { reason }, isHardFailure: true);
     }
 }

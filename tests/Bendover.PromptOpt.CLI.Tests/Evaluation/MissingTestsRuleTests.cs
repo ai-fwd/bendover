@@ -38,6 +38,7 @@ public class MissingTestsRuleTests
         Assert.True(result.Passed); 
         Assert.Equal(-0.2f, result.ScoreDelta);
         Assert.NotEmpty(result.Notes);
+        Assert.Equal(nameof(MissingTestsRule), result.RuleName);
     }
 
     [Fact]

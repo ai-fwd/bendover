@@ -26,6 +26,7 @@ public class SingleImplInterfaceRuleTests
         
         Assert.True(result.Passed);
         Assert.Equal(-0.1f, result.ScoreDelta); // Penalty for single impl
+        Assert.Equal(nameof(CleanInterfacesRule), result.RuleName);
     }
 
     [Fact]

@@ -24,6 +24,7 @@ public class TestFailureRuleTests
         Assert.True(result.Passed);
         Assert.False(result.IsHardFailure);
         Assert.Equal(0f, result.ScoreDelta);
+        Assert.Equal(nameof(TDDSpiritRule), result.RuleName);
     }
 
     [Fact]
@@ -34,6 +35,7 @@ public class TestFailureRuleTests
         
         Assert.False(result.Passed);
         Assert.True(result.IsHardFailure);
+        Assert.Equal(nameof(TDDSpiritRule), result.RuleName);
     }
 
     [Fact]

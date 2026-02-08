@@ -40,6 +40,7 @@ public class ForbiddenFilesRuleTests
         
         Assert.False(result.Passed);
         Assert.True(result.IsHardFailure);
+        Assert.Equal(nameof(ForbiddenFilesRule), result.RuleName);
         Assert.Contains(path, result.Notes[0]); // Should mention which file
     }
 }
