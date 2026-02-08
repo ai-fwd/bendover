@@ -51,6 +51,23 @@ def mock_dependencies(tmp_path):
         # Mock Program instance
         mock_program = MagicMock()
         mock_program_cls.return_value = mock_program
+        mock_program.snapshot_mutation_state.return_value = ({}, set())
+        mock_program.restore_mutation_state.return_value = None
+        mock_program.return_value = dspy.Prediction(
+            score=0.5,
+            feedback_by_pred={"practice_0": "ok"},
+            attribution_by_run={
+                "run1": {
+                    "selected_practices": ["simple"],
+                    "offending_practices": ["simple"],
+                    "notes_by_practice_keys": ["simple"],
+                    "flags": [],
+                    "notes": ["ok"],
+                    "score": 0.5,
+                    "passed": True,
+                }
+            },
+        )
 
         # Mock compiled program
         mock_compiled = MagicMock()
@@ -73,6 +90,7 @@ def mock_dependencies(tmp_path):
             "GEPA": mock_gepa,
             "teleprompter": mock_teleprompter,
             "program_cls": mock_program_cls,
+            "program": mock_program,
         }
 
 
@@ -90,7 +108,42 @@ def test_cli_invocation_format(mock_dependencies, tmp_path):
     assert result.exit_code == 0
     deps["load_split"].assert_called_with(str(promptopt_root / "datasets" / "train.txt"))
     deps["GEPA"].assert_called_once()
+    deps["program"].assert_called_once_with(run_ids=["run1"])
     deps["teleprompter"].compile.assert_called_once()
+
+
+def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp_path):
+    deps = mock_dependencies
+    promptopt_root = tmp_path / "promptopt"
+    deps["program"].return_value = dspy.Prediction(
+        score=0.0,
+        feedback_by_pred={},
+        attribution_by_run={
+            "run1": {
+                "selected_practices": ["simple"],
+                "offending_practices": [],
+                "notes_by_practice_keys": [],
+                "flags": ["TDDSpiritRule"],
+                "notes": ["No test output found."],
+                "score": 0.0,
+                "passed": False,
+            }
+        },
+    )
+
+    result = runner.invoke(app, [
+        "--promptopt-root", str(promptopt_root),
+        "--cli-command", "bendover-cli",
+        "--reflection-lm", "test",
+        "--max-full-evals", "1",
+    ])
+
+    assert result.exit_code != 0
+    error_text = result.output
+    assert "GEPA attribution preflight failed" in error_text
+    assert "run_id=run1 pass=False score=0.0" in error_text
+    assert "notes_by_practice_keys: none" in error_text
+    deps["teleprompter"].compile.assert_not_called()
 
 
 def test_bundle_program_forward_uses_feedback(tmp_path):

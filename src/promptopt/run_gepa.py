@@ -160,6 +160,15 @@ class BundleProgram(dspy.Module):
     def get_practice_updates(self) -> dict[str, str]:
         return self._current_practice_updates()
 
+    def snapshot_mutation_state(self) -> tuple[dict[str, str], set[str]]:
+        """Capture mutable GEPA state so preflight evaluation can be rolled back."""
+        return dict(self._fixed_updates), set(self._mutable_files)
+
+    def restore_mutation_state(self, fixed_updates: dict[str, str], mutable_files: set[str]) -> None:
+        """Restore mutable GEPA state after preflight evaluation."""
+        self._fixed_updates = dict(fixed_updates)
+        self._mutable_files = set(mutable_files)
+
     def _truncate(self, value: str | None, limit: int) -> str:
         if not value:
             return "(none)"
@@ -249,6 +258,7 @@ class BundleProgram(dspy.Module):
 
         # Route per-practice feedback only for targeted predictors.
         feedback_by_pred = self._build_feedback_map(evaluations_by_run, targeted_files)
+        attribution_by_run = self._build_attribution_diagnostics(evaluations_by_run)
         overall_feedback = "\n".join(_flatten_notes(evaluations))
 
         run_context = self._build_run_context(batch_ids)
@@ -267,6 +277,7 @@ class BundleProgram(dspy.Module):
             score=score,
             feedback=overall_feedback,
             feedback_by_pred=feedback_by_pred,
+            attribution_by_run=attribution_by_run,
         )
 
     def _build_feedback_map(
@@ -303,6 +314,24 @@ class BundleProgram(dspy.Module):
             feedback_by_pred[pred_name] = "\n".join(blocks)
 
         return feedback_by_pred
+
+    def _build_attribution_diagnostics(
+        self,
+        evaluations_by_run: list[tuple[str, EvaluationResult]],
+    ) -> dict[str, dict[str, object]]:
+        diagnostics: dict[str, dict[str, object]] = {}
+        for run_id, evaluation in evaluations_by_run:
+            attribution = evaluation.practice_attribution
+            diagnostics[run_id] = {
+                "selected_practices": list(attribution.selected_practices),
+                "offending_practices": list(attribution.offending_practices),
+                "notes_by_practice_keys": sorted(attribution.notes_by_practice.keys()),
+                "flags": list(evaluation.flags),
+                "notes": list(evaluation.notes),
+                "score": evaluation.score,
+                "passed": evaluation.passed,
+            }
+        return diagnostics
 
 
 def metric_fn(gold, pred, trace=None, pred_name=None, pred_trace=None):
@@ -382,6 +411,83 @@ def split_devset(run_ids: list[str]) -> tuple[list[str], list[str]]:
     if len(run_ids) == 2:
         return run_ids[:1], run_ids[1:]
     return run_ids, []
+
+
+def _normalize_batch_run_ids(example: dspy.Example) -> list[str]:
+    run_ids = getattr(example, "run_ids", None)
+    if run_ids is None:
+        try:
+            run_ids = example["run_ids"]
+        except (KeyError, TypeError):
+            run_ids = []
+
+    if isinstance(run_ids, str):
+        return [run_id for run_id in run_ids.split(",") if run_id]
+    return [str(run_id) for run_id in run_ids]
+
+
+def _format_preflight_diagnostic(
+    batch_ids: list[str],
+    attribution_by_run: dict[str, dict[str, object]],
+) -> str:
+    def _csv(value: object | None) -> str:
+        if not isinstance(value, list) or not value:
+            return "none"
+        return ", ".join(str(item) for item in value)
+
+    lines = [
+        "GEPA attribution preflight failed: no practice-targeted feedback was produced for the first training batch.",
+        "GEPA requires evaluator practice_attribution.notes_by_practice entries before reflection can begin.",
+        f"batch_run_ids: {', '.join(batch_ids) if batch_ids else 'none'}",
+        "",
+        "run_diagnostics:",
+    ]
+
+    for run_id in batch_ids:
+        details = attribution_by_run.get(run_id, {})
+        passed = details.get("passed", False)
+        score = details.get("score", 0.0)
+        lines.append(f"- run_id={run_id} pass={passed} score={score}")
+        lines.append(f"  selected_practices: {_csv(details.get('selected_practices'))}")
+        lines.append(f"  offending_practices: {_csv(details.get('offending_practices'))}")
+        lines.append(f"  notes_by_practice_keys: {_csv(details.get('notes_by_practice_keys'))}")
+        lines.append(f"  flags: {_csv(details.get('flags'))}")
+        lines.append(f"  notes: {_csv(details.get('notes'))}")
+
+    lines.extend(
+        [
+            "",
+            "likely_causes:",
+            "- Practice-specific rules did not run or did not fail for the selected practices.",
+            "- Rule-to-practice naming does not match the convention (practice_name <-> PracticeNameRule).",
+            "- Evaluator emitted only global notes/flags and no notes_by_practice attribution.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def run_attribution_preflight(program: BundleProgram, trainset: list[dspy.Example]) -> None:
+    """
+    Validate that the first batch produces practice-targeted feedback.
+
+    Without notes_by_practice attribution, GEPA cannot construct reflective datasets.
+    """
+    if not trainset:
+        raise ValueError("trainset is empty")
+
+    batch_ids = _normalize_batch_run_ids(trainset[0])
+    fixed_updates, mutable_files = program.snapshot_mutation_state()
+    try:
+        preflight_prediction = program(run_ids=batch_ids)
+    finally:
+        program.restore_mutation_state(fixed_updates, mutable_files)
+
+    feedback_by_pred = getattr(preflight_prediction, "feedback_by_pred", {}) or {}
+    if feedback_by_pred:
+        return
+
+    attribution_by_run = getattr(preflight_prediction, "attribution_by_run", {}) or {}
+    raise RuntimeError(_format_preflight_diagnostic(batch_ids, attribution_by_run))
 
 
 def configure_base_lm() -> BaseLM:
@@ -490,6 +596,12 @@ def main(
         cli_command=cli_command,
         timeout=timeout_seconds,
     )
+
+    try:
+        run_attribution_preflight(program, trainset)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1)
 
     reflection_minibatch_size = min(3, max(len(trainset), 1))
 
