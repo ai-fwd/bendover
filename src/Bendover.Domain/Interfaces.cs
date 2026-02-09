@@ -12,7 +12,7 @@ public interface IContainerService
 
 public interface IAgentOrchestrator
 {
-    Task RunAsync(string initialGoal);
+    Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices);
 }
 
 public interface IBendoverSDK

@@ -9,19 +9,16 @@ namespace Bendover.Application;
 public class LeadAgent : ILeadAgent
 {
     private readonly IChatClientResolver _clientResolver;
-    private readonly IPracticeService _practiceService;
 
-    public LeadAgent(IChatClientResolver clientResolver, IPracticeService practiceService)
+    public LeadAgent(IChatClientResolver clientResolver)
     {
         _clientResolver = clientResolver;
-        _practiceService = practiceService;
     }
 
-    public async Task<IEnumerable<string>> AnalyzeTaskAsync(string userPrompt)
+    public async Task<IEnumerable<string>> AnalyzeTaskAsync(string userPrompt, IReadOnlyCollection<Practice> practices)
     {
-        // 1. Load System Prompt from Practices
-        var leadPractices = await _practiceService.GetPracticesForRoleAsync(AgentRole.Lead);
-        var leadPractice = leadPractices.FirstOrDefault(p => p.Name == "lead_agent_practice");
+        var allPractices = practices ?? Array.Empty<Practice>();
+        var leadPractice = allPractices.FirstOrDefault(p => p.Name.Equals("lead_agent_practice", StringComparison.OrdinalIgnoreCase));
 
         string systemPrompt;
         if (leadPractice != null)
@@ -34,11 +31,8 @@ public class LeadAgent : ILeadAgent
             systemPrompt = "You are the Lead Agent. Select relevant practice names as JSON array.";
         }
 
-        // 2. Load Practices Metadata (Excluding the lead practice itself from the selection pool if desired, or keep it)
-        // Usually, the lead agent doesn't select itself, but it needs to know about others.
-        var allPractices = await _practiceService.GetPracticesAsync();
         var practicesList = string.Join("\n", allPractices
-            .Where(p => p.Name != "lead_agent_practice")
+            .Where(p => !p.Name.Equals("lead_agent_practice", StringComparison.OrdinalIgnoreCase))
             .Select(p => $"- Name: {p.Name}, Role: {p.TargetRole}, Area: {p.AreaOfConcern}"));
 
         // 3. Construct Context
@@ -81,7 +75,13 @@ public class LeadAgent : ILeadAgent
                 json = json.Substring(start, end - start + 1);
             }
 
-            return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+            var names = JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+            return names
+                .Select(x => x?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
         catch (Exception ex)
         {

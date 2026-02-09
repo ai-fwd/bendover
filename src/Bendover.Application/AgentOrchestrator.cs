@@ -14,7 +14,6 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly ScriptGenerator _scriptGenerator;
     private readonly IEnvironmentValidator _environmentValidator;
     private readonly ILeadAgent _leadAgent;
-    private readonly IPracticeService _practiceService;
     private readonly IPromptOptRunRecorder _runRecorder;
     private readonly IPromptOptRunContextAccessor _runContextAccessor;
     private readonly IGitRunner _gitRunner;
@@ -28,7 +27,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         IEnvironmentValidator environmentValidator,
         IEnumerable<IAgentObserver> observers,
         ILeadAgent leadAgent,
-        IPracticeService practiceService,
         IPromptOptRunRecorder runRecorder,
         IPromptOptRunContextAccessor runContextAccessor,
         IGitRunner gitRunner)
@@ -39,7 +37,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         _environmentValidator = environmentValidator;
         _observers = observers;
         _leadAgent = leadAgent;
-        _practiceService = practiceService;
         _runRecorder = runRecorder;
         _runContextAccessor = runContextAccessor;
         _gitRunner = gitRunner;
@@ -53,8 +50,18 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
-    public async Task RunAsync(string initialGoal)
+    public async Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices)
     {
+        if (practices is null)
+        {
+            throw new ArgumentNullException(nameof(practices));
+        }
+
+        var allPractices = practices.ToList();
+        var availablePracticeNames = new HashSet<string>(
+            allPractices.Select(p => p.Name),
+            StringComparer.OrdinalIgnoreCase);
+
         // Capture Run Start
         string baseCommit = "unknown";
         try
@@ -78,7 +85,12 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             // 1a. Lead Phase (Practice Selection)
             await NotifyAsync("Lead Agent Analyzing Request...");
-            var selectedPracticeNames = await _leadAgent.AnalyzeTaskAsync(initialGoal);
+            var selectedPracticeNames = (await _leadAgent.AnalyzeTaskAsync(initialGoal, allPractices)).ToArray();
+            var unknownSelectedPractices = selectedPracticeNames
+                .Where(name => !availablePracticeNames.Contains(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
 
             // Record Lead Input
             var leadMessages = new List<ChatMessage> { new ChatMessage(ChatRole.User, $"Goal: {initialGoal}") };
@@ -88,8 +100,23 @@ public class AgentOrchestrator : IAgentOrchestrator
             // Serialization logic is implicit here but for recording output we likely want the string representation
             await _runRecorder.RecordOutputAsync("lead", JsonSerializer.Serialize(selectedPracticeNames));
 
-            var allPractices = await _practiceService.GetPracticesAsync();
-            var selectedPractices = allPractices.Where(p => selectedPracticeNames.Contains(p.Name)).ToList();
+            if (selectedPracticeNames.Length == 0)
+            {
+                var availableCsv = string.Join(", ", availablePracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+                throw new InvalidOperationException(
+                    $"Lead selected no practices. Available practices: [{availableCsv}]");
+            }
+
+            if (unknownSelectedPractices.Length > 0)
+            {
+                var unknownCsv = string.Join(", ", unknownSelectedPractices);
+                var availableCsv = string.Join(", ", availablePracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+                throw new InvalidOperationException(
+                    $"Lead selected unknown practices: [{unknownCsv}]. Available practices: [{availableCsv}]");
+            }
+
+            var selectedNameSet = new HashSet<string>(selectedPracticeNames, StringComparer.OrdinalIgnoreCase);
+            var selectedPractices = allPractices.Where(p => selectedNameSet.Contains(p.Name)).ToList();
 
             // Format practices for prompt
             var practicesContext = string.Join("\n", selectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));

@@ -63,7 +63,9 @@ public class LocalAgentRunner : IAgentRunner
             AnsiConsole.MarkupLine("[bold blue]Starting Bendover Agent (Local)...[/]");
 
             var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
+            var practiceService = serviceProvider.GetRequiredService<IPracticeService>();
             var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
+            var practices = (await practiceService.GetPracticesAsync()).ToList();
 
             // Interactive Mode
             var goal = AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
@@ -79,7 +81,7 @@ public class LocalAgentRunner : IAgentRunner
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");
 
-            await orchestrator.RunAsync(goal);
+            await orchestrator.RunAsync(goal, practices);
 
             AnsiConsole.MarkupLine("[bold green]Agent Finished Successfully.[/]");
         }

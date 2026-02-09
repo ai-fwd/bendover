@@ -13,7 +13,8 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] AgentOrchestrator is serializing the `selectedPractices`. That's not necessary.
 - [x] PromptOptRunRecorder.FinalizeRunAsync() always called but it should be based on a flag
 - [ ] PromptOptRunRecorder needs to output to different directories
-- [ ] Agentic loop doesn't iterate based on reviewer feedback
+- [ ] AgentOrchestrator doesn't iterate based on reviewer feedback
+- [x] AgentOrchestrator practice selection needs to be more robust
 
 
 ## Infrastructure

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Domain.Interfaces;
 using DotNetEnv;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -69,6 +70,11 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             node.Remove("score_if_contains");
             var options = new JsonSerializerOptions { WriteIndented = true };
             File.WriteAllText(targetPath, node.ToJsonString(options));
+            if (settings.Verbose)
+            {
+                Console.WriteLine($"[promptopt] Wrote evaluator: {targetPath}");
+                PrintVerboseSummary(settings.Out);
+            }
             return 0;
         }
 
@@ -86,19 +92,21 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
         var serviceProvider = services.BuildServiceProvider();
 
         var fileSystem = serviceProvider.GetRequiredService<System.IO.Abstractions.IFileSystem>();
+        var fileService = serviceProvider.GetRequiredService<IFileService>();
         var gitRunner = serviceProvider.GetRequiredService<IGitRunner>();
         var resolver = serviceProvider.GetRequiredService<IPromptBundleResolver>();
-        var agentOrchestratorFactory = serviceProvider.GetRequiredService<IAgentOrchestratorFactory>();
+        var agentOrchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
         var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
         var runEvaluator = serviceProvider.GetRequiredService<IPromptOptRunEvaluator>();
 
         var orchestrator = new BenchmarkRunOrchestrator(
             gitRunner,
-            agentOrchestratorFactory,
+            agentOrchestrator,
             resolver,
             runEvaluator,
             fileSystem,
-            runContextAccessor
+            runContextAccessor,
+            fileService
         );
 
         if (string.IsNullOrWhiteSpace(settings.Bundle) || string.IsNullOrWhiteSpace(settings.Task))
@@ -109,9 +117,158 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
         await orchestrator.RunAsync(
             settings.Bundle,
             settings.Task,
-            settings.Out
+            settings.Out,
+            settings.Verbose
         );
+
+        if (settings.Verbose)
+        {
+            PrintVerboseSummary(settings.Out);
+        }
+
         return 0;
+    }
+
+    private static void PrintVerboseSummary(string outDir)
+    {
+        Console.WriteLine($"[promptopt] Out: {outDir}");
+
+        PrintLeadSummary(outDir);
+        PrintEvaluatorSummary(outDir);
+    }
+
+    private static void PrintLeadSummary(string outDir)
+    {
+        var outputsPath = Path.Combine(outDir, "outputs.json");
+        if (!File.Exists(outputsPath))
+        {
+            Console.WriteLine("[promptopt] outputs.json: missing");
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(outputsPath));
+            if (!doc.RootElement.TryGetProperty("lead", out var leadElement))
+            {
+                Console.WriteLine("[promptopt] lead output: missing");
+                return;
+            }
+
+            var selected = ExtractLeadSelections(leadElement);
+            var selectedCsv = selected.Length == 0 ? "(none)" : string.Join(", ", selected);
+            Console.WriteLine($"[promptopt] lead.selected_practices: {selectedCsv}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[promptopt] outputs.json parse error: {ex.Message}");
+        }
+    }
+
+    private static string[] ExtractLeadSelections(JsonElement leadElement)
+    {
+        try
+        {
+            if (leadElement.ValueKind == JsonValueKind.Array)
+            {
+                return leadElement.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.String)
+                    .Select(x => x.GetString())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x!.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            if (leadElement.ValueKind == JsonValueKind.String)
+            {
+                var text = leadElement.GetString();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return Array.Empty<string>();
+                }
+
+                using var leadDoc = JsonDocument.Parse(text);
+                if (leadDoc.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    return Array.Empty<string>();
+                }
+
+                return leadDoc.RootElement.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.String)
+                    .Select(x => x.GetString())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x!.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+        }
+        catch
+        {
+            // Keep verbose diagnostics resilient. We print "(none)" when parsing fails.
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static void PrintEvaluatorSummary(string outDir)
+    {
+        var evaluatorPath = Path.Combine(outDir, "evaluator.json");
+        if (!File.Exists(evaluatorPath))
+        {
+            Console.WriteLine("[promptopt] evaluator.json: missing");
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(evaluatorPath));
+            var root = doc.RootElement;
+
+            var pass = root.TryGetProperty("pass", out var passElement)
+                && passElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? passElement.GetBoolean()
+                : false;
+
+            var score = root.TryGetProperty("score", out var scoreElement)
+                && scoreElement.ValueKind == JsonValueKind.Number
+                ? scoreElement.GetDouble()
+                : 0;
+
+            Console.WriteLine($"[promptopt] evaluator.pass={pass} score={score:0.###}");
+
+            if (!root.TryGetProperty("practice_attribution", out var practice)
+                || practice.ValueKind != JsonValueKind.Object)
+            {
+                Console.WriteLine("[promptopt] evaluator.practice_attribution: missing");
+                return;
+            }
+
+            var selected = ExtractStringArray(practice, "selected_practices");
+            var offending = ExtractStringArray(practice, "offending_practices");
+            Console.WriteLine($"[promptopt] evaluator.selected_practices: {(selected.Length == 0 ? "(none)" : string.Join(", ", selected))}");
+            Console.WriteLine($"[promptopt] evaluator.offending_practices: {(offending.Length == 0 ? "(none)" : string.Join(", ", offending))}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[promptopt] evaluator.json parse error: {ex.Message}");
+        }
+    }
+
+    private static string[] ExtractStringArray(JsonElement parent, string propertyName)
+    {
+        if (!parent.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        return element.EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 }
 
@@ -132,4 +289,8 @@ public class RunCommandSettings : CommandSettings
     [CommandOption("--stub-eval-json <PATH>")]
     [Description("Write evaluator.json from a stub file and exit")]
     public string? StubEvalJson { get; init; }
+
+    [CommandOption("--verbose")]
+    [Description("Print lead/evaluator summary for manual inspection.")]
+    public bool Verbose { get; init; }
 }

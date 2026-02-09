@@ -200,6 +200,13 @@ At evaluation time:
 3. If a rule matches at least one practice in `all_practices`, it is treated as practice-bound and runs only when a matching practice is selected.
 4. If a rule matches no practice in `all_practices`, it is treated as a global rule and always runs (e.g., `ForbiddenFilesRule`).
 
+Lead selection validation in replay:
+
+- PromptOpt replay resolves bundle practices once per run and uses that same list for Lead selection and downstream agent prompts.
+- If Lead returns no practices, replay fails fast with an explicit error.
+- If Lead returns any practice name not present in the active bundle list, replay fails fast with an explicit error.
+- This prevents writing invalid bundle-external names into `practice_attribution.selected_practices`.
+
 Evaluator output is written as `evaluator.json` with stable snake_case fields:
 
 - `pass`, `score`, `flags`, `notes`
@@ -245,3 +252,7 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/src && ./src/promptopt/.venv/bin/python -m 
 Logs (GEPA + evaluator output) are written under `.bendover/promptopt/logs`.
 
 If you need to bypass DSPy caches (e.g., for testing), add `--disable-dspy-cache`.
+
+When running `Bendover.PromptOpt.CLI` manually, pass `--verbose` to print:
+- Lead-selected practices parsed from `outputs.json`
+- Evaluator summary (`pass`, `score`, selected/offending practices)

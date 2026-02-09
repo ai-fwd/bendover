@@ -12,7 +12,6 @@ namespace Bendover.Tests;
 public class AgentOrchestratorTests
 {
     private readonly Mock<ILeadAgent> _leadAgentMock;
-    private readonly Mock<IPracticeService> _practiceServiceMock;
     private readonly Mock<IChatClientResolver> _clientResolverMock;
     private readonly Mock<IChatClient> _architectClientMock;
     private readonly Mock<IChatClient> _engineerClientMock;
@@ -28,26 +27,39 @@ public class AgentOrchestratorTests
     public AgentOrchestratorTests()
     {
         _leadAgentMock = new Mock<ILeadAgent>();
-        _practiceServiceMock = new Mock<IPracticeService>();
         _clientResolverMock = new Mock<IChatClientResolver>();
         _architectClientMock = new Mock<IChatClient>();
         _engineerClientMock = new Mock<IChatClient>();
         _reviewerClientMock = new Mock<IChatClient>();
         _containerServiceMock = new Mock<IContainerService>();
         _environmentValidatorMock = new Mock<IEnvironmentValidator>();
-        _environmentValidatorMock = new Mock<IEnvironmentValidator>();
         _observerMock = new Mock<IAgentObserver>();
         _runRecorderMock = new Mock<IPromptOptRunRecorder>();
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
         _gitRunnerMock = new Mock<IGitRunner>();
 
-        // Setup Recorder defaults
+        _observerMock.Setup(x => x.OnProgressAsync(It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _environmentValidatorMock.Setup(x => x.ValidateAsync())
+            .Returns(Task.CompletedTask);
+        _containerServiceMock.Setup(x => x.StartContainerAsync())
+            .Returns(Task.CompletedTask);
+        _containerServiceMock.Setup(x => x.ExecuteScriptAsync(It.IsAny<string>()))
+            .ReturnsAsync("ok");
+        _containerServiceMock.Setup(x => x.StopContainerAsync())
+            .Returns(Task.CompletedTask);
+
         _runRecorderMock.Setup(x => x.StartRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("test_run_id");
+        _runRecorderMock.Setup(x => x.RecordPromptAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Returns(Task.CompletedTask);
+        _runRecorderMock.Setup(x => x.RecordOutputAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _runRecorderMock.Setup(x => x.FinalizeRunAsync())
+            .Returns(Task.CompletedTask);
 
-        var scriptGen = new ScriptGenerator(); // Concrete class
+        var scriptGen = new ScriptGenerator();
 
-        // Setup resolver to return specific mocks
         _clientResolverMock.Setup(x => x.GetClient(AgentRole.Architect)).Returns(_architectClientMock.Object);
         _clientResolverMock.Setup(x => x.GetClient(AgentRole.Engineer)).Returns(_engineerClientMock.Object);
         _clientResolverMock.Setup(x => x.GetClient(AgentRole.Reviewer)).Returns(_reviewerClientMock.Object);
@@ -59,7 +71,6 @@ public class AgentOrchestratorTests
             _environmentValidatorMock.Object,
             new[] { _observerMock.Object },
             _leadAgentMock.Object,
-            _practiceServiceMock.Object,
             _runRecorderMock.Object,
             _runContextAccessorMock.Object,
             _gitRunnerMock.Object
@@ -76,16 +87,9 @@ public class AgentOrchestratorTests
             new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
         };
 
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal))
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
             .ReturnsAsync(new[] { "tdd_spirit" });
 
-        _practiceServiceMock.Setup(x => x.GetPracticesAsync())
-            .ReturnsAsync(practices);
-
-        _practiceServiceMock.Setup(x => x.GetPracticesAsync())
-            .ReturnsAsync(practices);
-
-        // Setup mocks for returns
         _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
 
@@ -101,37 +105,86 @@ public class AgentOrchestratorTests
             .ReturnsAsync("abc123");
 
         // Act
-        await _sut.RunAsync(goal);
+        await _sut.RunAsync(goal, practices);
 
         // Assert
-        // 1. Lead Agent Analysis
-        _leadAgentMock.Verify(x => x.AnalyzeTaskAsync(goal), Times.Once);
+        _leadAgentMock.Verify(
+            x => x.AnalyzeTaskAsync(
+                goal,
+                It.Is<IReadOnlyCollection<Practice>>(input => input.Any(p => p.Name == "tdd_spirit"))),
+            Times.Once);
 
         _runRecorderMock.Verify(
             x => x.StartRunAsync(goal, "abc123", "bundle-123"),
             Times.Once);
 
-        // 2. Architect (Planner)
-        // Verify call logic
         _architectClientMock.Verify(x => x.CompleteAsync(
            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
 
-        // 3. Engineer (Actor)
         _engineerClientMock.Verify(x => x.CompleteAsync(
            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Engineer") && m.Text.Contains("tdd_spirit"))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
 
-        // 4. Reviewer (Critic)
         _reviewerClientMock.Verify(x => x.CompleteAsync(
            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Reviewer"))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
+    }
 
-        // Verify Execution Order using Invocations if strict ordering is needed, 
-        // but verifying the calls exist is a good start. 
-        // We can capture the call sequence to be precise.
+    [Fact]
+    public async Task RunAsync_ShouldFailFast_WhenLeadReturnsUnknownPractice()
+    {
+        // Arrange
+        var goal = "Build a login feature";
+        var practices = new List<Practice>
+        {
+            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
+        };
+
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
+            .ReturnsAsync(new[] { "missing_practice" });
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
+
+        // Assert
+        Assert.Contains("missing_practice", exception.Message);
+        _architectClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        _reviewerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldFailFast_WhenLeadReturnsNoPractices()
+    {
+        // Arrange
+        var goal = "Build a login feature";
+        var practices = new List<Practice>
+        {
+            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
+        };
+
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
+
+        // Assert
+        Assert.Contains("Lead selected no practices", exception.Message);
+        _architectClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        _reviewerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }
