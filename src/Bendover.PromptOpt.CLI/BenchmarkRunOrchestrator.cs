@@ -114,7 +114,18 @@ public class BenchmarkRunOrchestrator
         }
         finally
         {
-            // Cleanup if needed
+            try
+            {
+                if (_fileSystem.Directory.Exists(workingDirectory))
+                {
+                    _fileSystem.Directory.Delete(workingDirectory, recursive: true);
+                    Log(verbose, $"Cleaned up working directory: {workingDirectory}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(verbose, $"Failed to clean working directory '{workingDirectory}': {ex.Message}");
+            }
         }
 
         Log(verbose, "Running evaluation...");
