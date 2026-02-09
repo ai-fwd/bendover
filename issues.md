@@ -12,9 +12,9 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 ## Application
 - [ ] AgentOrchestrator is serializing the `selectedPractices`. That's not necessary.
 - [x] PromptOptRunRecorder.FinalizeRunAsync() always called but it should be based on a flag
-- [ ] PromptOptRunRecorder needs to output to different directories
 - [ ] AgentOrchestrator doesn't iterate based on reviewer feedback
 - [x] AgentOrchestrator practice selection needs to be more robust
+- [ ] AgentOrchestrator doesn't pass any context so evaluation runs are meaningless
 
 
 ## Infrastructure
@@ -53,7 +53,8 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] Rule for running test at solution successfully `dotnet test Bendover.sln`
 - [x] Using a StubAgentRunner. Needs to use the actual AgentOrchestrator 
 - [x] Ensure metric_fn & design is correct for practice specific mutation
-- [ ]
+- [x] Validated a full curated run - not perfect but evaluation does work
+- [ ] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
 
 ## SDK
 - [ ]
@@ -63,7 +64,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] missing a way to configure the reflection lm to use gpt oss
 - [x] Mutate only practices that are necessary
 - [x] Build GEPA run context from replay artifacts (goal/diff/test/build/outputs summary)
-- [ ] Validate promptopt behavior on a curated run
+- [x] Validate promptopt behavior on a curated run - not perfect but does work
 
 ## Infrastructure (PromptOpt artifacts)
 - [x] Capture `dotnet_build.txt` / `dotnet_build_error.txt` in PromptOpt run recorder
