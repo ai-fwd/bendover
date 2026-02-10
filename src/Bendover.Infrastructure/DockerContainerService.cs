@@ -67,6 +67,12 @@ public class DockerContainerService : IContainerService
             throw new InvalidOperationException($"Failed to initialize workspace.\n{copyResult.CombinedOutput}");
         }
 
+        var safeDirectoryResult = await ExecuteCommandAsync($"git config --global --add safe.directory {WorkspacePath}");
+        if (safeDirectoryResult.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Failed to configure git safe.directory for workspace.\n{safeDirectoryResult.CombinedOutput}");
+        }
+
         if (!string.IsNullOrWhiteSpace(settings.BaseCommit))
         {
             var resetResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git reset --hard {settings.BaseCommit}");

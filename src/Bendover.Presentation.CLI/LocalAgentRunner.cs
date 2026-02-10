@@ -68,8 +68,7 @@ public class LocalAgentRunner : IAgentRunner
             var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
             var practices = (await practiceService.GetPracticesAsync()).ToList();
 
-            // Interactive Mode
-            var goal = AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
+            var goal = ResolveGoal(args);
 
             var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
             var outDir = Path.Combine(".bendover", "promptopt", "runs", runId);
@@ -100,5 +99,20 @@ public class LocalAgentRunner : IAgentRunner
             AnsiConsole.WriteException(ex);
             Environment.Exit(1);
         }
+    }
+
+    private static string ResolveGoal(string[] args)
+    {
+        var goalFromArgs = string.Join(
+            " ",
+            (args ?? Array.Empty<string>()).Where(a => !string.Equals(a, "--remote", StringComparison.OrdinalIgnoreCase)))
+            .Trim();
+
+        if (!string.IsNullOrWhiteSpace(goalFromArgs))
+        {
+            return goalFromArgs;
+        }
+
+        return AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
     }
 }

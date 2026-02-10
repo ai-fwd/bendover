@@ -6,11 +6,16 @@ internal static class BendoverPaths
 
     public static string GetApplicationRoot()
     {
-        foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
         {
             var dir = new DirectoryInfo(start);
             while (dir != null)
             {
+                if (Directory.Exists(Path.Combine(dir.FullName, ".bendover")))
+                {
+                    return dir.FullName;
+                }
+
                 if (File.Exists(Path.Combine(dir.FullName, ApplicationProjectFile)))
                 {
                     return dir.FullName;

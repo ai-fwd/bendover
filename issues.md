@@ -54,10 +54,10 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Using a StubAgentRunner. Needs to use the actual AgentOrchestrator 
 - [x] Ensure metric_fn & design is correct for practice specific mutation
 - [x] Validated a full curated run - not perfect but evaluation does work
-- [ ] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
+- [x] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
 
 ## SDK
-- [ ]
+- [ ] Need to provide this context to the agent otherwise it has no visibility
 
 ## promptopt (Python)
 - [x] --target-practice-file limits to just 1 practice update. Auto choose based on evaluator flags (i.e. SkippingTDD -> tdd_spirit.md)

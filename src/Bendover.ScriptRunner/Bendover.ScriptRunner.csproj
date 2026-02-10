@@ -8,18 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="Bendover.Domain">
-      <HintPath>..\Bendover.Domain\bin\$(Configuration)\net10.0\Bendover.Domain.dll</HintPath>
-    </Reference>
-    <Reference Include="Bendover.SDK">
-      <HintPath>..\Bendover.SDK\bin\$(Configuration)\net10.0\Bendover.SDK.dll</HintPath>
-    </Reference>
+    <ProjectReference Include="..\Bendover.Domain\Bendover.Domain.csproj" />
+    <ProjectReference Include="..\Bendover.SDK\Bendover.SDK.csproj" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
   </ItemGroup>
-
-  <Target Name="BuildSdkDependencies" BeforeTargets="ResolveReferences">
-    <Exec Command="dotnet build ../Bendover.Domain/Bendover.Domain.csproj -c $(Configuration) --nologo" WorkingDirectory="$(MSBuildProjectDirectory)" />
-    <Exec Command="dotnet build ../Bendover.SDK/Bendover.SDK.csproj -c $(Configuration) --nologo" WorkingDirectory="$(MSBuildProjectDirectory)" />
-  </Target>
 
 </Project>
