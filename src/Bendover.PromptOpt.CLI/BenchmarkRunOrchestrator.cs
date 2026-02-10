@@ -93,7 +93,8 @@ public class BenchmarkRunOrchestrator
             _runContextAccessor.Current = new PromptOptRunContext(
                 outputPath,
                 Capture: true,
-                BundleId: bundleId
+                BundleId: bundleId,
+                ApplySandboxPatchToSource: false
             );
             Log(verbose, $"Set run context. bundleId={bundleId}");
 

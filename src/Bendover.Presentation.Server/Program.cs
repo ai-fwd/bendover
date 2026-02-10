@@ -18,6 +18,7 @@ builder.Services.Configure<AgentOptions>(builder.Configuration.GetSection(AgentO
 builder.Services.AddSingleton<IChatClientResolver, ChatClientResolver>();
 builder.Services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
 builder.Services.AddSingleton<IContainerService, DockerContainerService>();
+builder.Services.AddSingleton<IEngineerBodyValidator, EngineerBodyValidator>();
 builder.Services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
 builder.Services.AddSingleton<IAgentObserver, HubAgentObserver>();
 builder.Services.AddSingleton<ILeadAgent, LeadAgent>();

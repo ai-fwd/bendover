@@ -16,21 +16,15 @@ public class PromptOptRunRecorderTests
 {
     private readonly MockFileSystem _fileSystem;
     private readonly PromptOptRunRecorder _sut;
-    private readonly Mock<IGitRunner> _gitRunnerMock;
-    private readonly Mock<IDotNetRunner> _dotNetRunnerMock;
     private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
 
     public PromptOptRunRecorderTests()
     {
         _fileSystem = new MockFileSystem();
-        _gitRunnerMock = new Mock<IGitRunner>();
-        _dotNetRunnerMock = new Mock<IDotNetRunner>();
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
 
         _sut = new PromptOptRunRecorder(
             _fileSystem,
-            _gitRunnerMock.Object,
-            _dotNetRunnerMock.Object,
             _runContextAccessorMock.Object
         );
     }
@@ -58,7 +52,7 @@ public class PromptOptRunRecorderTests
     }
 
     [Fact]
-    public async Task FinalizeRunAsync_CaptureEnabled_WritesPromptsOutputsAndRunArtifacts()
+    public async Task FinalizeRunAsync_CaptureEnabled_WritesPromptsAndOutputs()
     {
         // Arrange
         var outDir = "/runs/out-2";
@@ -71,51 +65,29 @@ public class PromptOptRunRecorderTests
         await _sut.RecordPromptAsync("architect", new List<ChatMessage> { new ChatMessage(ChatRole.User, "prompt") });
         await _sut.RecordOutputAsync("architect", "plan details");
 
-        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string?>()))
-            .ReturnsAsync("diff content");
-        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string?>()))
-            .ReturnsAsync("test passed");
-        _dotNetRunnerMock.Setup(x => x.RunAsync("build Bendover.sln", It.IsAny<string?>()))
-            .ReturnsAsync("build passed");
-
         // Act
         await _sut.FinalizeRunAsync();
 
         // Assert
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "git_diff.patch")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_test.txt")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_build.txt")));
-
-        _gitRunnerMock.Verify(x => x.RunAsync("diff", It.IsAny<string?>()), Times.Once);
-        _dotNetRunnerMock.Verify(x => x.RunAsync("test", It.IsAny<string?>()), Times.Once);
-        _dotNetRunnerMock.Verify(x => x.RunAsync("build Bendover.sln", It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
-    public async Task FinalizeRunAsync_BuildFailure_WritesBuildErrorArtifact()
+    public async Task RecordArtifactAsync_CaptureEnabled_WritesArtifact()
     {
-        // Arrange
-        var outDir = "/runs/out-2-build-fail";
+        var outDir = "/runs/out-artifacts";
         _runContextAccessorMock.Setup(x => x.Current)
             .Returns(new PromptOptRunContext(outDir, Capture: true));
 
         await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
-        _gitRunnerMock.Setup(x => x.RunAsync("diff", It.IsAny<string?>()))
-            .ReturnsAsync("diff content");
-        _dotNetRunnerMock.Setup(x => x.RunAsync("test", It.IsAny<string?>()))
-            .ReturnsAsync("test passed");
-        _dotNetRunnerMock.Setup(x => x.RunAsync("build Bendover.sln", It.IsAny<string?>()))
-            .ThrowsAsync(new Exception("build failed"));
+        await _sut.RecordArtifactAsync("git_diff.patch", "diff content");
+        await _sut.RecordArtifactAsync("dotnet_build.txt", "build content");
+        await _sut.RecordArtifactAsync("dotnet_test_error.txt", "test failed");
 
-        // Act
-        await _sut.FinalizeRunAsync();
-
-        // Assert
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "dotnet_build_error.txt")));
-        var error = _fileSystem.File.ReadAllText(Path.Combine(outDir, "dotnet_build_error.txt"));
-        Assert.Contains("build failed", error);
+        Assert.Equal("diff content", _fileSystem.File.ReadAllText(Path.Combine(outDir, "git_diff.patch")));
+        Assert.Equal("build content", _fileSystem.File.ReadAllText(Path.Combine(outDir, "dotnet_build.txt")));
+        Assert.Equal("test failed", _fileSystem.File.ReadAllText(Path.Combine(outDir, "dotnet_test_error.txt")));
     }
 
     [Fact]

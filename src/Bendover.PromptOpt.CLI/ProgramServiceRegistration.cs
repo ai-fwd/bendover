@@ -19,6 +19,7 @@ public static class ProgramServiceRegistration
         services.AddSingleton<IChatClientResolver, ChatClientResolver>();
         services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
         services.AddSingleton<IContainerService, DockerContainerService>();
+        services.AddSingleton<IEngineerBodyValidator, EngineerBodyValidator>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
         services.AddSingleton<IAgentObserver, NoOpAgentObserver>();

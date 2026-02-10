@@ -1,3 +1,6 @@
+using System.Text;
+using Bendover.Application;
+using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -7,8 +10,12 @@ namespace Bendover.Infrastructure;
 public class DockerContainerService : IContainerService
 {
     private readonly DockerClient _client;
+    private readonly EngineerBodyValidator _validator = new();
     private string? _containerId;
-    private const string ImageName = "mcr.microsoft.com/dotnet/sdk:10.0"; // Base image, usually need custom one or install tool dynamically
+    private const string ImageName = "mcr.microsoft.com/dotnet/sdk:10.0";
+    private const string InputRepoPath = "/input/repo";
+    private const string WorkspacePath = "/workspace";
+    private const string EngineerBodyPath = "/workspace/engineer_body.csx";
 
     public DockerContainerService()
     {
@@ -19,47 +26,91 @@ public class DockerContainerService : IContainerService
         _client = new DockerClientConfiguration(dockerUri).CreateClient();
     }
 
-    public async Task StartContainerAsync()
+    public async Task StartContainerAsync(SandboxExecutionSettings settings)
     {
-        // 1. Ensure Image Exists (simplified)
-        // await _client.Images.CreateImageAsync(new ImagesCreateParameters { FromImage = ImageName, Tag = "latest" }, null, new Progress<JSONMessage>());
+        if (_containerId is not null)
+        {
+            throw new InvalidOperationException("Container is already started.");
+        }
 
-        // 2. Create Container
+        var sourceRepositoryPath = Path.GetFullPath(settings.SourceRepositoryPath);
+        if (!Directory.Exists(sourceRepositoryPath))
+        {
+            throw new DirectoryNotFoundException($"Source repository path not found: {sourceRepositoryPath}");
+        }
+
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
             Image = ImageName,
-            Cmd = new[] { "sleep", "infinity" }, // Keep alive
+            Cmd = new[] { "sleep", "infinity" },
             HostConfig = new HostConfig
             {
-                // Mounts would go here
+                Mounts = new List<Mount>
+                {
+                    new()
+                    {
+                        Type = "bind",
+                        Source = sourceRepositoryPath,
+                        Target = InputRepoPath,
+                        ReadOnly = true
+                    }
+                }
             }
         });
-        _containerId = response.ID;
 
-        // 3. Start
+        _containerId = response.ID;
         await _client.Containers.StartContainerAsync(_containerId, new ContainerStartParameters());
 
-        // 4. Verify dotnet-script
-        var check = await ExecuteCommandAsync("dotnet tool list -g");
-        if (!check.Contains("dotnet-script"))
+        var copyResult = await ExecuteCommandAsync($"rm -rf {WorkspacePath} && mkdir -p {WorkspacePath} && cp -a {InputRepoPath}/. {WorkspacePath}");
+        if (copyResult.ExitCode != 0)
         {
-            // Attempt to install it if missing (or throw error if strictly enforced)
-            await ExecuteCommandAsync("dotnet tool install -g dotnet-script");
+            throw new InvalidOperationException($"Failed to initialize workspace.\n{copyResult.CombinedOutput}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.BaseCommit))
+        {
+            var resetResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git reset --hard {settings.BaseCommit}");
+            if (resetResult.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Failed to reset workspace to base commit.\n{resetResult.CombinedOutput}");
+            }
+        }
+
+        if (settings.CleanWorkspace || !string.IsNullOrWhiteSpace(settings.BaseCommit))
+        {
+            var cleanResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git clean -fd");
+            if (cleanResult.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Failed to clean workspace.\n{cleanResult.CombinedOutput}");
+            }
+        }
+
+        var buildRunnerResult = await ExecuteCommandAsync($"cd {WorkspacePath} && dotnet build src/Bendover.ScriptRunner/Bendover.ScriptRunner.csproj -c Debug -v minimal");
+        if (buildRunnerResult.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Failed to build ScriptRunner inside sandbox.\n{buildRunnerResult.CombinedOutput}");
         }
     }
 
-    public async Task<string> ExecuteScriptAsync(string scriptContent)
+    public async Task<SandboxExecutionResult> ExecuteEngineerBodyAsync(string bodyContent)
     {
-        if (_containerId == null) throw new InvalidOperationException("Container not started");
+        EnsureContainerStarted();
 
-        // 1. Write script to file inside container (simulated via echo or mount)
-        // Ideally we mount the script, but for now we'll write it via shell for simplicity
-        // Limitation: large scripts might fail via echo
-        var escapedScript = scriptContent.Replace("\"", "\\\""); // Simple escaping
-        await ExecuteCommandAsync($"echo \"{escapedScript}\" > /tmp/script.csx");
+        var validation = _validator.Validate(bodyContent);
+        if (!validation.IsValid)
+        {
+            var error = validation.ErrorMessage ?? "Engineer body rejected.";
+            return new SandboxExecutionResult(1, string.Empty, error, error);
+        }
 
-        // 2. Run dotnet script
-        return await ExecuteCommandAsync("dotnet script /tmp/script.csx");
+        var encodedBody = Convert.ToBase64String(Encoding.UTF8.GetBytes(bodyContent));
+        var writeBodyResult = await ExecuteCommandAsync($"printf '%s' '{encodedBody}' | base64 -d > {EngineerBodyPath}");
+        if (writeBodyResult.ExitCode != 0)
+        {
+            return writeBodyResult;
+        }
+
+        return await ExecuteCommandAsync($"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {EngineerBodyPath}");
     }
 
     public async Task StopContainerAsync()
@@ -72,8 +123,10 @@ public class DockerContainerService : IContainerService
         }
     }
 
-    private async Task<string> ExecuteCommandAsync(string command)
+    public async Task<SandboxExecutionResult> ExecuteCommandAsync(string command)
     {
+        EnsureContainerStarted();
+
         var execCreate = await _client.Exec.CreateContainerExecAsync(_containerId, new ContainerExecCreateParameters
         {
             Cmd = new[] { "/bin/bash", "-c", command },
@@ -83,6 +136,17 @@ public class DockerContainerService : IContainerService
 
         var stream = await _client.Exec.StartContainerExecAsync(execCreate.ID, new ContainerExecStartParameters() { Detach = false }, CancellationToken.None);
         var (stdout, stderr) = await stream.ReadOutputToEndAsync(CancellationToken.None);
-        return stdout + stderr;
+        var inspect = await _client.Exec.InspectContainerExecAsync(execCreate.ID);
+        var exitCode = inspect.ExitCode.HasValue ? (int)inspect.ExitCode.Value : -1;
+        var combinedOutput = $"{stdout}{stderr}";
+        return new SandboxExecutionResult(exitCode, stdout, stderr, combinedOutput);
+    }
+
+    private void EnsureContainerStarted()
+    {
+        if (_containerId is null)
+        {
+            throw new InvalidOperationException("Container not started");
+        }
     }
 }

@@ -63,9 +63,9 @@ public class BenchmarkRunOrchestratorTests
             Path.Combine(practicesPath, "tdd_spirit.md"),
             new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
 
-        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("clone")), It.IsAny<string?>()))
+        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("clone")), It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("");
-        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>()))
+        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>(), It.IsAny<string?>()))
             .ReturnsAsync("");
         _bundleResolverMock.Setup(x => x.Resolve(bundlePath))
             .Returns(practicesPath);
@@ -84,7 +84,7 @@ public class BenchmarkRunOrchestratorTests
             Times.Once);
         _runContextAccessorMock.VerifySet(
             x => x.Current = It.Is<PromptOptRunContext>(
-                ctx => ctx.OutDir == outputPath && ctx.Capture && ctx.BundleId == "bundle-456"
+                ctx => ctx.OutDir == outputPath && ctx.Capture && ctx.BundleId == "bundle-456" && !ctx.ApplySandboxPatchToSource
             ),
             Times.Once);
         _runEvaluatorMock.Verify(x => x.EvaluateAsync(outputPath, bundlePath), Times.Once);

@@ -11,6 +11,7 @@ public interface IPromptOptRunRecorder
 
     Task RecordPromptAsync(string phase, List<ChatMessage> messages);
     Task RecordOutputAsync(string phase, string output);
+    Task RecordArtifactAsync(string filename, string content);
     Task FinalizeRunAsync();
 }
 
@@ -23,7 +24,8 @@ public record PromptOptRunContext(
     string OutDir,
     bool Capture,
     string? RunId = null,
-    string? BundleId = null
+    string? BundleId = null,
+    bool ApplySandboxPatchToSource = true
 );
 
 public interface IPromptOptRunEvaluator

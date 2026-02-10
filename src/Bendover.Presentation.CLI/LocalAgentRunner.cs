@@ -35,6 +35,7 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IChatClientResolver, ChatClientResolver>();
         services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
         services.AddSingleton<IContainerService, DockerContainerService>();
+        services.AddSingleton<IEngineerBodyValidator, EngineerBodyValidator>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
         services.AddSingleton<IAgentObserver, ConsoleAgentObserver>();
@@ -76,7 +77,8 @@ public class LocalAgentRunner : IAgentRunner
                 outDir,
                 Capture: true,
                 RunId: runId,
-                BundleId: "default"
+                BundleId: "default",
+                ApplySandboxPatchToSource: true
             );
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");

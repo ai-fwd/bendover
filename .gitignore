@@ -91,6 +91,7 @@ appsettings.*.json
 .bendover/promptopt/tmp/
 .bendover/promptopt/*.env
 .bendover/promptopt/bundles/
+tmp/
 
 # python
 .venv/

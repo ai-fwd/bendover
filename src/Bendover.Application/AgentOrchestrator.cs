@@ -9,14 +9,16 @@ namespace Bendover.Application;
 
 public class AgentOrchestrator : IAgentOrchestrator
 {
+    private const int MaxEngineerRetries = 3;
+
     private readonly IChatClientResolver _clientResolver;
     private readonly IContainerService _containerService;
-    private readonly ScriptGenerator _scriptGenerator;
     private readonly IEnvironmentValidator _environmentValidator;
     private readonly ILeadAgent _leadAgent;
     private readonly IPromptOptRunRecorder _runRecorder;
     private readonly IPromptOptRunContextAccessor _runContextAccessor;
     private readonly IGitRunner _gitRunner;
+    private readonly IEngineerBodyValidator _engineerBodyValidator;
 
     private readonly IEnumerable<IAgentObserver> _observers;
 
@@ -29,17 +31,18 @@ public class AgentOrchestrator : IAgentOrchestrator
         ILeadAgent leadAgent,
         IPromptOptRunRecorder runRecorder,
         IPromptOptRunContextAccessor runContextAccessor,
-        IGitRunner gitRunner)
+        IGitRunner gitRunner,
+        IEngineerBodyValidator engineerBodyValidator)
     {
         _clientResolver = clientResolver;
         _containerService = containerService;
-        _scriptGenerator = scriptGenerator;
         _environmentValidator = environmentValidator;
         _observers = observers;
         _leadAgent = leadAgent;
         _runRecorder = runRecorder;
         _runContextAccessor = runContextAccessor;
         _gitRunner = gitRunner;
+        _engineerBodyValidator = engineerBodyValidator;
     }
 
     private async Task NotifyAsync(string message)
@@ -137,43 +140,94 @@ public class AgentOrchestrator : IAgentOrchestrator
             var plan = planResponse.Message.Text;
             await _runRecorder.RecordOutputAsync("architect", plan ?? "");
 
-            // 3. Actor Phase (Engineer)
-            await NotifyAsync("Engineer Generating Code...");
             var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
-            var engineerMessages = new List<ChatMessage>
-            {
-                new ChatMessage(ChatRole.System, $"You are an Engineer. Implement this using the IBendoverSDK.\n\nSelected Practices:\n{practicesContext}"),
-                new ChatMessage(ChatRole.User, $"Plan: {plan}")
-            };
-            await _runRecorder.RecordPromptAsync("engineer", engineerMessages);
-
-            var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
-            var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
-            await _runRecorder.RecordOutputAsync("engineer", actorCode);
-
-            // 4. Critique Phase (Reviewer)
-            await NotifyAsync("Reviewer Critiquing Code...");
             var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
-            var reviewerMessages = new List<ChatMessage>
-            {
-                 new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
-                 new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
-            };
-            await _runRecorder.RecordPromptAsync("reviewer", reviewerMessages);
 
-            var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
-            var critique = critiqueResponse.Message.Text;
-            await _runRecorder.RecordOutputAsync("reviewer", critique ?? "");
-
-            // 5. Script Generation
-            var script = _scriptGenerator.WrapCode(actorCode);
-
-            // 6. Execution
+            // 3. Execution with retries
             await NotifyAsync("Executing in Container...");
-            await _containerService.StartContainerAsync();
+            await _containerService.StartContainerAsync(new SandboxExecutionSettings(Directory.GetCurrentDirectory()));
             try
             {
-                await _containerService.ExecuteScriptAsync(script);
+                string? failureDigest = null;
+                var completed = false;
+                for (var attemptIndex = 0; attemptIndex <= MaxEngineerRetries; attemptIndex++)
+                {
+                    var isRetry = attemptIndex > 0;
+                    await NotifyAsync(isRetry
+                        ? $"Engineer retry {attemptIndex} of {MaxEngineerRetries}..."
+                        : "Engineer Generating Code...");
+
+                    var engineerMessages = BuildEngineerMessages(practicesContext, plan ?? string.Empty, failureDigest);
+                    var engineerPhase = BuildAttemptPhase("engineer", attemptIndex);
+                    await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
+
+                    var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
+                    var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
+                    await _runRecorder.RecordOutputAsync(engineerPhase, actorCode);
+
+                    var validation = _engineerBodyValidator.Validate(actorCode);
+                    if (!validation.IsValid)
+                    {
+                        failureDigest = BuildFailureDigest(
+                            exitCode: 1,
+                            exception: null,
+                            combinedOutput: validation.ErrorMessage ?? "Engineer body rejected.");
+                        await _runRecorder.RecordOutputAsync(BuildAttemptPhase("engineer_failure_digest", attemptIndex), failureDigest);
+
+                        if (attemptIndex == MaxEngineerRetries)
+                        {
+                            throw new InvalidOperationException($"Engineer failed after {MaxEngineerRetries + 1} attempts.\n{failureDigest}");
+                        }
+
+                        continue;
+                    }
+
+                    await NotifyAsync("Reviewer Critiquing Code...");
+                    var reviewerMessages = new List<ChatMessage>
+                    {
+                        new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
+                        new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
+                    };
+                    var reviewerPhase = BuildAttemptPhase("reviewer", attemptIndex);
+                    await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
+                    var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
+                    var critique = critiqueResponse.Message.Text;
+                    await _runRecorder.RecordOutputAsync(reviewerPhase, critique ?? "");
+
+                    try
+                    {
+                        var executionResult = await _containerService.ExecuteEngineerBodyAsync(actorCode);
+                        if (executionResult.ExitCode == 0)
+                        {
+                            completed = true;
+                            break;
+                        }
+
+                        failureDigest = BuildFailureDigest(executionResult.ExitCode, null, executionResult.CombinedOutput);
+                        await _runRecorder.RecordOutputAsync(BuildAttemptPhase("engineer_failure_digest", attemptIndex), failureDigest);
+                    }
+                    catch (Exception ex)
+                    {
+                        failureDigest = BuildFailureDigest(
+                            exitCode: 1,
+                            exception: ex,
+                            combinedOutput: ex.ToString());
+                        await _runRecorder.RecordOutputAsync(BuildAttemptPhase("engineer_failure_digest", attemptIndex), failureDigest);
+                    }
+
+                    if (attemptIndex == MaxEngineerRetries)
+                    {
+                        throw new InvalidOperationException($"Engineer failed after {MaxEngineerRetries + 1} attempts.\n{failureDigest}");
+                    }
+                }
+
+                if (!completed)
+                {
+                    throw new InvalidOperationException($"Engineer did not complete successfully.\n{failureDigest}");
+                }
+
+                var gitDiffContent = await PersistSandboxArtifactsAsync();
+                await ApplySandboxPatchToSourceAsync(context, gitDiffContent);
             }
             finally
             {
@@ -186,5 +240,99 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             await _runRecorder.FinalizeRunAsync();
         }
+    }
+
+    private static List<ChatMessage> BuildEngineerMessages(string practicesContext, string plan, string? failureDigest)
+    {
+        var messages = new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.System,
+                "You are an Engineer. Implement this using the sdk globals.\n" +
+                "Return BODY-ONLY C# statements.\n" +
+                "Do not output markdown, fences, #r, using directives, namespace/type/member declarations, classes, or Main.\n\n" +
+                $"Selected Practices:\n{practicesContext}"),
+            new ChatMessage(ChatRole.User, $"Plan: {plan}")
+        };
+
+        if (!string.IsNullOrWhiteSpace(failureDigest))
+        {
+            messages.Add(new ChatMessage(ChatRole.User,
+                "Previous attempt failed. Use this digest to fix the body and retry.\n" +
+                $"Failure digest:\n{failureDigest}\n\n" +
+                "Reminder: return only body statements."));
+        }
+
+        return messages;
+    }
+
+    private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)
+    {
+        var exceptionType = exception?.GetType().FullName ?? "n/a";
+        var exceptionMessage = exception?.Message ?? "n/a";
+        var tail = GetLastLines(combinedOutput, 40);
+        return $"exit_code={exitCode}\nexception_type={exceptionType}\nexception_message={exceptionMessage}\noutput_tail:\n{tail}";
+    }
+
+    private static string BuildAttemptPhase(string basePhase, int attemptIndex)
+    {
+        if (attemptIndex == 0)
+        {
+            return basePhase;
+        }
+
+        return $"{basePhase}_retry_{attemptIndex}";
+    }
+
+    private static string GetLastLines(string text, int maxLines)
+    {
+        var lines = text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.None);
+
+        if (lines.Length <= maxLines)
+        {
+            return text;
+        }
+
+        return string.Join('\n', lines.Skip(lines.Length - maxLines));
+    }
+
+    private async Task<string> PersistSandboxArtifactsAsync()
+    {
+        var gitDiff = await PersistArtifactFromSandboxCommandAsync("cd /workspace && git diff", "git_diff.patch", "git_diff.patch");
+        await PersistArtifactFromSandboxCommandAsync("cd /workspace && dotnet build Bendover.sln", "dotnet_build.txt", "dotnet_build_error.txt");
+        await PersistArtifactFromSandboxCommandAsync("cd /workspace && dotnet test", "dotnet_test.txt", "dotnet_test_error.txt");
+        return gitDiff;
+    }
+
+    private async Task<string> PersistArtifactFromSandboxCommandAsync(string command, string successArtifactName, string errorArtifactName)
+    {
+        try
+        {
+            var result = await _containerService.ExecuteCommandAsync(command);
+            var targetArtifact = result.ExitCode == 0 ? successArtifactName : errorArtifactName;
+            await _runRecorder.RecordArtifactAsync(targetArtifact, result.CombinedOutput);
+            return result.CombinedOutput;
+        }
+        catch (Exception ex)
+        {
+            await _runRecorder.RecordArtifactAsync(errorArtifactName, ex.ToString());
+            return string.Empty;
+        }
+    }
+
+    private async Task ApplySandboxPatchToSourceAsync(PromptOptRunContext context, string gitDiffContent)
+    {
+        if (!context.ApplySandboxPatchToSource)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(gitDiffContent))
+        {
+            return;
+        }
+
+        await _gitRunner.RunAsync("apply --whitespace=nowarn -", standardInput: gitDiffContent);
     }
 }
