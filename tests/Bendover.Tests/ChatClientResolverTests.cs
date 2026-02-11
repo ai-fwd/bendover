@@ -116,7 +116,8 @@ public class ChatClientResolverTests
         var defaultOptions = new AgentOptions
         {
             Model = null, // Invalid
-            Endpoint = null
+            Endpoint = null,
+            ApiKey = "force-local-mode"
         };
         var optionsMock = new Mock<IOptions<AgentOptions>>();
         optionsMock.Setup(x => x.Value).Returns(defaultOptions);

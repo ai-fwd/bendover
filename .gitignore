@@ -46,7 +46,7 @@ build_output.txt
 *.dmp
 
 ## Visual Studio Code
-.vscode/*
+.vscode/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
@@ -86,12 +86,12 @@ appsettings.*.json
 !appsettings.json
 
 ## GEPA runs, logs, tmp files
-.bendover/promptopt/runs/
-.bendover/promptopt/logs/
-.bendover/promptopt/tmp/
-.bendover/promptopt/*.env
-.bendover/promptopt/bundles/
-tmp/
+**/.bendover/promptopt/runs/
+**/.bendover/promptopt/logs/
+**/.bendover/promptopt/tmp/
+**/.bendover/promptopt/*.env
+**/.bendover/promptopt/bundles/
+**/tmp/
 
 # python
 .venv/

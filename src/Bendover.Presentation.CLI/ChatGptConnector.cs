@@ -20,7 +20,7 @@ public sealed class ChatGptConnector
             var session = await oauthClient.AuthorizeAsync(
                 async authUrl =>
                 {
-                    if (!TryOpenBrowser(authUrl))
+                    if (!TryOpenBrowser(authUrl.ToString()))
                     {
                         AnsiConsole.MarkupLine($"[yellow]Open your browser and sign in to ChatGPT:[/] {authUrl}");
                     }

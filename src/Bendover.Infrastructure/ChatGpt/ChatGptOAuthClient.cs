@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Net.Sockets;
 
 namespace Bendover.Infrastructure.ChatGpt;
 
@@ -20,7 +21,7 @@ public sealed class ChatGptOAuthClient
         _httpClient = httpClient ?? new HttpClient();
     }
 
-    public async Task<ChatGptAuthSession> AuthorizeAsync(Func<string, Task> openBrowser, CancellationToken cancellationToken)
+    public async Task<ChatGptAuthSession> AuthorizeAsync(Func<Uri, Task> openBrowser, CancellationToken cancellationToken)
     {
         var pkce = PkceCodes.Create();
         var state = GenerateState();
@@ -32,8 +33,7 @@ public sealed class ChatGptOAuthClient
 
         var code = await listener.WaitForAuthorizationCodeAsync(state, cancellationToken);
         var tokenResponse = await ExchangeCodeForTokensAsync(code, listener.RedirectUri, pkce, cancellationToken);
-        var accountId = TryExtractAccountId(tokenResponse.IdToken, tokenResponse.AccessToken);
-        var email = TryExtractEmail(tokenResponse.IdToken);
+        var accountId = TryExtractAccountId(tokenResponse.IdToken);
 
         var expiresAt = tokenResponse.ExpiresIn.HasValue
             ? DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn.Value)
@@ -44,7 +44,7 @@ public sealed class ChatGptOAuthClient
             tokenResponse.RefreshToken,
             expiresAt,
             accountId,
-            email);
+            null);
     }
 
     public async Task<ChatGptAuthSession> RefreshAsync(ChatGptAuthSession session, CancellationToken cancellationToken)
@@ -73,8 +73,7 @@ public sealed class ChatGptOAuthClient
             throw new InvalidOperationException("Token refresh response did not include required credentials.");
         }
 
-        var accountId = TryExtractAccountId(tokenResponse.IdToken, tokenResponse.AccessToken) ?? session.AccountId;
-        var email = TryExtractEmail(tokenResponse.IdToken) ?? session.Email;
+        var accountId = TryExtractAccountId(tokenResponse.IdToken) ?? session.AccountId;
         var expiresAt = tokenResponse.ExpiresIn.HasValue
             ? DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn.Value)
             : session.ExpiresAt;
@@ -84,8 +83,7 @@ public sealed class ChatGptOAuthClient
             AccessToken = tokenResponse.AccessToken,
             RefreshToken = tokenResponse.RefreshToken,
             ExpiresAt = expiresAt,
-            AccountId = accountId,
-            Email = email
+            AccountId = accountId
         };
     }
 
@@ -124,7 +122,7 @@ public sealed class ChatGptOAuthClient
         return tokenResponse;
     }
 
-    private static string BuildAuthorizeUrl(Uri redirectUri, PkceCodes pkce, string state)
+    private static Uri BuildAuthorizeUrl(Uri redirectUri, PkceCodes pkce, string state)
     {
         var parameters = new Dictionary<string, string>
         {
@@ -137,13 +135,13 @@ public sealed class ChatGptOAuthClient
             ["id_token_add_organizations"] = "true",
             ["codex_cli_simplified_flow"] = "true",
             ["state"] = state,
-            ["originator"] = ChatGptDefaults.Originator
+            ["originator"] = "bendover"
         };
 
         var query = string.Join("&", parameters.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
 
-        return $"{ChatGptDefaults.Issuer}/oauth/authorize?{query}";
+        return new Uri($"{ChatGptDefaults.Issuer}/oauth/authorize?{query}");
     }
 
     private static string GenerateState()
@@ -159,59 +157,28 @@ public sealed class ChatGptOAuthClient
             .Replace('/', '_');
     }
 
-    private static string? TryExtractAccountId(string? idToken, string? accessToken)
+    private static string? TryExtractAccountId(string? idToken)
     {
-        return TryExtractAccountIdFromToken(idToken) ?? TryExtractAccountIdFromToken(accessToken);
-    }
-
-    private static string? TryExtractAccountIdFromToken(string? token)
-    {
-        if (string.IsNullOrWhiteSpace(token))
+        if (string.IsNullOrWhiteSpace(idToken))
         {
             return null;
         }
 
-        if (!TryParseJwtPayload(token, out var payload))
+        var parts = idToken.Split('.');
+        if (parts.Length < 2)
         {
             return null;
         }
 
         try
         {
-            if (payload.TryGetProperty("chatgpt_account_id", out var accountId) &&
-                accountId.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(accountId.GetString()))
-            {
-                return accountId.GetString();
-            }
-
-            if (payload.TryGetProperty("https://api.openai.com/auth", out var authClaim) &&
-                authClaim.ValueKind == JsonValueKind.Object &&
-                authClaim.TryGetProperty("chatgpt_account_id", out var nestedAccountId) &&
-                nestedAccountId.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(nestedAccountId.GetString()))
-            {
-                return nestedAccountId.GetString();
-            }
-
-            if (payload.TryGetProperty("organizations", out var organizations) &&
-                organizations.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var organization in organizations.EnumerateArray())
-                {
-                    if (organization.ValueKind == JsonValueKind.Object &&
-                        organization.TryGetProperty("id", out var organizationId) &&
-                        organizationId.ValueKind == JsonValueKind.String &&
-                        !string.IsNullOrWhiteSpace(organizationId.GetString()))
-                    {
-                        return organizationId.GetString();
-                    }
-                }
-            }
-
-            if (payload.TryGetProperty("sub", out var sub) &&
-                sub.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(sub.GetString()))
+            var payload = parts[1];
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=')
+                .Replace('-', '+')
+                .Replace('_', '/');
+            var bytes = Convert.FromBase64String(payload);
+            using var doc = JsonDocument.Parse(bytes);
+            if (doc.RootElement.TryGetProperty("sub", out var sub))
             {
                 return sub.GetString();
             }
@@ -222,54 +189,6 @@ public sealed class ChatGptOAuthClient
         }
 
         return null;
-    }
-
-    private static string? TryExtractEmail(string? idToken)
-    {
-        if (string.IsNullOrWhiteSpace(idToken))
-        {
-            return null;
-        }
-
-        if (!TryParseJwtPayload(idToken, out var payload))
-        {
-            return null;
-        }
-
-        if (payload.TryGetProperty("email", out var email) && email.ValueKind == JsonValueKind.String)
-        {
-            return email.GetString();
-        }
-
-        return null;
-    }
-
-    private static bool TryParseJwtPayload(string token, out JsonElement payload)
-    {
-        payload = default;
-
-        var parts = token.Split('.');
-        if (parts.Length < 2)
-        {
-            return false;
-        }
-
-        try
-        {
-            var encodedPayload = parts[1]
-                .PadRight(parts[1].Length + (4 - parts[1].Length % 4) % 4, '=')
-                .Replace('-', '+')
-                .Replace('_', '/');
-
-            var bytes = Convert.FromBase64String(encodedPayload);
-            using var doc = JsonDocument.Parse(bytes);
-            payload = doc.RootElement.Clone();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private sealed record TokenResponse(
@@ -311,21 +230,11 @@ public sealed class ChatGptOAuthClient
 
         public OAuthListener()
         {
-            var port = ChatGptDefaults.OAuthPort;
+            var port = GetAvailablePort();
             RedirectUri = new Uri($"http://localhost:{port}/auth/callback");
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://localhost:{port}/");
-            try
-            {
-                _listener.Start();
-            }
-            catch (HttpListenerException ex)
-            {
-                throw new InvalidOperationException(
-                    $"Unable to start OAuth callback listener on http://localhost:{port}/. " +
-                    "Ensure the port is available and local loopback HTTP listeners are permitted.",
-                    ex);
-            }
+            _listener.Start();
             _ = ListenAsync(_cts.Token);
         }
 
@@ -395,14 +304,6 @@ public sealed class ChatGptOAuthClient
 
                     _codeSource.TrySetResult(code);
                     await WriteHtmlAsync(context.Response, HtmlSuccess());
-                    continue;
-                }
-
-                if (request.Url?.AbsolutePath == "/cancel")
-                {
-                    _codeSource.TrySetCanceled();
-                    context.Response.StatusCode = 200;
-                    context.Response.Close();
                     continue;
                 }
 
@@ -478,13 +379,13 @@ public sealed class ChatGptOAuthClient
 
         private static string HtmlError(string message)
         {
-            return $$"""
+            return """
                     <!doctype html>
                     <html>
                       <head>
                         <title>Bendover - Authorization Failed</title>
                         <style>
-                          body {
+                          body {{
                             font-family: system-ui, -apple-system, sans-serif;
                             display: flex;
                             justify-content: center;
@@ -493,20 +394,29 @@ public sealed class ChatGptOAuthClient
                             margin: 0;
                             background: #140f0f;
                             color: #f7e1e1;
-                          }
-                          .container { text-align: center; padding: 2rem; }
-                          h1 { margin-bottom: 0.5rem; }
-                          p { color: #e6bcbc; }
+                          }}
+                          .container {{ text-align: center; padding: 2rem; }}
+                          h1 {{ margin-bottom: 0.5rem; }}
+                          p {{ color: #e6bcbc; }}
                         </style>
                       </head>
                       <body>
                         <div class="container">
                           <h1>Authorization Failed</h1>
-                          <p>{{WebUtility.HtmlEncode(message)}}</p>
+                          <p>{WebUtility.HtmlEncode(message)}</p>
                         </div>
                       </body>
                     </html>
                     """;
+        }
+
+        private static int GetAvailablePort()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            return port;
         }
 
         public void Dispose()

@@ -64,4 +64,29 @@ public class LeadAgentTests
 
         Assert.Equal(new[] { "tdd_spirit", "clean_interfaces" }, selected);
     }
+
+    [Fact]
+    public async Task AnalyzeTaskAsync_ShouldPassUserPromptAsPlainText()
+    {
+        var resolverMock = new Mock<IChatClientResolver>();
+        var leadClientMock = new Mock<IChatClient>();
+        IList<ChatMessage>? capturedMessages = null;
+
+        resolverMock.Setup(x => x.GetClient(AgentRole.Lead))
+            .Returns(leadClientMock.Object);
+        leadClientMock
+            .Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback((IList<ChatMessage> messages, ChatOptions _, CancellationToken _) => capturedMessages = messages)
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "[]") }));
+
+        var leadAgent = new Bendover.Application.LeadAgent(resolverMock.Object);
+        var userPrompt = "Build a login endpoint with auth validation";
+
+        await leadAgent.AnalyzeTaskAsync(userPrompt, Array.Empty<Practice>());
+
+        Assert.NotNull(capturedMessages);
+        Assert.Equal(2, capturedMessages!.Count);
+        Assert.Equal(ChatRole.User.Value, capturedMessages[1].Role.Value);
+        Assert.Equal(userPrompt, capturedMessages[1].Text);
+    }
 }
