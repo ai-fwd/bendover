@@ -123,6 +123,16 @@ The agent supports role-based configuration overrides. You can specify different
 }
 ```
 
+### ChatGPT Plus/Pro Subscription (No API Key)
+
+If you want to use your existing ChatGPT Plus/Pro subscription instead of an API key, run the CLI connect flow:
+
+```bash
+dotnet run --project src/Bendover.Presentation.CLI -- /connect
+```
+
+This will open your browser, prompt you to sign in, and store a refreshable session token in `~/.bendover/chatgpt.json`. The CLI will verify access and then use that token for subsequent runs. Configure your model as usual (for example `gpt-5.3-codex`).
+
 ## Practices
 
 Bendover uses a library of "Practices" to guide agent behavior. These are markdown files located in `src/Bendover.Application/.bendover/practices/`.

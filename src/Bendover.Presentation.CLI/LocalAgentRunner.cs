@@ -7,6 +7,7 @@ using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
 using Bendover.Infrastructure.Configuration;
 using Bendover.Infrastructure.Services;
+using Bendover.Infrastructure.ChatGpt;
 using DotNetEnv;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,8 @@ public class LocalAgentRunner : IAgentRunner
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddEnvironmentVariables()
             .Build();
+        var agentOptions = configuration.GetSection(AgentOptions.SectionName).Get<AgentOptions>() ?? new AgentOptions();
+        var lmSummary = BuildLmSummary(agentOptions);
 
         // Application & Infrastructure
         services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.SectionName));
@@ -61,7 +64,7 @@ public class LocalAgentRunner : IAgentRunner
 
         try
         {
-            AnsiConsole.MarkupLine("[bold blue]Starting Bendover Agent (Local)...[/]");
+            AnsiConsole.MarkupLine($"[bold blue]Starting Bendover Agent - {Markup.Escape(lmSummary)}[/]");
 
             var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
             var practiceService = serviceProvider.GetRequiredService<IPracticeService>();
@@ -114,5 +117,33 @@ public class LocalAgentRunner : IAgentRunner
         }
 
         return AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
+    }
+
+    private static string BuildLmSummary(AgentOptions options)
+    {
+        var hasChatGptSession = false;
+        try
+        {
+            hasChatGptSession = new ChatGptAuthStore().Load() is not null;
+        }
+        catch
+        {
+            hasChatGptSession = false;
+        }
+
+        var useChatGptSubscription = string.IsNullOrWhiteSpace(options.ApiKey) && hasChatGptSession;
+        var model = !string.IsNullOrWhiteSpace(options.Model)
+            ? options.Model
+            : useChatGptSubscription
+                ? ChatGptDefaults.DefaultModel
+                : "<unset-model>";
+
+        if (useChatGptSubscription)
+        {
+            return $"ChatGPT subscription ({model})";
+        }
+
+        var endpoint = string.IsNullOrWhiteSpace(options.Endpoint) ? "<unset-endpoint>" : options.Endpoint;
+        return $"endpoint mode ({model} @ {endpoint})";
     }
 }

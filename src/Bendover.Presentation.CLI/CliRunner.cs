@@ -10,6 +10,13 @@ public class CliRunner
 {
     public async Task RunAsync(string[] args)
     {
+        if (args.Any(arg => string.Equals(arg, "/connect", StringComparison.OrdinalIgnoreCase)))
+        {
+            var connector = new ChatGptConnector();
+            await connector.RunAsync();
+            return;
+        }
+
         IAgentRunner runner;
         var mode = GetExecutionMode(args);
 

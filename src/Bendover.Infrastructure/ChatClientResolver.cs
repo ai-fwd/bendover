@@ -1,6 +1,7 @@
 using System.ClientModel;
 using Bendover.Domain;
 using Bendover.Domain.Interfaces;
+using Bendover.Infrastructure.ChatGpt;
 using Bendover.Infrastructure.Configuration;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -28,11 +29,31 @@ public class ChatClientResolver : IChatClientResolver
             options = MergeOptions(_options, overrideOptions);
         }
 
-        // Validate options
-        if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.Model))
+        var chatGptSession = TryLoadChatGptSession();
+        var useChatGptSubscription = string.IsNullOrEmpty(options.ApiKey) && chatGptSession != null;
+
+        if (string.IsNullOrEmpty(options.Model))
         {
-            // Throwing exception or returning a dummy client?
-            // User wants "Local vs Remote". Support OpenAI API.
+            if (useChatGptSubscription)
+            {
+                options.Model = ChatGptDefaults.DefaultModel;
+            }
+            else
+            {
+                // Throwing exception or returning a dummy client?
+                // User wants "Local vs Remote". Support OpenAI API.
+                throw new InvalidOperationException($"Configuration missing for role {role}. Model: {options.Model}, Endpoint: {options.Endpoint}");
+            }
+        }
+
+        if (useChatGptSubscription)
+        {
+            var tokenProvider = new ChatGptTokenProvider(new ChatGptAuthStore(), new ChatGptOAuthClient());
+            return new ChatGptChatClient(tokenProvider, options.Model);
+        }
+
+        if (string.IsNullOrEmpty(options.Endpoint))
+        {
             throw new InvalidOperationException($"Configuration missing for role {role}. Model: {options.Model}, Endpoint: {options.Endpoint}");
         }
 
@@ -46,16 +67,15 @@ public class ChatClientResolver : IChatClientResolver
 
         var openAIClientOptions = new OpenAIClientOptions
         {
-            Endpoint = new Uri(options.Endpoint)
+            Endpoint = new Uri(options.Endpoint!)
         };
 
-        // If config has no API key, use "dummy" if local? 
-        // Local LLMs often need any non-empty string as key.
-        if (string.IsNullOrEmpty(options.ApiKey))
+        var apiKey = options.ApiKey;
+        if (string.IsNullOrEmpty(apiKey))
         {
+            // Local LLMs often need any non-empty string as key.
             throw new InvalidOperationException($"ApiKey is missing for role {role}. Please check your .env file.");
         }
-        var apiKey = options.ApiKey;
 
         var openAIClient = new OpenAIClient(new ApiKeyCredential(apiKey), openAIClientOptions);
         var chatClient = new OpenAIChatClient(openAIClient, options.Model);
@@ -71,5 +91,17 @@ public class ChatClientResolver : IChatClientResolver
             Endpoint = !string.IsNullOrEmpty(overrideOpts.Endpoint) ? overrideOpts.Endpoint : baseOpts.Endpoint,
             ApiKey = !string.IsNullOrEmpty(overrideOpts.ApiKey) ? overrideOpts.ApiKey : baseOpts.ApiKey
         };
+    }
+
+    private static ChatGptAuthSession? TryLoadChatGptSession()
+    {
+        try
+        {
+            return new ChatGptAuthStore().Load();
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
