@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Bendover.Application.Interfaces;
 using Bendover.Domain;
 using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
@@ -9,27 +10,20 @@ namespace Bendover.Application;
 public class LeadAgent : ILeadAgent
 {
     private readonly IChatClientResolver _clientResolver;
+    private readonly IAgentPromptService _agentPromptService;
 
-    public LeadAgent(IChatClientResolver clientResolver)
+    public LeadAgent(
+        IChatClientResolver clientResolver,
+        IAgentPromptService agentPromptService)
     {
         _clientResolver = clientResolver;
+        _agentPromptService = agentPromptService;
     }
 
     public async Task<IEnumerable<string>> AnalyzeTaskAsync(string userPrompt, IReadOnlyCollection<Practice> practices)
     {
         var allPractices = practices ?? Array.Empty<Practice>();
-        var leadPractice = allPractices.FirstOrDefault(p => p.Name.Equals("lead_agent_practice", StringComparison.OrdinalIgnoreCase));
-
-        string systemPrompt;
-        if (leadPractice != null)
-        {
-            systemPrompt = leadPractice.Content;
-        }
-        else
-        {
-            // Fallback
-            systemPrompt = "You are the Lead Agent. Select relevant practice names as JSON array.";
-        }
+        var systemPrompt = _agentPromptService.LoadLeadPromptTemplate();
 
         var practicesList = string.Join("\n", allPractices
             .Where(p => !p.Name.Equals("lead_agent_practice", StringComparison.OrdinalIgnoreCase))

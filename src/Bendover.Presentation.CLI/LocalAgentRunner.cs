@@ -36,6 +36,7 @@ public class LocalAgentRunner : IAgentRunner
         // Application & Infrastructure
         services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.SectionName));
         services.AddSingleton<IChatClientResolver, ChatClientResolver>();
+        services.AddSingleton<IAgentPromptService, AgentPromptService>();
         services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
         services.AddSingleton<IContainerService, DockerContainerService>();
         services.AddSingleton<IEngineerBodyValidator, EngineerBodyValidator>();
@@ -80,7 +81,8 @@ public class LocalAgentRunner : IAgentRunner
                 Capture: true,
                 RunId: runId,
                 BundleId: "default",
-                ApplySandboxPatchToSource: true
+                ApplySandboxPatchToSource: true,
+                PracticesRootRelativePath: ".bendover/practices"
             );
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");

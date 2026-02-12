@@ -92,6 +92,13 @@ def load_bundle(bundle_path: Path) -> Bundle:
             path=practice_path,
         )
 
+    passthrough_files: dict[str, str] = {}
+    agents_dir = bundle_path / "agents"
+    if agents_dir.exists():
+        for prompt_path in sorted(agents_dir.rglob("*.md")):
+            relative = prompt_path.relative_to(bundle_path).as_posix()
+            passthrough_files[relative] = prompt_path.read_text()
+
     meta_path = bundle_path / "meta.json"
     meta: dict[str, Any] = {}
     if meta_path.exists():
@@ -100,7 +107,13 @@ def load_bundle(bundle_path: Path) -> Bundle:
         except json.JSONDecodeError:
             meta = {}
 
-    return Bundle(bundle_id=bundle_path.name, path=bundle_path, practices=practices, meta=meta)
+    return Bundle(
+        bundle_id=bundle_path.name,
+        path=bundle_path,
+        practices=practices,
+        passthrough_files=passthrough_files,
+        meta=meta,
+    )
 
 
 def build_bundle_from_seed(seed: Bundle, updates: dict[str, str]) -> Bundle:
@@ -126,12 +139,22 @@ def build_bundle_from_seed(seed: Bundle, updates: dict[str, str]) -> Bundle:
                 body=new_body.strip(),
             )
 
-    return Bundle(bundle_id=seed.bundle_id, path=seed.path, practices=practices, meta=seed.meta)
+    return Bundle(
+        bundle_id=seed.bundle_id,
+        path=seed.path,
+        practices=practices,
+        passthrough_files=dict(seed.passthrough_files),
+        meta=seed.meta,
+    )
 
 
-def hash_bundle(practices: dict[str, PracticeFile]) -> str:
+def hash_bundle(practices: dict[str, PracticeFile], passthrough_files: dict[str, str] | None = None) -> str:
     """Hash the practice bodies to produce a deterministic bundle id."""
     content = "".join([practices[name].body for name in sorted(practices.keys())])
+    if passthrough_files:
+        content += "".join(
+            [f"{name}\n{passthrough_files[name]}" for name in sorted(passthrough_files.keys())]
+        )
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
@@ -148,7 +171,7 @@ def write_bundle(
     """
     bundle_root.mkdir(parents=True, exist_ok=True)
 
-    content_hash = hash_bundle(bundle.practices)
+    content_hash = hash_bundle(bundle.practices, bundle.passthrough_files)
     bundle_id = f"gen{generation}_{content_hash[:8]}"
     bundle_path = bundle_root / bundle_id
 
@@ -159,7 +182,12 @@ def write_bundle(
         (bundle_path / "practices").mkdir(parents=True, exist_ok=True)
         for practice in bundle.practices.values():
             target = bundle_path / "practices" / practice.file_name
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(practice.render())
+        for relative_path, content in bundle.passthrough_files.items():
+            target = bundle_path / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
 
     meta = {
         "id": bundle_id,
@@ -173,4 +201,10 @@ def write_bundle(
 
     (bundle_path / "meta.json").write_text(json.dumps(meta, indent=2))
 
-    return Bundle(bundle_id=bundle_id, path=bundle_path, practices=bundle.practices, meta=meta)
+    return Bundle(
+        bundle_id=bundle_id,
+        path=bundle_path,
+        practices=bundle.practices,
+        passthrough_files=bundle.passthrough_files,
+        meta=meta,
+    )

@@ -69,12 +69,33 @@ public class BenchmarkRunOrchestrator
             await _gitRunner.RunAsync($"checkout {commitHash}", workingDirectory);
             Log(verbose, "Checkout completed.");
 
-            var practicesPath = _bundleResolver.Resolve(bundlePath);
-            Log(verbose, $"Resolved practices path: {practicesPath}");
-            var practiceService = new PracticeService(_fileService, practicesPath);
+            var bundleId = _fileSystem.Path.GetFileName(bundlePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var sourcePracticesPath = _bundleResolver.Resolve(bundlePath);
+            Log(verbose, $"Resolved source practices path: {sourcePracticesPath}");
+            var sourceBundleRoot = _fileSystem.Path.GetDirectoryName(sourcePracticesPath)
+                ?? throw new InvalidOperationException($"Could not resolve bundle root from practices path: {sourcePracticesPath}");
+            var sourceAgentsPath = _fileSystem.Path.Combine(sourceBundleRoot, "agents");
+
+            var bundlePracticesRootRelativePath = _fileSystem.Path.Combine(".bendover", "promptopt", "bundles", bundleId, "practices");
+            var workspacePracticesPath = _fileSystem.Path.Combine(workingDirectory, bundlePracticesRootRelativePath);
+            CopyDirectory(sourcePracticesPath, workspacePracticesPath);
+            Log(verbose, $"Copied practices into workspace: {workspacePracticesPath}");
+
+            if (_fileSystem.Directory.Exists(sourceAgentsPath))
+            {
+                var bundleAgentsRootRelativePath = _fileSystem.Path.Combine(".bendover", "promptopt", "bundles", bundleId, "agents");
+                var workspaceAgentsPath = _fileSystem.Path.Combine(workingDirectory, bundleAgentsRootRelativePath);
+                CopyDirectory(sourceAgentsPath, workspaceAgentsPath);
+                Log(verbose, $"Copied agents into workspace: {workspaceAgentsPath}");
+            }
+            else
+            {
+                Log(verbose, $"Agents directory not found in bundle (optional): {sourceAgentsPath}");
+            }
+
+            var practiceService = new PracticeService(_fileService, workspacePracticesPath);
             var practices = (await practiceService.GetPracticesAsync()).ToList();
             Log(verbose, $"Loaded {practices.Count} practices.");
-            var bundleId = _fileSystem.Path.GetFileName(bundlePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
             var taskFilePath = _fileSystem.Path.Combine(taskPath, "task.md");
             var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
@@ -94,7 +115,8 @@ public class BenchmarkRunOrchestrator
                 outputPath,
                 Capture: true,
                 BundleId: bundleId,
-                ApplySandboxPatchToSource: false
+                ApplySandboxPatchToSource: false,
+                PracticesRootRelativePath: bundlePracticesRootRelativePath
             );
             Log(verbose, $"Set run context. bundleId={bundleId}");
 
@@ -132,6 +154,37 @@ public class BenchmarkRunOrchestrator
         Log(verbose, "Running evaluation...");
         await _runEvaluator.EvaluateAsync(outputPath, bundlePath);
         Log(verbose, "Evaluation completed.");
+    }
+
+    private void CopyDirectory(string sourcePath, string targetPath)
+    {
+        if (!_fileSystem.Directory.Exists(sourcePath))
+        {
+            throw new DirectoryNotFoundException($"Source directory not found: {sourcePath}");
+        }
+
+        _fileSystem.Directory.CreateDirectory(targetPath);
+
+        var directories = _fileSystem.Directory.GetDirectories(sourcePath, "*", SearchOption.AllDirectories);
+        foreach (var directory in directories)
+        {
+            var relative = _fileSystem.Path.GetRelativePath(sourcePath, directory);
+            _fileSystem.Directory.CreateDirectory(_fileSystem.Path.Combine(targetPath, relative));
+        }
+
+        var files = _fileSystem.Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories);
+        foreach (var file in files)
+        {
+            var relative = _fileSystem.Path.GetRelativePath(sourcePath, file);
+            var destination = _fileSystem.Path.Combine(targetPath, relative);
+            var destinationDirectory = _fileSystem.Path.GetDirectoryName(destination);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                _fileSystem.Directory.CreateDirectory(destinationDirectory);
+            }
+
+            _fileSystem.File.Copy(file, destination, overwrite: true);
+        }
     }
 
     private static void Log(bool verbose, string message)

@@ -17,6 +17,7 @@ public static class ProgramServiceRegistration
     {
         services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.SectionName));
         services.AddSingleton<IChatClientResolver, ChatClientResolver>();
+        services.AddSingleton<IAgentPromptService, AgentPromptService>();
         services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
         services.AddSingleton<IContainerService, DockerContainerService>();
         services.AddSingleton<IEngineerBodyValidator, EngineerBodyValidator>();

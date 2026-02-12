@@ -27,6 +27,7 @@ class Bundle:
     bundle_id: str
     path: Path
     practices: dict[str, PracticeFile]
+    passthrough_files: dict[str, str] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
 

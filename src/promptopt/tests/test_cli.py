@@ -328,6 +328,49 @@ def test_bundle_program_no_attribution_warns_and_freezes(tmp_path, capsys):
     assert updates["simple.md"] == "Hello"
 
 
+def test_bundle_program_excludes_agents_templates_from_predictors(tmp_path):
+    dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
+
+    practice = PracticeFile(
+        file_name="simple.md",
+        name="simple",
+        frontmatter="Name: simple",
+        body="Hello",
+    )
+
+    seed_bundle = Bundle(
+        bundle_id="seed",
+        path=tmp_path / "seed",
+        practices={"simple.md": practice},
+        passthrough_files={
+            "agents/lead.md": "Lead template",
+            "agents/engineer.md": "Engineer template",
+        },
+        meta={},
+    )
+    run = RunArtifact(
+        run_id="run1",
+        run_dir=tmp_path / "run1",
+        goal="Do it",
+        base_commit="abc",
+    )
+    cache = MagicMock()
+    cache.get.return_value = None
+
+    program = BundleProgram(
+        seed_bundle=seed_bundle,
+        runs_by_id={"run1": run},
+        bundle_root=tmp_path / "bundles",
+        log_dir=tmp_path / "logs",
+        cache=cache,
+        cli_command="cli",
+        timeout=5,
+    )
+
+    predictor_files = {practice.file_name for practice in program.practice_by_pred.values()}
+    assert predictor_files == {"simple.md"}
+
+
 def test_bundle_program_offending_without_notes_does_not_mutate(tmp_path, capsys):
     dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
 

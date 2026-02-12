@@ -33,17 +33,20 @@ public class LeadAgentTests
     {
         // Arrange
         var resolverMock = new Mock<IChatClientResolver>();
+        var promptServiceMock = new Mock<Bendover.Application.Interfaces.IAgentPromptService>();
         var leadClientMock = new Mock<IChatClient>();
         IList<ChatMessage>? capturedMessages = null;
 
         resolverMock.Setup(x => x.GetClient(AgentRole.Lead))
             .Returns(leadClientMock.Object);
+        promptServiceMock.Setup(x => x.LoadLeadPromptTemplate())
+            .Returns("Lead prompt body");
         leadClientMock
             .Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .Callback((IList<ChatMessage> messages, ChatOptions _, CancellationToken _) => capturedMessages = messages)
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "[\"tdd_spirit\", \" tdd_spirit \", \"clean_interfaces\"]") }));
 
-        var leadAgent = new Bendover.Application.LeadAgent(resolverMock.Object);
+        var leadAgent = new Bendover.Application.LeadAgent(resolverMock.Object, promptServiceMock.Object);
         var practices = new[]
         {
             new Practice("lead_agent_practice", AgentRole.Lead, "Orchestration", "Lead prompt body"),
@@ -69,17 +72,20 @@ public class LeadAgentTests
     public async Task AnalyzeTaskAsync_ShouldPassUserPromptAsPlainText()
     {
         var resolverMock = new Mock<IChatClientResolver>();
+        var promptServiceMock = new Mock<Bendover.Application.Interfaces.IAgentPromptService>();
         var leadClientMock = new Mock<IChatClient>();
         IList<ChatMessage>? capturedMessages = null;
 
         resolverMock.Setup(x => x.GetClient(AgentRole.Lead))
             .Returns(leadClientMock.Object);
+        promptServiceMock.Setup(x => x.LoadLeadPromptTemplate())
+            .Returns("Lead prompt body");
         leadClientMock
             .Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .Callback((IList<ChatMessage> messages, ChatOptions _, CancellationToken _) => capturedMessages = messages)
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "[]") }));
 
-        var leadAgent = new Bendover.Application.LeadAgent(resolverMock.Object);
+        var leadAgent = new Bendover.Application.LeadAgent(resolverMock.Object, promptServiceMock.Object);
         var userPrompt = "Build a login endpoint with auth validation";
 
         await leadAgent.AnalyzeTaskAsync(userPrompt, Array.Empty<Practice>());
@@ -88,5 +94,21 @@ public class LeadAgentTests
         Assert.Equal(2, capturedMessages!.Count);
         Assert.Equal(ChatRole.User.Value, capturedMessages[1].Role.Value);
         Assert.Equal(userPrompt, capturedMessages[1].Text);
+    }
+
+    [Fact]
+    public async Task AnalyzeTaskAsync_ShouldFail_WhenLeadTemplateUnavailable()
+    {
+        var resolverMock = new Mock<IChatClientResolver>();
+        var promptServiceMock = new Mock<Bendover.Application.Interfaces.IAgentPromptService>();
+        promptServiceMock.Setup(x => x.LoadLeadPromptTemplate())
+            .Throws(new InvalidOperationException("Required agent prompt file is missing: /repo/.bendover/agents/lead.md"));
+
+        var leadAgent = new Bendover.Application.LeadAgent(resolverMock.Object, promptServiceMock.Object);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => leadAgent.AnalyzeTaskAsync("goal", Array.Empty<Practice>()));
+
+        Assert.Contains("missing", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

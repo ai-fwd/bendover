@@ -13,4 +13,8 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
   </ItemGroup>
 
+  <Target Name="GenerateSdkSurfaceMarkdown" AfterTargets="Build">
+    <Exec Command='dotnet "$(TargetPath)" --describe-sdk --out "$(TargetDir)sdk-surface.generated.md"' />
+  </Target>
+
 </Project>

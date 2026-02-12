@@ -218,7 +218,7 @@ class BundleProgram(dspy.Module):
         # Build a candidate bundle from the latest predictor instructions.
         updates = self._current_practice_updates()
         candidate_bundle = build_bundle_from_seed(self.seed_bundle, updates)
-        bundle_hash = hash_bundle(candidate_bundle.practices)
+        bundle_hash = hash_bundle(candidate_bundle.practices, candidate_bundle.passthrough_files)
 
         # Persist candidate bundle to disk so the CLI can read it.
         written_bundle = write_bundle(
@@ -637,7 +637,7 @@ def main(
     best_updates = best_program.get_practice_updates()
 
     best_bundle = build_bundle_from_seed(seed_bundle, best_updates)
-    best_hash = hash_bundle(best_bundle.practices)
+    best_hash = hash_bundle(best_bundle.practices, best_bundle.passthrough_files)
 
     written_bundle = write_bundle(
         bundle_root=bundles_root,

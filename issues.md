@@ -41,7 +41,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 
 ## Presentation.CLI
 - [ ] Support multi-line input via Shift+Enter
-- [ ] Needs to support Codex auth flow
+- [x] Needs to support Codex auth flow
 - [ ] Changed to .env file but readme is showing support for different agent configs via appsettings.json & configuration.GetSection(AgentOptions.SectionName) still exists. I don't see tests.
 
 ## Presentation.Server
@@ -55,9 +55,10 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Ensure metric_fn & design is correct for practice specific mutation
 - [x] Validated a full curated run - not perfect but evaluation does work
 - [x] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
+- [ ] .bendover/agents for system prompts should get optimized separately from practices. For now we're skipping them.
 
 ## SDK
-- [ ] Need to provide this context to the agent otherwise it has no visibility
+- [x] Need to provide this context to the agent otherwise it has no visibility
 
 ## promptopt (Python)
 - [x] --target-practice-file limits to just 1 practice update. Auto choose based on evaluator flags (i.e. SkippingTDD -> tdd_spirit.md)

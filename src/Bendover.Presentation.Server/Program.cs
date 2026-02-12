@@ -16,6 +16,7 @@ builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.Configure<AgentOptions>(builder.Configuration.GetSection(AgentOptions.SectionName));
 builder.Services.AddSingleton<IChatClientResolver, ChatClientResolver>();
+builder.Services.AddSingleton<IAgentPromptService, AgentPromptService>();
 builder.Services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
 builder.Services.AddSingleton<IContainerService, DockerContainerService>();
 builder.Services.AddSingleton<IEngineerBodyValidator, EngineerBodyValidator>();
