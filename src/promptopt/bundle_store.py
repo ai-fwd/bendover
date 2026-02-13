@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,61 @@ def update_active_json(active_json_path: Path, bundle_id: str, metadata: dict[st
     active_json_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"bundleId": bundle_id, **metadata}
     active_json_path.write_text(json.dumps(payload, indent=2))
+
+
+def ensure_active_bundle(promptopt_root: Path, seed_bundle_id: str = "seed") -> str:
+    """
+    Ensure prompt optimization has an active bundle id.
+
+    Behavior:
+    - If active.json exists, return its bundle id as-is.
+    - If active.json is missing, rebuild bundles/<seed_bundle_id> from root
+      .bendover/{practices,agents} and write active.json -> seed.
+    """
+    promptopt_root = Path(promptopt_root)
+    active_json_path = promptopt_root / "active.json"
+
+    if active_json_path.exists():
+        return read_active_bundle_id(active_json_path)
+
+    _rebuild_seed_bundle(promptopt_root, seed_bundle_id)
+    update_active_json(active_json_path, seed_bundle_id, metadata={})
+    return seed_bundle_id
+
+
+def _rebuild_seed_bundle(promptopt_root: Path, seed_bundle_id: str) -> None:
+    practices_source, agents_source = _resolve_root_sources(promptopt_root)
+    _validate_root_sources(practices_source, agents_source)
+
+    seed_bundle_path = promptopt_root / "bundles" / seed_bundle_id
+    if seed_bundle_path.exists():
+        shutil.rmtree(seed_bundle_path)
+
+    (promptopt_root / "bundles").mkdir(parents=True, exist_ok=True)
+    shutil.copytree(practices_source, seed_bundle_path / "practices")
+    shutil.copytree(agents_source, seed_bundle_path / "agents")
+
+
+def _resolve_root_sources(promptopt_root: Path) -> tuple[Path, Path]:
+    bendover_root = promptopt_root.parent
+    return bendover_root / "practices", bendover_root / "agents"
+
+
+def _validate_root_sources(practices_source: Path, agents_source: Path) -> None:
+    if not practices_source.is_dir():
+        raise FileNotFoundError(f"Root practices directory not found: {practices_source}")
+    if not any(practices_source.glob("*.md")):
+        raise ValueError(
+            f"Root practices directory must contain at least one .md file: {practices_source}")
+
+    if not agents_source.is_dir():
+        raise FileNotFoundError(f"Root agents directory not found: {agents_source}")
+
+    required_agents = ("lead.md", "engineer.md", "tools.md")
+    for file_name in required_agents:
+        path = agents_source / file_name
+        if not path.is_file():
+            raise FileNotFoundError(f"Required root agent prompt file missing: {path}")
 
 
 def _parse_frontmatter(text: str) -> tuple[str, str]:

@@ -180,7 +180,7 @@ Bendover uses a unified **Replay Workflow** to optimize agent practices using [D
 2.  **Curate**: Selected run IDs are listed in dataset files (e.g., `train.txt`) to define a training split.
 3.  **Optimize**: The `run_gepa.py` script:
     *   Loads the training runs.
-    *   Starts with a **Seed Bundle** of practices.
+    *   Starts with an active bundle. If `.bendover/promptopt/active.json` is missing, it rebuilds `.bendover/promptopt/bundles/seed` from root `.bendover/practices` and `.bendover/agents`, then writes `active.json` pointing to `seed`.
     *   Builds GEPA reflection context from run artifacts (`goal`, `base_commit`, `git_diff`, `dotnet_test`/error, `dotnet_build`/error, and `outputs.json` summary).
     *   Proposes changes only for practices with evaluator `notes_by_practice` feedback in the current GEPA batch.
     *   Treats practices without practice-specific notes as fixed (no reflection trace, no mutation).
@@ -230,7 +230,7 @@ Evaluator output is written as `evaluator.json` with stable snake_case fields:
 - Python 3.10+
 - `pip install -r promptopt/requirements.txt`
 - A `.env` file in the project root (copied from `.env.example`).
-- A seed bundle in `.bendover/promptopt/bundles/seed` (or similar).
+- Root practices and prompts under `.bendover/practices` and `.bendover/agents` (used to bootstrap seed when `active.json` is missing).
 - Recorded runs in `.bendover/promptopt/runs/`.
 
 ### Configuration
@@ -258,6 +258,12 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/src && ./src/promptopt/.venv/bin/python -m 
   --cli-command "dotnet run --project src/Bendover.PromptOpt.CLI --" \
   --max-full-evals 10
 ```
+
+Bundle lifecycle:
+- If `.bendover/promptopt/active.json` exists, GEPA starts from that active bundle.
+- If `active.json` is missing, GEPA rebuilds `bundles/seed` from root `.bendover/practices` and `.bendover/agents`, then sets `active.json` to `seed`.
+- After optimization, GEPA writes new bundles under `.bendover/promptopt/bundles` and updates `active.json` to the best bundle.
+- If you manually promote only part of a generated bundle, delete `active.json` before the next run to intentionally reset seed from current root practices/prompts.
 
 Logs (GEPA + evaluator output) are written under `.bendover/promptopt/logs`.
 

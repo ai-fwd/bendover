@@ -13,7 +13,7 @@ from dspy.utils import DummyLM
 from dotenv import load_dotenv
 
 from promptopt.bundle_store import (
-    read_active_bundle_id,
+    ensure_active_bundle,
     load_bundle,
     build_bundle_from_seed,
     write_bundle,
@@ -525,7 +525,7 @@ def main(
 
     High-level flow:
     1) Load run IDs from datasets/train.txt.
-    2) Resolve the active bundle (or fall back to promptopt_root/practices).
+    2) Resolve the active bundle (bootstrap seed from root .bendover content if needed).
     3) Build a DSPy program with one predictor per practice file.
     4) Let GEPA reflect on traces + scores to evolve instructions.
     5) Write the best bundle and update active.json.
@@ -556,12 +556,9 @@ def main(
     if len(run_ids) > 10:
         raise ValueError("train_split must contain at most 10 run_ids")
 
-    # Resolve the seed bundle. If active.json is missing, fall back to root/practices.
-    try:
-        active_bundle_id = read_active_bundle_id(active_json)
-        seed_bundle_path = bundles_root / active_bundle_id
-    except FileNotFoundError:
-        seed_bundle_path = root
+    # Resolve the seed bundle. Missing active.json triggers seed bootstrap from root .bendover content.
+    active_bundle_id = ensure_active_bundle(root)
+    seed_bundle_path = bundles_root / active_bundle_id
 
     seed_bundle = load_bundle(seed_bundle_path)
 

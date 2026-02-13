@@ -13,7 +13,7 @@ runner = CliRunner()
 @pytest.fixture
 def mock_dependencies(tmp_path):
     with patch("promptopt.run_gepa.load_split") as mock_load, \
-         patch("promptopt.run_gepa.read_active_bundle_id") as mock_active, \
+         patch("promptopt.run_gepa.ensure_active_bundle") as mock_ensure_active, \
          patch("promptopt.run_gepa.load_bundle") as mock_load_bundle, \
          patch("promptopt.run_gepa.load_run_artifact") as mock_load_run, \
          patch("promptopt.run_gepa.GEPA") as mock_gepa, \
@@ -22,7 +22,7 @@ def mock_dependencies(tmp_path):
          patch("promptopt.run_gepa.evaluate_bundle") as mock_eval:
 
         mock_load.return_value = ["run1", "run2"]
-        mock_active.return_value = "seed"
+        mock_ensure_active.return_value = "seed"
 
         practice = PracticeFile(
             file_name="simple.md",
@@ -87,6 +87,8 @@ def mock_dependencies(tmp_path):
 
         yield {
             "load_split": mock_load,
+            "ensure_active_bundle": mock_ensure_active,
+            "load_bundle": mock_load_bundle,
             "GEPA": mock_gepa,
             "teleprompter": mock_teleprompter,
             "program_cls": mock_program_cls,
@@ -107,6 +109,8 @@ def test_cli_invocation_format(mock_dependencies, tmp_path):
 
     assert result.exit_code == 0
     deps["load_split"].assert_called_with(str(promptopt_root / "datasets" / "train.txt"))
+    deps["ensure_active_bundle"].assert_called_once_with(promptopt_root)
+    deps["load_bundle"].assert_called_once_with(promptopt_root / "bundles" / "seed")
     deps["GEPA"].assert_called_once()
     deps["program"].assert_called_once_with(run_ids=["run1"])
     deps["teleprompter"].compile.assert_called_once()
