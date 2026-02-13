@@ -33,7 +33,7 @@ public class RunScoringOrchestratorTests : IDisposable
         var runDirectory = SeedRun("run-1", "current");
         SeedCurrentPractices();
 
-        var outDirectory = await _sut.ScoreAsync("run-1", bundleOverridePath: null, outputPath: null);
+        var outDirectory = await _sut.ScoreAsync("run-1", bundleOverridePath: null);
 
         Assert.Equal(runDirectory, outDirectory);
         _runEvaluatorMock.Verify(
@@ -49,7 +49,7 @@ public class RunScoringOrchestratorTests : IDisposable
         var runDirectory = SeedRun("run-2", "default");
         SeedCurrentPractices();
 
-        var outDirectory = await _sut.ScoreAsync("run-2", bundleOverridePath: null, outputPath: null);
+        var outDirectory = await _sut.ScoreAsync("run-2", bundleOverridePath: null);
 
         Assert.Equal(runDirectory, outDirectory);
         _runEvaluatorMock.Verify(
@@ -68,7 +68,7 @@ public class RunScoringOrchestratorTests : IDisposable
         var overrideBundle = Path.Combine(_repoRootDirectory.FullName, "custom_bundle");
         _fileSystem.AddFile(Path.Combine(overrideBundle, "practices", "custom.md"), new MockFileData("content"));
 
-        await _sut.ScoreAsync("run-3", bundleOverridePath: overrideBundle, outputPath: null);
+        await _sut.ScoreAsync("run-3", bundleOverridePath: overrideBundle);
 
         _runEvaluatorMock.Verify(x => x.EvaluateAsync(runDirectory, overrideBundle), Times.Once);
     }
@@ -85,27 +85,9 @@ public class RunScoringOrchestratorTests : IDisposable
             "gengepa_12345678");
         _fileSystem.AddFile(Path.Combine(resolvedBundlePath, "practices", "p.md"), new MockFileData("content"));
 
-        await _sut.ScoreAsync("run-4", bundleOverridePath: null, outputPath: null);
+        await _sut.ScoreAsync("run-4", bundleOverridePath: null);
 
         _runEvaluatorMock.Verify(x => x.EvaluateAsync(runDirectory, resolvedBundlePath), Times.Once);
-    }
-
-    [Fact]
-    public async Task ScoreAsync_CopiesRunArtifacts_WhenOutputPathDiffers()
-    {
-        SeedRun("run-5", "current");
-        SeedCurrentPractices();
-
-        var outputPath = Path.Combine(_repoRootDirectory.FullName, "tmp", "scored-run-5");
-
-        var resolvedOut = await _sut.ScoreAsync("run-5", bundleOverridePath: null, outputPath: outputPath);
-
-        Assert.Equal(outputPath, resolvedOut);
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outputPath, "outputs.json")));
-        Assert.True(_fileSystem.File.Exists(Path.Combine(outputPath, "git_diff.patch")));
-        _runEvaluatorMock.Verify(
-            x => x.EvaluateAsync(outputPath, Path.Combine(_repoRootDirectory.FullName, ".bendover")),
-            Times.Once);
     }
 
     [Fact]
@@ -114,7 +96,7 @@ public class RunScoringOrchestratorTests : IDisposable
         SeedRun("run-6", "missing_bundle");
 
         var ex = await Assert.ThrowsAsync<DirectoryNotFoundException>(
-            () => _sut.ScoreAsync("run-6", bundleOverridePath: null, outputPath: null));
+            () => _sut.ScoreAsync("run-6", bundleOverridePath: null));
 
         Assert.Contains("Resolved bundle path does not exist", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

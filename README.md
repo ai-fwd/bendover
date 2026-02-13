@@ -285,3 +285,4 @@ Bundle resolution for `--run-id` mode:
 - If `--bundle` is provided, that bundle path is used.
 - Otherwise `bundle_id.txt` from the run is used.
 - `bundle_id` values `current` (and legacy `default`) mean root `.bendover` practices.
+- scoring writes/overwrites `evaluator.json` in the existing run directory.

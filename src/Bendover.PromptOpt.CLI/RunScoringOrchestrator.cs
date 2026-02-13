@@ -6,22 +6,6 @@ namespace Bendover.PromptOpt.CLI;
 
 public class RunScoringOrchestrator
 {
-    private static readonly string[] CopiedRunArtifacts =
-    {
-        "goal.txt",
-        "base_commit.txt",
-        "bundle_id.txt",
-        "run_meta.json",
-        "prompts.json",
-        "outputs.json",
-        "git_diff.patch",
-        "dotnet_build.txt",
-        "dotnet_build_error.txt",
-        "dotnet_test.txt",
-        "dotnet_test_error.txt",
-        "sdk_surface_context.md"
-    };
-
     private readonly IOAbstractions.IFileSystem _fileSystem;
     private readonly IPromptOptRunEvaluator _runEvaluator;
 
@@ -33,7 +17,7 @@ public class RunScoringOrchestrator
         _runEvaluator = runEvaluator;
     }
 
-    public async Task<string> ScoreAsync(string runId, string? bundleOverridePath, string? outputPath, bool verbose = false)
+    public async Task<string> ScoreAsync(string runId, string? bundleOverridePath, bool verbose = false)
     {
         if (string.IsNullOrWhiteSpace(runId))
         {
@@ -51,14 +35,11 @@ public class RunScoringOrchestrator
         var bundlePath = ResolveBundlePath(repoRoot, runDirectory, bundleOverridePath);
         ValidateBundlePath(bundlePath, runDirectory);
 
-        var resolvedOutputPath = ResolveOutputPath(repoRoot, runDirectory, outputPath);
-        PrepareOutputArtifacts(runDirectory, resolvedOutputPath);
-
-        Log(verbose, $"Scoring existing run. run_id={runId} bundle={bundlePath} out={resolvedOutputPath}");
-        await _runEvaluator.EvaluateAsync(resolvedOutputPath, bundlePath);
+        Log(verbose, $"Scoring existing run. run_id={runId} bundle={bundlePath} out={runDirectory}");
+        await _runEvaluator.EvaluateAsync(runDirectory, bundlePath);
         Log(verbose, "Scoring completed.");
 
-        return resolvedOutputPath;
+        return runDirectory;
     }
 
     private string ResolveBundlePath(string repoRoot, string runDirectory, string? bundleOverridePath)
@@ -78,17 +59,6 @@ public class RunScoringOrchestrator
 
         return _fileSystem.Path.Combine(repoRoot, ".bendover", "promptopt", "bundles", bundleId);
     }
-
-    private string ResolveOutputPath(string repoRoot, string runDirectory, string? outputPath)
-    {
-        if (string.IsNullOrWhiteSpace(outputPath))
-        {
-            return runDirectory;
-        }
-
-        return ResolvePath(repoRoot, outputPath);
-    }
-
     private static string ResolvePath(string repoRoot, string path)
     {
         if (Path.IsPathRooted(path))
@@ -161,37 +131,6 @@ public class RunScoringOrchestrator
             throw new DirectoryNotFoundException(
                 $"Resolved bundle path is missing practices directory: {practicesPath}");
         }
-    }
-
-    private void PrepareOutputArtifacts(string runDirectory, string outputDirectory)
-    {
-        if (PathsEqual(runDirectory, outputDirectory))
-        {
-            return;
-        }
-
-        _fileSystem.Directory.CreateDirectory(outputDirectory);
-
-        foreach (var artifact in CopiedRunArtifacts)
-        {
-            var source = _fileSystem.Path.Combine(runDirectory, artifact);
-            if (!_fileSystem.File.Exists(source))
-            {
-                continue;
-            }
-
-            var destination = _fileSystem.Path.Combine(outputDirectory, artifact);
-            _fileSystem.File.Copy(source, destination, overwrite: true);
-        }
-    }
-
-    private static bool PathsEqual(string left, string right)
-    {
-        var normalizedLeft = Path.GetFullPath(left)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var normalizedRight = Path.GetFullPath(right)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void Log(bool verbose, string message)

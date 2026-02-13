@@ -117,10 +117,14 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
                 throw new InvalidOperationException("--task cannot be used with --run-id.");
             }
 
+            if (!string.IsNullOrWhiteSpace(settings.Out))
+            {
+                throw new InvalidOperationException("--out cannot be used with --run-id.");
+            }
+
             var outDir = await runScorer.ScoreAsync(
                 settings.RunId,
                 settings.Bundle,
-                settings.Out,
                 settings.Verbose
             );
 
@@ -315,7 +319,7 @@ public class RunCommandSettings : CommandSettings
     public string? Task { get; init; }
 
     [CommandOption("--out <PATH>")]
-    [Description("Path to the output directory. In --run-id mode defaults to the run directory.")]
+    [Description("Path to the output directory (replay mode only).")]
     public string? Out { get; init; }
 
     [CommandOption("--stub-eval-json <PATH>")]
