@@ -2,10 +2,7 @@ namespace Bendover.Application.Interfaces;
 
 public interface IAgentPromptService
 {
-    string LoadLeadPromptTemplate();
-    string LoadEngineerPromptTemplate();
-    string GetWorkspaceAgentsDirectory();
-    string GetWorkspaceToolsMarkdownPath();
-    string GetHostToolsMarkdownPath();
-    string GetAgentsRootRelativePath();
+    string LoadLeadPromptTemplate(string? agentsPath = null);
+    string LoadEngineerPromptTemplate(string? agentsPath = null);
+    string GetWorkspaceToolsMarkdownPath(string? agentsPath = null);
 }

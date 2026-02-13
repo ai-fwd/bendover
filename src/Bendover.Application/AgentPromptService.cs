@@ -1,4 +1,5 @@
 using Bendover.Application.Interfaces;
+using Bendover.Domain.Interfaces;
 
 namespace Bendover.Application;
 
@@ -6,74 +7,44 @@ public sealed class AgentPromptService : IAgentPromptService
 {
     public const string ToolsContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
 
-    private const string DefaultAgentsRootRelativePath = ".bendover/agents";
+    private const string DefaultAgentsRelativePath = ".bendover/agents";
     private const string LeadPromptFileName = "lead.md";
     private const string EngineerPromptFileName = "engineer.md";
     private const string ToolsMarkdownFileName = "tools.md";
 
-    private readonly IPromptOptRunContextAccessor _runContextAccessor;
+    private readonly IFileService _fileService;
+    private readonly string? _agentsPath;
 
-    public AgentPromptService(IPromptOptRunContextAccessor runContextAccessor)
+    public AgentPromptService(IFileService fileService, string? agentsPath = null)
     {
-        _runContextAccessor = runContextAccessor;
+        _fileService = fileService;
+        _agentsPath = agentsPath;
     }
 
-    public string LoadLeadPromptTemplate()
+    public string LoadLeadPromptTemplate(string? agentsPath = null)
     {
-        return LoadRequiredTemplate(LeadPromptFileName);
+        return LoadRequiredTemplate(LeadPromptFileName, agentsPath);
     }
 
-    public string LoadEngineerPromptTemplate()
+    public string LoadEngineerPromptTemplate(string? agentsPath = null)
     {
-        return LoadRequiredTemplate(EngineerPromptFileName);
+        return LoadRequiredTemplate(EngineerPromptFileName, agentsPath);
     }
 
-    public string GetWorkspaceAgentsDirectory()
+    public string GetWorkspaceToolsMarkdownPath(string? agentsPath = null)
     {
-        return BuildWorkspacePath();
+        return BuildWorkspacePath(ToolsMarkdownFileName, agentsPath);
     }
 
-    public string GetWorkspaceToolsMarkdownPath()
+    private string LoadRequiredTemplate(string fileName, string? agentsPath)
     {
-        return BuildWorkspacePath(ToolsMarkdownFileName);
-    }
-
-    public string GetHostToolsMarkdownPath()
-    {
-        return BuildHostPath(ToolsMarkdownFileName);
-    }
-
-    public string GetAgentsRootRelativePath()
-    {
-        var configuredPracticesRoot = _runContextAccessor.Current?.PracticesRootRelativePath;
-        if (string.IsNullOrWhiteSpace(configuredPracticesRoot))
-        {
-            return DefaultAgentsRootRelativePath;
-        }
-
-        var normalized = NormalizeRelativePath(configuredPracticesRoot).TrimEnd('/');
-        if (normalized.EndsWith("/agents", StringComparison.OrdinalIgnoreCase))
-        {
-            return normalized;
-        }
-
-        if (normalized.EndsWith("/practices", StringComparison.OrdinalIgnoreCase))
-        {
-            return $"{normalized[..^"/practices".Length]}/agents";
-        }
-
-        return $"{normalized}/agents";
-    }
-
-    private string LoadRequiredTemplate(string fileName)
-    {
-        var path = BuildHostPath(fileName);
-        if (!File.Exists(path))
+        var path = BuildHostPath(fileName, agentsPath);
+        if (!_fileService.Exists(path))
         {
             throw new InvalidOperationException($"Required agent prompt file is missing: {path}");
         }
 
-        var content = File.ReadAllText(path);
+        var content = _fileService.ReadAllText(path);
         if (string.IsNullOrWhiteSpace(content))
         {
             throw new InvalidOperationException($"Required agent prompt file is empty: {path}");
@@ -82,37 +53,37 @@ public sealed class AgentPromptService : IAgentPromptService
         return content;
     }
 
-    private string BuildHostPath(params string[] segments)
+    private string BuildHostPath(string fileName, string? agentsPath)
     {
-        var agentsRoot = ResolveHostAgentsRoot();
-        var allSegments = new[] { agentsRoot }.Concat(segments).ToArray();
-        return Path.Combine(allSegments);
+        var hostAgentsPath = ResolveHostAgentsPath(agentsPath);
+        return Path.Combine(hostAgentsPath, fileName);
     }
 
-    private string BuildWorkspacePath(params string[] segments)
+    private string BuildWorkspacePath(string fileName, string? agentsPath)
     {
-        var relativeRoot = NormalizeRelativePath(GetAgentsRootRelativePath());
-        if (Path.IsPathRooted(relativeRoot))
-        {
-            if (!relativeRoot.StartsWith("/workspace/", StringComparison.Ordinal)
-                && !string.Equals(relativeRoot, "/workspace", StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"Agents root path must be relative or under /workspace, but was '{relativeRoot}'.");
-            }
+        var workspaceAgentsPath = ResolveWorkspaceAgentsPath(agentsPath);
+        var fullPath = Path.Combine(workspaceAgentsPath, fileName);
+        return fullPath.Replace('\\', '/');
+    }
 
-            var absolute = Path.Combine(new[] { relativeRoot }.Concat(segments).ToArray());
-            return absolute.Replace('\\', '/');
+    private string ResolveHostAgentsPath(string? agentsPath)
+    {
+        if (!string.IsNullOrWhiteSpace(agentsPath))
+        {
+            return ResolveHostPath(agentsPath);
         }
 
-        var workspaceRoot = "/workspace";
-        var combined = Path.Combine(new[] { workspaceRoot, relativeRoot }.Concat(segments).ToArray());
-        return combined.Replace('\\', '/');
+        if (!string.IsNullOrWhiteSpace(_agentsPath))
+        {
+            return ResolveHostPath(_agentsPath);
+        }
+
+        return Path.Combine(BendoverPaths.GetApplicationRoot(), ".bendover", "agents");
     }
 
-    private string ResolveHostAgentsRoot()
+    private static string ResolveHostPath(string path)
     {
-        var configured = GetAgentsRootRelativePath();
+        var configured = NormalizePath(path);
         if (Path.IsPathRooted(configured))
         {
             return configured;
@@ -121,7 +92,29 @@ public sealed class AgentPromptService : IAgentPromptService
         return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), configured));
     }
 
-    private static string NormalizeRelativePath(string path)
+    private string ResolveWorkspaceAgentsPath(string? agentsPath)
+    {
+        var configured = string.IsNullOrWhiteSpace(agentsPath)
+            ? (_agentsPath ?? DefaultAgentsRelativePath)
+            : agentsPath;
+        var normalized = NormalizePath(configured).TrimEnd('/');
+
+        if (Path.IsPathRooted(normalized))
+        {
+            if (!normalized.StartsWith("/workspace/", StringComparison.Ordinal)
+                && !string.Equals(normalized, "/workspace", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Agents path for workspace must be relative or under /workspace, but was '{normalized}'.");
+            }
+
+            return normalized;
+        }
+
+        return Path.Combine("/workspace", normalized).Replace('\\', '/');
+    }
+
+    private static string NormalizePath(string path)
     {
         return path.Replace('\\', '/').Trim();
     }

@@ -11,6 +11,13 @@ namespace Bendover.PromptOpt.CLI;
 
 public class BenchmarkRunOrchestrator
 {
+    private static readonly string[] RequiredAgentPromptFiles =
+    {
+        "lead.md",
+        "engineer.md",
+        "tools.md"
+    };
+
     private readonly IGitRunner _gitRunner;
     private readonly IAgentOrchestrator _agentOrchestrator;
     private readonly IPromptBundleResolver _bundleResolver;
@@ -76,22 +83,24 @@ public class BenchmarkRunOrchestrator
                 ?? throw new InvalidOperationException($"Could not resolve bundle root from practices path: {sourcePracticesPath}");
             var sourceAgentsPath = _fileSystem.Path.Combine(sourceBundleRoot, "agents");
 
-            var bundlePracticesRootRelativePath = _fileSystem.Path.Combine(".bendover", "promptopt", "bundles", bundleId, "practices");
+            var bundleRootRelativePath = _fileSystem.Path.Combine(".bendover", "promptopt", "bundles", bundleId);
+            var bundlePracticesRootRelativePath = _fileSystem.Path.Combine(bundleRootRelativePath, "practices");
+            var bundleAgentsRootRelativePath = _fileSystem.Path.Combine(bundleRootRelativePath, "agents");
             var workspacePracticesPath = _fileSystem.Path.Combine(workingDirectory, bundlePracticesRootRelativePath);
             CopyDirectory(sourcePracticesPath, workspacePracticesPath);
             Log(verbose, $"Copied practices into workspace: {workspacePracticesPath}");
 
-            if (_fileSystem.Directory.Exists(sourceAgentsPath))
+            if (!_fileSystem.Directory.Exists(sourceAgentsPath))
             {
-                var bundleAgentsRootRelativePath = _fileSystem.Path.Combine(".bendover", "promptopt", "bundles", bundleId, "agents");
-                var workspaceAgentsPath = _fileSystem.Path.Combine(workingDirectory, bundleAgentsRootRelativePath);
-                CopyDirectory(sourceAgentsPath, workspaceAgentsPath);
-                Log(verbose, $"Copied agents into workspace: {workspaceAgentsPath}");
+                throw new DirectoryNotFoundException(
+                    $"Agents directory is required for prompt optimization bundles but was not found: {sourceAgentsPath}");
             }
-            else
-            {
-                Log(verbose, $"Agents directory not found in bundle (optional): {sourceAgentsPath}");
-            }
+
+            var workspaceAgentsPath = _fileSystem.Path.Combine(workingDirectory, bundleAgentsRootRelativePath);
+            CopyDirectory(sourceAgentsPath, workspaceAgentsPath);
+            Log(verbose, $"Copied agents into workspace: {workspaceAgentsPath}");
+            ValidateRequiredAgentFiles(workspaceAgentsPath);
+            Log(verbose, $"Validated required agent prompt files in: {workspaceAgentsPath}");
 
             var practiceService = new PracticeService(_fileService, workspacePracticesPath);
             var practices = (await practiceService.GetPracticesAsync()).ToList();
@@ -115,8 +124,7 @@ public class BenchmarkRunOrchestrator
                 outputPath,
                 Capture: true,
                 BundleId: bundleId,
-                ApplySandboxPatchToSource: false,
-                PracticesRootRelativePath: bundlePracticesRootRelativePath
+                ApplySandboxPatchToSource: false
             );
             Log(verbose, $"Set run context. bundleId={bundleId}");
 
@@ -126,7 +134,7 @@ public class BenchmarkRunOrchestrator
                 Log(verbose, $"Switching current directory: {currentDir} -> {workingDirectory}");
                 Directory.SetCurrentDirectory(workingDirectory);
                 Log(verbose, "Running agent orchestrator...");
-                await _agentOrchestrator.RunAsync(taskText, practices);
+                await _agentOrchestrator.RunAsync(taskText, practices, bundleAgentsRootRelativePath);
                 Log(verbose, "Agent orchestrator completed.");
             }
             finally
@@ -184,6 +192,20 @@ public class BenchmarkRunOrchestrator
             }
 
             _fileSystem.File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    private void ValidateRequiredAgentFiles(string agentsDirectory)
+    {
+        foreach (var fileName in RequiredAgentPromptFiles)
+        {
+            var filePath = _fileSystem.Path.Combine(agentsDirectory, fileName);
+            if (!_fileSystem.File.Exists(filePath))
+            {
+                throw new FileNotFoundException(
+                    $"Prompt optimization bundles must include required agent file '{fileName}'.",
+                    filePath);
+            }
         }
     }
 

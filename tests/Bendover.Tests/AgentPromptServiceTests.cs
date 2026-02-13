@@ -1,6 +1,5 @@
 using Bendover.Application;
-using Bendover.Application.Interfaces;
-using Bendover.Infrastructure.Services;
+using Bendover.Infrastructure;
 
 namespace Bendover.Tests;
 
@@ -16,18 +15,14 @@ public class AgentPromptServiceTests : IDisposable
     }
 
     [Fact]
-    public void LoadLeadPromptTemplate_LoadsFromConfiguredPracticesRoot()
+    public void LoadLeadPromptTemplate_LoadsFromBundleRootAgentsDirectory()
     {
         var agentsRoot = Path.Combine(_tempDirectory.FullName, ".bendover", "agents");
         Directory.CreateDirectory(agentsRoot);
         File.WriteAllText(Path.Combine(agentsRoot, "lead.md"), "Lead prompt");
 
         Directory.SetCurrentDirectory(_tempDirectory.FullName);
-        var accessor = new PromptOptRunContextAccessor
-        {
-            Current = new PromptOptRunContext("/out", Capture: true)
-        };
-        var sut = new AgentPromptService(accessor);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
 
         var prompt = sut.LoadLeadPromptTemplate();
 
@@ -37,12 +32,9 @@ public class AgentPromptServiceTests : IDisposable
     [Fact]
     public void LoadLeadPromptTemplate_Throws_WhenMissing()
     {
+        Directory.CreateDirectory(Path.Combine(_tempDirectory.FullName, ".bendover"));
         Directory.SetCurrentDirectory(_tempDirectory.FullName);
-        var accessor = new PromptOptRunContextAccessor
-        {
-            Current = new PromptOptRunContext("/out", Capture: true)
-        };
-        var sut = new AgentPromptService(accessor);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
 
         var ex = Assert.Throws<InvalidOperationException>(() => sut.LoadLeadPromptTemplate());
 
@@ -58,29 +50,18 @@ public class AgentPromptServiceTests : IDisposable
         File.WriteAllText(Path.Combine(agentsDirectory, "engineer.md"), "   ");
 
         Directory.SetCurrentDirectory(_tempDirectory.FullName);
-        var accessor = new PromptOptRunContextAccessor
-        {
-            Current = new PromptOptRunContext("/out", Capture: true)
-        };
-        var sut = new AgentPromptService(accessor);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
 
         var ex = Assert.Throws<InvalidOperationException>(() => sut.LoadEngineerPromptTemplate());
         Assert.Contains("empty", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void GetWorkspaceToolsMarkdownPath_UsesRunContextBundleAgentsRoot()
+    public void GetWorkspaceToolsMarkdownPath_UsesProvidedBundleAgentsPath()
     {
-        var accessor = new PromptOptRunContextAccessor
-        {
-            Current = new PromptOptRunContext(
-                OutDir: "/out",
-                Capture: true,
-                PracticesRootRelativePath: ".bendover/promptopt/bundles/bundle-1/practices")
-        };
-        var sut = new AgentPromptService(accessor);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
 
-        var path = sut.GetWorkspaceToolsMarkdownPath();
+        var path = sut.GetWorkspaceToolsMarkdownPath(".bendover/promptopt/bundles/bundle-1/agents");
 
         Assert.Equal("/workspace/.bendover/promptopt/bundles/bundle-1/agents/tools.md", path);
     }

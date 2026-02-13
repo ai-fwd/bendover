@@ -5,6 +5,7 @@ namespace Bendover.Tests;
 public class ScriptRunnerDescribeSdkTests
 {
     private const string ContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
+    private const string ToolsMarkdownRelativePath = ".bendover/agents/tools.md";
 
     [Fact]
     public async Task DescribeSdk_WithOut_WritesMarkdownFile()
@@ -76,6 +77,25 @@ public class ScriptRunnerDescribeSdkTests
 
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("Unknown argument '--describe-sdk-output'", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Build_GeneratesToolsMarkdownUnderBendoverAgents()
+    {
+        var repoRoot = FindRepoRoot();
+        var projectPath = Path.Combine(repoRoot, "src", "Bendover.ScriptRunner", "Bendover.ScriptRunner.csproj");
+        var outputPath = Path.Combine(repoRoot, ToolsMarkdownRelativePath);
+
+        var exitCode = await RunProcessWithoutRedirectAsync(
+            "dotnet",
+            new[] { "build", projectPath, "-c", "Debug", "-v", "minimal" },
+            repoRoot,
+            timeout: TimeSpan.FromMinutes(3));
+
+        Assert.True(exitCode == 0, "ScriptRunner build failed.");
+        Assert.True(File.Exists(outputPath), $"Expected tools markdown at {outputPath}");
+        var markdown = File.ReadAllText(outputPath);
+        Assert.Contains(ContractHeading, markdown, StringComparison.Ordinal);
     }
 
     private static async Task<string> EnsureScriptRunnerOutputAsync(string repoRoot)
@@ -164,6 +184,54 @@ public class ScriptRunnerDescribeSdkTests
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
         return new ProcessResult(process.ExitCode, stdout, stderr);
+    }
+
+    private static async Task<int> RunProcessWithoutRedirectAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        TimeSpan? timeout = null)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = false,
+            RedirectStandardError = false,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start())
+        {
+            throw new InvalidOperationException($"Failed to start process {fileName}.");
+        }
+
+        var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(2);
+        var waitTask = process.WaitForExitAsync();
+        var completedTask = await Task.WhenAny(waitTask, Task.Delay(effectiveTimeout));
+        if (completedTask != waitTask)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Best effort.
+            }
+
+            throw new TimeoutException($"Command timed out: {fileName} {string.Join(' ', arguments)}");
+        }
+
+        await waitTask;
+        return process.ExitCode;
     }
 
     private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);

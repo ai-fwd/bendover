@@ -26,6 +26,7 @@ builder.Services.AddSingleton<ILeadAgent, LeadAgent>();
 builder.Services.AddSingleton<IPracticeService, PracticeService>();
 builder.Services.AddSingleton<ScriptGenerator>();
 builder.Services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
+builder.Services.AddSingleton<IFileService, FileService>();
 builder.Services.AddSingleton<IGitRunner, GitRunner>();
 builder.Services.AddSingleton<IDotNetRunner, DotNetRunner>();
 builder.Services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();

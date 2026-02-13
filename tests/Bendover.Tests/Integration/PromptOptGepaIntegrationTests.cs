@@ -27,7 +27,9 @@ public class PromptOptGepaIntegrationTests
 
             var seedBundleId = "seed";
             var seedPracticesDir = Path.Combine(bundlesRoot, seedBundleId, "practices");
+            var seedAgentsDir = Path.Combine(bundlesRoot, seedBundleId, "agents");
             Directory.CreateDirectory(seedPracticesDir);
+            Directory.CreateDirectory(seedAgentsDir);
 
             var primaryPracticeBody = "ORIGINAL";
             var primaryPracticeContent = "---\nName: simple_practice\nTargetRole: Engineer\nAreaOfConcern: Test\n---\n\n" + primaryPracticeBody;
@@ -38,6 +40,11 @@ public class PromptOptGepaIntegrationTests
             var staticPracticeContent = "---\nName: static_practice\nTargetRole: Engineer\nAreaOfConcern: Test\n---\n\n" + staticPracticeBody;
             var staticPracticePath = Path.Combine(seedPracticesDir, "static_practice.md");
             File.WriteAllText(staticPracticePath, staticPracticeContent);
+            File.WriteAllText(Path.Combine(seedAgentsDir, "lead.md"), "You are the Lead Agent.");
+            File.WriteAllText(Path.Combine(seedAgentsDir, "engineer.md"), "You are the Engineer.");
+            File.WriteAllText(
+                Path.Combine(seedAgentsDir, "tools.md"),
+                "# SDK Tool Usage Contract (Auto-generated)\n- sdk contract");
 
             var activeJsonPath = Path.Combine(promptOptRoot, "active.json");
             File.WriteAllText(activeJsonPath, "{\"bundleId\":\"seed\"}");

@@ -57,7 +57,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
-    public async Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices)
+    public async Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices, string? agentsPath = null)
     {
         if (practices is null)
         {
@@ -92,7 +92,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             // 1a. Lead Phase (Practice Selection)
             await NotifyAsync("Lead Agent Analyzing Request...");
-            var selectedPracticeNames = (await _leadAgent.AnalyzeTaskAsync(initialGoal, allPractices)).ToArray();
+            var selectedPracticeNames = (await _leadAgent.AnalyzeTaskAsync(initialGoal, allPractices, agentsPath)).ToArray();
             var unknownSelectedPractices = selectedPracticeNames
                 .Where(name => !availablePracticeNames.Contains(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -146,14 +146,14 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
             var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
-            var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate();
+            var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate(agentsPath);
 
             // 3. Execution with retries
             await NotifyAsync("Executing in Container...");
             await _containerService.StartContainerAsync(new SandboxExecutionSettings(Directory.GetCurrentDirectory()));
             try
             {
-                var sdkSurfaceContext = await LoadSdkSurfaceContextAsync();
+                var sdkSurfaceContext = await LoadSdkSurfaceContextAsync(agentsPath);
                 await _runRecorder.RecordArtifactAsync(SdkSurfaceArtifactName, sdkSurfaceContext);
 
                 string? failureDigest = null;
@@ -314,9 +314,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         return string.Join('\n', lines.Skip(lines.Length - maxLines));
     }
 
-    private async Task<string> LoadSdkSurfaceContextAsync()
+    private async Task<string> LoadSdkSurfaceContextAsync(string? agentsPath)
     {
-        var sdkSurfaceFilePath = _agentPromptService.GetWorkspaceToolsMarkdownPath();
+        var sdkSurfaceFilePath = _agentPromptService.GetWorkspaceToolsMarkdownPath(agentsPath);
         var escapedPath = EscapeSingleQuotedShellString(sdkSurfaceFilePath);
         var readCommand = $"cat '{escapedPath}'";
 

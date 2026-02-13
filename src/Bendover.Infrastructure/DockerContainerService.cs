@@ -1,6 +1,5 @@
 using System.Text;
 using Bendover.Application;
-using Bendover.Application.Interfaces;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Docker.DotNet;
@@ -11,7 +10,6 @@ namespace Bendover.Infrastructure;
 public class DockerContainerService : IContainerService
 {
     private readonly DockerClient _client;
-    private readonly IAgentPromptService _agentPromptService;
     private readonly EngineerBodyValidator _validator = new();
     private string? _containerId;
     private const string ImageName = "mcr.microsoft.com/dotnet/sdk:10.0";
@@ -19,9 +17,8 @@ public class DockerContainerService : IContainerService
     private const string WorkspacePath = "/workspace";
     private const string EngineerBodyPath = "/workspace/engineer_body.csx";
 
-    public DockerContainerService(IAgentPromptService agentPromptService)
+    public DockerContainerService()
     {
-        _agentPromptService = agentPromptService;
         var dockerUri = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
             ? new Uri("npipe://./pipe/docker_engine")
             : new Uri("unix:///var/run/docker.sock");
@@ -99,23 +96,6 @@ public class DockerContainerService : IContainerService
         {
             throw new InvalidOperationException($"Failed to build ScriptRunner inside sandbox.\n{buildRunnerResult.CombinedOutput}");
         }
-
-        var workspaceAgentsDirectory = EscapeSingleQuotedShellString(_agentPromptService.GetWorkspaceAgentsDirectory());
-        var ensureAgentsDirectoryResult = await ExecuteCommandAsync($"mkdir -p '{workspaceAgentsDirectory}'");
-        if (ensureAgentsDirectoryResult.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"Failed to prepare agents directory inside sandbox.\n{ensureAgentsDirectoryResult.CombinedOutput}");
-        }
-
-        var workspaceToolsPath = EscapeSingleQuotedShellString(_agentPromptService.GetWorkspaceToolsMarkdownPath());
-        var generateToolsResult = await ExecuteCommandAsync(
-            $"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --describe-sdk --out '{workspaceToolsPath}'");
-        if (generateToolsResult.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"Failed to generate SDK tools markdown inside sandbox.\n{generateToolsResult.CombinedOutput}");
-        }
     }
 
     public async Task<SandboxExecutionResult> ExecuteEngineerBodyAsync(string bodyContent)
@@ -174,10 +154,5 @@ public class DockerContainerService : IContainerService
         {
             throw new InvalidOperationException("Container not started");
         }
-    }
-
-    private static string EscapeSingleQuotedShellString(string value)
-    {
-        return value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
     }
 }

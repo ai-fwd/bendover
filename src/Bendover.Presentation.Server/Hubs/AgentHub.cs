@@ -32,8 +32,7 @@ public class AgentHub : Hub
             outDir,
             Capture: true,
             RunId: runId,
-            BundleId: "default",
-            PracticesRootRelativePath: ".bendover/practices"
+            BundleId: "default"
         );
 
         var practices = (await _practiceService.GetPracticesAsync()).ToList();

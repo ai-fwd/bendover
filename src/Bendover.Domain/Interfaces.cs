@@ -13,7 +13,7 @@ public interface IContainerService
 
 public interface IAgentOrchestrator
 {
-    Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices);
+    Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices, string? agentsPath = null);
 }
 
 public interface IBendoverSDK

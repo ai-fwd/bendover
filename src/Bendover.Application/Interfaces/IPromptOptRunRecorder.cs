@@ -25,8 +25,7 @@ public record PromptOptRunContext(
     bool Capture,
     string? RunId = null,
     string? BundleId = null,
-    bool ApplySandboxPatchToSource = true,
-    string PracticesRootRelativePath = ".bendover/practices"
+    bool ApplySandboxPatchToSource = true
 );
 
 public interface IPromptOptRunEvaluator

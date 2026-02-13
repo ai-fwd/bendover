@@ -20,10 +20,13 @@ public class LeadAgent : ILeadAgent
         _agentPromptService = agentPromptService;
     }
 
-    public async Task<IEnumerable<string>> AnalyzeTaskAsync(string userPrompt, IReadOnlyCollection<Practice> practices)
+    public async Task<IEnumerable<string>> AnalyzeTaskAsync(
+        string userPrompt,
+        IReadOnlyCollection<Practice> practices,
+        string? agentsPath = null)
     {
         var allPractices = practices ?? Array.Empty<Practice>();
-        var systemPrompt = _agentPromptService.LoadLeadPromptTemplate();
+        var systemPrompt = _agentPromptService.LoadLeadPromptTemplate(agentsPath);
 
         var practicesList = string.Join("\n", allPractices
             .Where(p => !p.Name.Equals("lead_agent_practice", StringComparison.OrdinalIgnoreCase))

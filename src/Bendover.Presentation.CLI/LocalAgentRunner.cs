@@ -81,8 +81,7 @@ public class LocalAgentRunner : IAgentRunner
                 Capture: true,
                 RunId: runId,
                 BundleId: "default",
-                ApplySandboxPatchToSource: true,
-                PracticesRootRelativePath: ".bendover/practices"
+                ApplySandboxPatchToSource: true
             );
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");

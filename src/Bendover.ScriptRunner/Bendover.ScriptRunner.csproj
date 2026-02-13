@@ -14,7 +14,11 @@
   </ItemGroup>
 
   <Target Name="GenerateSdkSurfaceMarkdown" AfterTargets="Build">
-    <Exec Command='dotnet "$(TargetPath)" --describe-sdk --out "$(TargetDir)sdk-surface.generated.md"' />
+    <PropertyGroup>
+      <SdkSurfaceOutputPath>$(MSBuildProjectDirectory)/../../.bendover/agents/tools.md</SdkSurfaceOutputPath>
+    </PropertyGroup>
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(SdkSurfaceOutputPath)'))" />
+    <Exec Command='dotnet "$(TargetPath)" --describe-sdk --out "$(SdkSurfaceOutputPath)"' />
   </Target>
 
 </Project>
