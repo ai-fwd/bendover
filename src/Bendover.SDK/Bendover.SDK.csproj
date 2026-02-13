@@ -10,4 +10,49 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <UsingTask
+    TaskName="GenerateSdkSurfaceMarkdownTask"
+    TaskFactory="RoslynCodeTaskFactory"
+    AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <AssemblyPath ParameterType="System.String" Required="true" />
+      <OutputPath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Reflection" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var assembly = Assembly.LoadFrom(AssemblyPath);
+        var describerType = assembly.GetType("Bendover.SDK.SdkSurfaceDescriber", throwOnError: true);
+        var buildMarkdownMethod = describerType.GetMethod("BuildMarkdown", BindingFlags.Public | BindingFlags.Static);
+        if (buildMarkdownMethod is null)
+        {
+            throw new InvalidOperationException("Could not locate Bendover.SDK.SdkSurfaceDescriber.BuildMarkdown().");
+        }
+
+        var markdown = buildMarkdownMethod.Invoke(obj: null, parameters: null) as string;
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            throw new InvalidOperationException("SdkSurfaceDescriber.BuildMarkdown() returned empty content.");
+        }
+
+        var directory = Path.GetDirectoryName(OutputPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.WriteAllText(OutputPath, markdown);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="GenerateSdkSurfaceMarkdown" AfterTargets="Build">
+    <PropertyGroup>
+      <SdkSurfaceOutputPath>$(MSBuildProjectDirectory)/../../.bendover/agents/tools.md</SdkSurfaceOutputPath>
+    </PropertyGroup>
+    <GenerateSdkSurfaceMarkdownTask AssemblyPath="$(TargetPath)" OutputPath="$(SdkSurfaceOutputPath)" />
+  </Target>
+
 </Project>

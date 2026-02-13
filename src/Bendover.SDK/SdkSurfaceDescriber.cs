@@ -1,11 +1,11 @@
 using System.Reflection;
 using System.Text;
 
-namespace Bendover.ScriptRunner;
+namespace Bendover.SDK;
 
-internal static class SdkSurfaceDescriber
+public static class SdkSurfaceDescriber
 {
-    internal const string ContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
+    public const string ContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
 
     public static string BuildMarkdown()
     {

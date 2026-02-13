@@ -13,12 +13,4 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
   </ItemGroup>
 
-  <Target Name="GenerateSdkSurfaceMarkdown" AfterTargets="Build">
-    <PropertyGroup>
-      <SdkSurfaceOutputPath>$(MSBuildProjectDirectory)/../../.bendover/agents/tools.md</SdkSurfaceOutputPath>
-    </PropertyGroup>
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(SdkSurfaceOutputPath)'))" />
-    <Exec Command='dotnet "$(TargetPath)" --describe-sdk --out "$(SdkSurfaceOutputPath)"' />
-  </Target>
-
 </Project>
