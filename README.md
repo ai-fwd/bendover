@@ -272,3 +272,16 @@ If you need to bypass DSPy caches (e.g., for testing), add `--disable-dspy-cache
 When running `Bendover.PromptOpt.CLI` manually, pass `--verbose` to print:
 - Lead-selected practices parsed from `outputs.json`
 - Evaluator summary (`pass`, `score`, selected/offending practices)
+
+### Scoring an existing run
+
+You can score an already recorded run without replaying agents:
+
+```bash
+dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
+```
+
+Bundle resolution for `--run-id` mode:
+- If `--bundle` is provided, that bundle path is used.
+- Otherwise `bundle_id.txt` from the run is used.
+- `bundle_id` values `current` (and legacy `default`) mean root `.bendover` practices.

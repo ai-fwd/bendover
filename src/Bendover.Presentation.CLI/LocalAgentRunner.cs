@@ -80,7 +80,7 @@ public class LocalAgentRunner : IAgentRunner
                 outDir,
                 Capture: true,
                 RunId: runId,
-                BundleId: "default",
+                BundleId: "current",
                 ApplySandboxPatchToSource: true
             );
 

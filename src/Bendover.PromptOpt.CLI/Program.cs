@@ -108,10 +108,38 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             runContextAccessor,
             fileService
         );
+        var runScorer = new RunScoringOrchestrator(fileSystem, runEvaluator);
+
+        if (!string.IsNullOrWhiteSpace(settings.RunId))
+        {
+            if (!string.IsNullOrWhiteSpace(settings.Task))
+            {
+                throw new InvalidOperationException("--task cannot be used with --run-id.");
+            }
+
+            var outDir = await runScorer.ScoreAsync(
+                settings.RunId,
+                settings.Bundle,
+                settings.Out,
+                settings.Verbose
+            );
+
+            if (settings.Verbose)
+            {
+                PrintVerboseSummary(outDir);
+            }
+
+            return 0;
+        }
 
         if (string.IsNullOrWhiteSpace(settings.Bundle) || string.IsNullOrWhiteSpace(settings.Task))
         {
-            throw new InvalidOperationException("Bundle and Task are required.");
+            throw new InvalidOperationException("Bundle and Task are required unless --run-id is provided.");
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.Out))
+        {
+            throw new InvalidOperationException("--out is required for bundle/task replay mode.");
         }
 
         await orchestrator.RunAsync(
@@ -274,17 +302,21 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
 
 public class RunCommandSettings : CommandSettings
 {
+    [CommandOption("--run-id <ID>")]
+    [Description("Score an existing run under .bendover/promptopt/runs/<ID>.")]
+    public string? RunId { get; init; }
+
     [CommandOption("--bundle <PATH>")]
-    [Description("Path to the bundle directory")]
+    [Description("Path to the bundle directory (override for --run-id, required for replay mode).")]
     public string? Bundle { get; init; }
 
     [CommandOption("--task <PATH>")]
-    [Description("Path to the task directory")]
+    [Description("Path to the task directory (replay mode only).")]
     public string? Task { get; init; }
 
     [CommandOption("--out <PATH>")]
-    [Description("Path to the output directory")]
-    public required string Out { get; init; }
+    [Description("Path to the output directory. In --run-id mode defaults to the run directory.")]
+    public string? Out { get; init; }
 
     [CommandOption("--stub-eval-json <PATH>")]
     [Description("Write evaluator.json from a stub file and exit")]
