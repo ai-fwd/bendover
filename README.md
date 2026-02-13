@@ -4,7 +4,7 @@ Bendover is an opinionated, self improving coding agent.
 
 It’s an experiment in building an agentic system that can learn and apply a specific coding policy aka judgment when ambiguity shows up, instead of falling back to generic pre training led reasoning that doesn’t align.
 
-_The name bendover is ode to a soca song with a line 🎵[...] take it easy I will do the work, you don't have to [...]🎵_
+_The name bendover is inspired by a soca song that goes a little something like this 🎵[...] take it easy I will do the work, you don't have to [...]🎵_
 
 # The Hypothesis
 
@@ -31,258 +31,303 @@ From here on, everything in this repo has been written by an agent.
 
 ## Prerequisites
 
-- **.NET 10.0 SDK** (or later)
-- **Docker Desktop** (Windows) or **Docker Engine** (Linux/WSL)
-  - Ensure Docker is running and accessible.
+- **.NET 10.0 SDK**
+- **Docker Desktop** (Windows/macOS) or **Docker Engine** (Linux/WSL)
+- **Python 3.10+**
 
-## Setup & Run
+## Quickstart (First Successful Loop)
 
-### 1. Build the Solution
+This is the shortest end-to-end path from real run capture to GEPA optimization.
 
 ```bash
+# 1) Ensure .env exists
+cp .env.example .env
+
+# 2) Build and test
 dotnet build
-```
-
-### 2. Run Integration Tests
-
-The tests require Docker to be running.
-
-```bash
 dotnet test
+
+# 3) Capture a real run
+# The CLI prints: run_id=<value>
+dotnet run --project src/Bendover.Presentation.CLI -- "Add a unit test for run scoring"
+
+# 4) Score the captured run (use the printed run_id)
+dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
+
+# 5) Create GEPA training split
+mkdir -p .bendover/promptopt/datasets
+printf "%s\n" "<run_id>" > .bendover/promptopt/datasets/train.txt
+
+# 6) Install promptopt in editable mode
+python -m venv .venv
+./.venv/bin/pip install -e .
+
+# 7) Run GEPA 
+./.venv/bin/promptopt --promptopt-root .bendover/promptopt --max-full-evals 3
+
+# 8) Inspect active optimized bundle
+cat .bendover/promptopt/active.json
 ```
 
-### 3. Run the Server
+## Configuration (.env Only)
 
-```bash
-dotnet run --project src/Bendover.Presentation.Server
+Both CLI entry points load `.env` by traversing upward from the current directory (`Env.TraversePath().Load()`), then bind settings from environment variables.
+
+### Agent runtime configuration
+
+```dotenv
+Agent__Model=openai/gpt-oss-20b
+Agent__Endpoint=http://127.0.0.1:1234/v1
+Agent__ApiKey=sk-local-dummy
 ```
 
-### 4. Run the CLI Client
+### Prompt optimization configuration
 
-```bash
-dotnet run --project src/Bendover.Presentation.CLI
+```dotenv
+# PromptOpt replay command used by the Python optimizer
+export PROMPTOPT_CLI_COMMAND='dotnet run --project src/Bendover.PromptOpt.CLI --'
+
+# Reflection model provider settings
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_API_KEY=sk-your-openai-key
+DSPY_REFLECTION_MODEL=openai/gpt-4o
 ```
 
----
+### ChatGPT Plus/Pro Subscription (No API key)
 
-## WSL Setup Guide
-
-To quickly bootstrap your environment (install .NET 8, check Docker), run the setup script:
-
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-### Manual Install (if script fails)
-
-```bash
-# Remove previous versions (if any)
-sudo apt-get remove -y dotnet* aspnetcore* netstandard*
-
-# Add Microsoft package repository
-wget https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
-sudo dpkg -i packages-microsoft-prod.deb
-rm packages-microsoft-prod.deb
-
-# Install .NET SDK
-sudo apt-get update
-sudo apt-get install -y dotnet-sdk-10.0
-```
-
-## Configuration
-
-The agent requires configuration to connect to an LLM provider (OpenAI or Local).
-
-Configuration is managed via `src/Bendover.Presentation.CLI/appsettings.json`.
-For local development, create/modify `src/Bendover.Presentation.CLI/appsettings.Development.json` (this file is git-ignored).
-
-Example `appsettings.Development.json` for Local LLM (e.g., LM Studio):
-```json
-{
-  "Agent": {
-    "Model": "openai/gpt-oss-20b",
-    "Endpoint": "http://127.0.0.1:1234",
-    "ApiKey": "sk-dummy"
-  }
-}
-```
-
-The agent supports role-based configuration overrides. You can specify different models for `Lead`, `Architect`, `Engineer`, or `Reviewer`.
-
-```json
-{
-  "Agent": {
-    "Model": "gpt-4o",
-    "RoleOverrides": {
-      "Engineer": {
-        "Model": "gpt-4-turbo"
-      }
-    }
-  }
-}
-```
-
-### ChatGPT Plus/Pro Subscription (No API Key)
-
-If you want to use your existing ChatGPT Plus/Pro subscription instead of an API key, run the CLI connect flow:
+Connect once:
 
 ```bash
 dotnet run --project src/Bendover.Presentation.CLI -- /connect
 ```
 
-This will open your browser, prompt you to sign in, and store a refreshable session token in `~/.bendover/chatgpt.json`. The CLI will verify access and then use that token for subsequent runs. Configure your model as usual (for example `gpt-5.3-codex`).
-
-## Practices
-
-Bendover uses a library of "Practices" to guide agent behavior. These are markdown files located in `src/Bendover.Application/.bendover/practices/`.
-
-Each practice must include YAML frontmatter defining its metadata:
-
-```markdown
----
-Name: example_practice
-TargetRole: Engineer
-AreaOfConcern: CodeQuality
----
-Your practice instructions go here.
-```
-
-### Supported Roles
-- **Lead**: Orchestrates the session.
-- **Architect**: Plans the approach.
-- **Engineer**: Implements the code.
-- **Reviewer**: Critiques the solution.
-
-
-### Troubleshooting Docker in WSL
-
-If you get access denied errors connecting to Docker:
-
-1. **Enable WSL Integration** in Docker Desktop settings (if using Docker Desktop on Windows).
-2. Or, if running native Docker in WSL, ensure your user is in the docker group:
-   ```bash
-   sudo usermod -aG docker $USER
-   newgrp docker
-   ```
-3. Verify connectivity:
-   ```bash
-   docker run --rm hello-world
-   ```
-
-## Prompt Optimization (GEPA)
-
-Bendover uses a unified **Replay Workflow** to optimize agent practices using [DSPy's GEPA](https://github.com/stanfordnlp/dspy). Instead of synthetic benchmarks, we use recorded real-world runs to evolve our prompt bundles.
-
-### The Workflow
-
-1.  **Capture**: Interactive sessions with the CLI (`Bendover.Presentation.CLI`) are automatically recorded to `.bendover/promptopt/runs/`. Each run captures the user's goal, the repository state (`base_commit.txt`), and the full interaction trace.
-2.  **Curate**: Selected run IDs are listed in dataset files (e.g., `train.txt`) to define a training split.
-3.  **Optimize**: The `run_gepa.py` script:
-    *   Loads the training runs.
-    *   Starts with an active bundle. If `.bendover/promptopt/active.json` is missing, it rebuilds `.bendover/promptopt/bundles/seed` from root `.bendover/practices` and `.bendover/agents`, then writes `active.json` pointing to `seed`.
-    *   Builds GEPA reflection context from run artifacts (`goal`, `base_commit`, `git_diff`, `dotnet_test`/error, `dotnet_build`/error, and `outputs.json` summary).
-    *   Proposes changes only for practices with evaluator `notes_by_practice` feedback in the current GEPA batch.
-    *   Treats practices without practice-specific notes as fixed (no reflection trace, no mutation).
-    *   **Replays** each run by creating a temporary task environment with the original goal and commit.
-    *   Evaluates the candidate bundle using `Bendover.PromptOpt.CLI`.
-    *   Uses the evaluation (score + notes + practice attribution) to evolve practice content for the next generation.
-
-### How Practices And Rules Work
-
-PromptOpt.CLI discovers evaluator rules automatically by loading all `IEvaluatorRule` implementations from the assembly. No manual rule list is required.
-
-Rule execution is convention-driven:
-
-- Practice name format: `practice_name`
-- Rule class format: `PracticeNameRule`
-- Matching is case-insensitive and separator-insensitive (`_`, `-`, casing differences are normalized)
-
-Examples:
-
-- `tdd_spirit` -> `TDDSpiritRule`
-- `readme_hygiene` -> `ReadmeHygieneRule`
-
-At evaluation time:
-
-1. `selected_practices` are read from run artifacts (`outputs.json` lead output).
-2. `all_practices` are read from the bundle under `practices/*.md` (frontmatter `Name`, fallback to filename stem).
-3. If a rule matches at least one practice in `all_practices`, it is treated as practice-bound and runs only when a matching practice is selected.
-4. If a rule matches no practice in `all_practices`, it is treated as a global rule and always runs (e.g., `ForbiddenFilesRule`).
-
-Lead selection validation in replay:
-
-- PromptOpt replay resolves bundle practices once per run and uses that same list for Lead selection and downstream agent prompts.
-- If Lead returns no practices, replay fails fast with an explicit error.
-- If Lead returns any practice name not present in the active bundle list, replay fails fast with an explicit error.
-- This prevents writing invalid bundle-external names into `practice_attribution.selected_practices`.
-
-Evaluator output is written as `evaluator.json` with stable snake_case fields:
-
-- `pass`, `score`, `flags`, `notes`
-- `practice_attribution.selected_practices`
-- `practice_attribution.offending_practices`
-- `practice_attribution.notes_by_practice`
-
-### Running Optimization
-
-#### 1. Requirements
-- Python 3.10+
-- `pip install -r promptopt/requirements.txt`
-- A `.env` file in the project root (copied from `.env.example`).
-- Root practices and prompts under `.bendover/practices` and `.bendover/agents` (used to bootstrap seed when `active.json` is missing).
-- Recorded runs in `.bendover/promptopt/runs/`.
-
-### Configuration
-1. Copy `.env.example` to `.env` in the project root:
-   ```bash
-   cp .env.example .env
-   ```
-2. Configure your keys:
-   - `Agent__*`: For local LLMs used by the Agent.
-   - `OPENAI_*` / `DSPY_*`: For reflection models used by GEPA.
-
-#### 2. Create a Split
-Create a text file at `.bendover/promptopt/datasets/train.txt` listing the IDs of the runs you want to optimize against:
-```text
-20260130_100000_abc123
-20260130_110000_def456
-```
-
-#### 3. Run GEPA
-Execute the optimization script using the prompt optimization root. By default it reads `datasets/train.txt` under that root.
+Disconnect when needed:
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src && ./src/promptopt/.venv/bin/python -m promptopt.run_gepa \
-  --promptopt-root .bendover/promptopt \
-  --cli-command "dotnet run --project src/Bendover.PromptOpt.CLI --" \
-  --max-full-evals 10
+dotnet run --project src/Bendover.Presentation.CLI -- /disconnect
 ```
 
-Bundle lifecycle:
-- If `.bendover/promptopt/active.json` exists, GEPA starts from that active bundle.
-- If `active.json` is missing, GEPA rebuilds `bundles/seed` from root `.bendover/practices` and `.bendover/agents`, then sets `active.json` to `seed`.
-- After optimization, GEPA writes new bundles under `.bendover/promptopt/bundles` and updates `active.json` to the best bundle.
-- If you manually promote only part of a generated bundle, delete `active.json` before the next run to intentionally reset seed from current root practices/prompts.
+Manual fallback: delete `~/.bendover/chatgpt.json`.
 
-Logs (GEPA + evaluator output) are written under `.bendover/promptopt/logs`.
+Model behavior with subscription:
 
-If you need to bypass DSPy caches (e.g., for testing), add `--disable-dspy-cache`.
+- If `Agent__ApiKey` is empty and a ChatGPT session exists, the CLI uses subscription mode.
+- Default model is `gpt-5.3-codex`.
+- You can override with `Agent__Model`.
 
-When running `Bendover.PromptOpt.CLI` manually, pass `--verbose` to print:
-- Lead-selected practices parsed from `outputs.json`
-- Evaluator summary (`pass`, `score`, selected/offending practices)
+Reflection model note:
 
-### Scoring an existing run
+- DSPy reflection uses Python-side provider settings (`OPENAI_*`, `DSPY_REFLECTION_MODEL`).
+- It does **not** reuse the ChatGPT subscription token automatically (yet).
 
-You can score an already recorded run without replaying agents:
+## Core Concepts (Plain English)
+
+- **Run**: One recorded agent session under `.bendover/promptopt/runs/<run_id>`.
+- **Evaluation**: Rule checks applied to run artifacts (`git_diff.patch`, test output, selected practices).
+- **Score**: Numeric quality result written to `evaluator.json` (`0.0` to `1.0`).
+- **Practice attribution**: Practice-specific evaluator feedback in `practice_attribution.notes_by_practice`.
+- **Bundle**: Versioned prompt package (practices + agents) under `.bendover/promptopt/bundles/<bundle_id>`.
+- **Active bundle**: Bundle ID in `.bendover/promptopt/active.json` used as current optimization baseline.
+- **GEPA**: DSPy optimizer that replays runs, reads evaluator feedback, and mutates targeted practices.
+
+## Workflow Diagram
+
+```mermaid
+flowchart TD
+  A[Run Bendover.Presentation.CLI] --> S[Engineer executes in Docker sandbox]
+  S --> P[Capture sandbox git diff]
+  P --> B[Artifacts in .bendover/promptopt/runs/<run_id>]
+  B --> C[Score existing run: PromptOpt.CLI --run-id]
+  B --> D[Create datasets/train.txt]
+  D --> E[Run promptopt]
+  E --> F[Load active bundle or rebuild seed]
+  F --> G[Replay each run via PromptOpt.CLI]
+  G --> H[Write evaluator.json + practice attribution]
+  H --> I[GEPA reflects and mutates targeted practices]
+  I --> J[Write new gengepa_* bundle + update active.json]
+```
+
+## 1. Capture Runs
+
+Capture a run:
+
+```bash
+dotnet run --project src/Bendover.Presentation.CLI -- "Your task description"
+```
+
+The CLI prints:
+
+- `run_id=<run_id>`
+- `artifacts=.bendover/promptopt/runs/<run_id>`
+
+### Sandbox and Patch Apply Behavior
+
+- Engineer code is executed inside a Docker sandbox container.
+- The system captures `git_diff.patch` from the sandbox workspace into run artifacts.
+- In `Bendover.Presentation.CLI` runs, that sandbox patch is applied back to your source repository.
+- In PromptOpt replay/evaluation runs, patch application to your source repo is disabled; replay runs in a temporary clone and only emits artifacts/output.
+
+### Key Artifacts
+
+| Artifact | Produced by | Purpose | Consumed by |
+| --- | --- | --- | --- |
+| `goal.txt` | run recorder | original user goal | GEPA replay context |
+| `base_commit.txt` | run recorder | commit used for reproducible replay | PromptOpt replay + GEPA |
+| `bundle_id.txt` | run recorder | bundle identifier used during run | scoring bundle resolution |
+| `run_meta.json` | run recorder | metadata (`run_id`, timestamps, bundle) | scoring fallback resolution |
+| `prompts.json` | run recorder | phase prompt transcripts | debugging/manual inspection |
+| `outputs.json` | run recorder | phase outputs (incl. lead practice selection) | evaluator + verbose summaries |
+| `git_diff.patch` | orchestrator sandbox artifact | code diff produced by run | evaluator + GEPA context |
+| `dotnet_build.txt` / `dotnet_build_error.txt` | orchestrator sandbox artifact | build signal | GEPA context |
+| `dotnet_test.txt` / `dotnet_test_error.txt` | orchestrator sandbox artifact | test signal | evaluator + GEPA context |
+| `sdk_surface_context.md` | orchestrator sandbox artifact | SDK tool contract snapshot | debugging/manual inspection |
+| `evaluator.json` | PromptOpt evaluator | pass/score/attribution output | GEPA scoring + manual inspection |
+
+## 2. Score Existing Runs (No Replay)
+
+Score a recorded run without rerunning agents:
 
 ```bash
 dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
 ```
 
-Bundle resolution for `--run-id` mode:
-- If `--bundle` is provided, that bundle path is used.
-- Otherwise `bundle_id.txt` from the run is used.
-- `bundle_id` values `current` (and legacy `default`) mean root `.bendover` practices.
-- scoring writes/overwrites `evaluator.json` in the existing run directory.
+Bundle resolution in `--run-id` mode:
+
+1. If `--bundle <path>` is provided, that path is used.
+2. Otherwise `bundle_id.txt` in the run directory is used.
+3. If missing, fallback is `run_meta.json` (`bundle_id` or `bundleId`).
+4. `current` or legacy `default` resolve to root `.bendover`.
+5. Scoring writes/overwrites `evaluator.json` in the run directory.
+
+## 3. Replay + Evaluate a Bundle
+
+Replay mode executes the run from a specific commit with a specific bundle:
+
+```bash
+dotnet run --project src/Bendover.PromptOpt.CLI -- \
+  --bundle .bendover/promptopt/bundles/<bundle_id> \
+  --task /path/to/task-dir \
+  --out /path/to/output-dir \
+  --verbose
+```
+
+Task directory contract:
+
+- `task.md`: goal text
+- `base_commit.txt`: commit hash to checkout before replay
+
+Output directory contains replay artifacts plus `evaluator.json`.
+
+## 4. GEPA Optimization
+
+### 4.1 Prepare dataset split
+
+Create `.bendover/promptopt/datasets/train.txt` with one run ID per line:
+
+```text
+20260211_220801_08c49959
+20260211_223728_090bd5bf
+```
+
+### 4.2 Install promptopt
+
+```bash
+python -m venv .venv
+./.venv/bin/pip install -e .
+```
+
+### 4.3 Run GEPA
+
+```bash
+./.venv/bin/promptopt --promptopt-root .bendover/promptopt --max-full-evals 3
+```
+
+If `PROMPTOPT_CLI_COMMAND` is not set in environment or `.env`, pass `--cli-command` explicitly.
+
+Useful option:
+
+- `--disable-dspy-cache` disables DSPy disk/memory cache.
+
+Bundle lifecycle (current behavior):
+
+1. If `.bendover/promptopt/active.json` exists, GEPA starts from that bundle.
+2. If missing, GEPA rebuilds `.bendover/promptopt/bundles/seed` from root `.bendover/practices` and `.bendover/agents`, then writes `active.json` to `seed`.
+3. New bundles are written as `gengepa_<hash8>` under `.bendover/promptopt/bundles`.
+4. `active.json` is updated to the best generated bundle with score metadata.
+
+Preflight requirement:
+
+- GEPA requires `practice_attribution.notes_by_practice` feedback for the first training batch.
+- If no practice-targeted notes exist, GEPA exits early with an attribution preflight error.
+
+## 5. How Evaluation Works
+
+PromptOpt CLI auto-discovers all `IEvaluatorRule` implementations from the assembly.
+
+Rule execution model:
+
+1. `selected_practices` come from Lead output in `outputs.json`.
+2. `all_practices` come from `<bundle>/practices/*.md` (frontmatter `Name`, fallback filename).
+3. If a rule convention-matches any practice, it is practice-bound and runs only when that practice is selected.
+4. If a rule matches no practice, it is global and always runs.
+
+Convention matching:
+
+- Practice: `practice_name`
+- Rule class: `PracticeNameRule`
+- Matching ignores case and separators (`_`, `-`).
+
+Evaluator contract (`evaluator.json`):
+
+```json
+{
+  "pass": true,
+  "score": 0.92,
+  "flags": [],
+  "notes": [],
+  "practice_attribution": {
+    "selected_practices": ["tdd_spirit"],
+    "offending_practices": [],
+    "notes_by_practice": {
+      "tdd_spirit": ["example feedback"]
+    }
+  }
+}
+```
+
+## 6. Troubleshooting
+
+### 6.1 Missing model/endpoint/api key
+
+- Verify `.env` includes `Agent__Model`, `Agent__Endpoint`, `Agent__ApiKey` for endpoint mode.
+- For subscription mode, run `/connect` and leave `Agent__ApiKey` empty.
+
+### 6.2 Docker unavailable
+
+- Start Docker Desktop/Engine.
+- Verify:
+
+```bash
+docker run --rm hello-world
+```
+
+### 6.3 Missing run artifacts
+
+- `--run-id` scoring requires `.bendover/promptopt/runs/<run_id>`.
+- Replay mode requires `task.md` and `base_commit.txt`.
+
+### 6.4 GEPA attribution preflight failed
+
+This means evaluator output did not include practice-targeted notes in `practice_attribution.notes_by_practice` for the first batch. Common causes:
+
+- only global rules fired,
+- practice-specific rules did not match selected practices,
+- rules passed without producing practice-specific notes.
+
+### 6.5 Bundle path errors during scoring
+
+If scoring says the resolved bundle path is missing:
+
+- pass `--bundle <path>` explicitly, or
+- check `bundle_id.txt` / `run_meta.json` in the run directory, and
+- verify the resolved bundle contains a `practices/` directory.

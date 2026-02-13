@@ -511,7 +511,10 @@ def configure_reflection_lm(reflection_lm: str, cache_enabled: bool = True) -> B
 
 @app.command()
 def main(
-    cli_command: str = typer.Option(..., help="Command to invoke Bendover CLI"),
+    cli_command: str | None = typer.Option(
+        None,
+        help="Command to invoke Bendover CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
+    ),
     promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
     train_split: str | None = typer.Option(None, help="Path to train.txt (defaults to datasets/train.txt)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
@@ -530,6 +533,12 @@ def main(
     4) Let GEPA reflect on traces + scores to evolve instructions.
     5) Write the best bundle and update active.json.
     """
+    resolved_cli_command = (cli_command or os.getenv("PROMPTOPT_CLI_COMMAND", "")).strip()
+    if not resolved_cli_command:
+        raise typer.BadParameter(
+            "Missing CLI command. Set PROMPTOPT_CLI_COMMAND in your environment or pass --cli-command."
+        )
+
     root = Path(promptopt_root)
     bundles_root = root / "bundles"
     runs_root = root / "runs"
@@ -590,7 +599,7 @@ def main(
         bundle_root=bundles_root,
         log_dir=logs_root,
         cache=cache,
-        cli_command=cli_command,
+        cli_command=resolved_cli_command,
         timeout=timeout_seconds,
     )
 
@@ -660,7 +669,7 @@ def main(
         result = evaluate_bundle(
             bundle_path=written_bundle.path,
             task_path=task_path,
-            cli_command=cli_command,
+            cli_command=resolved_cli_command,
             log_dir=logs_root,
             timeout_seconds=timeout_seconds,
         )
@@ -686,5 +695,9 @@ def main(
     print(f"Final score: {final_score}")
 
 
-if __name__ == "__main__":
+def cli() -> None:
     app()
+
+
+if __name__ == "__main__":
+    cli()

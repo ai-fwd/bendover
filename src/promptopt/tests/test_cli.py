@@ -96,13 +96,13 @@ def mock_dependencies(tmp_path):
         }
 
 
-def test_cli_invocation_format(mock_dependencies, tmp_path):
+def test_cli_invocation_format_uses_env_cli_command(mock_dependencies, tmp_path, monkeypatch):
     deps = mock_dependencies
     promptopt_root = tmp_path / "promptopt"
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
 
     result = runner.invoke(app, [
         "--promptopt-root", str(promptopt_root),
-        "--cli-command", "bendover-cli",
         "--reflection-lm", "test",
         "--max-full-evals", "1",
     ])
@@ -116,9 +116,10 @@ def test_cli_invocation_format(mock_dependencies, tmp_path):
     deps["teleprompter"].compile.assert_called_once()
 
 
-def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp_path):
+def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp_path, monkeypatch):
     deps = mock_dependencies
     promptopt_root = tmp_path / "promptopt"
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
     deps["program"].return_value = dspy.Prediction(
         score=0.0,
         feedback_by_pred={},
@@ -137,7 +138,6 @@ def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp
 
     result = runner.invoke(app, [
         "--promptopt-root", str(promptopt_root),
-        "--cli-command", "bendover-cli",
         "--reflection-lm", "test",
         "--max-full-evals", "1",
     ])
@@ -148,6 +148,20 @@ def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp
     assert "run_id=run1 pass=False score=0.0" in error_text
     assert "notes_by_practice_keys: none" in error_text
     deps["teleprompter"].compile.assert_not_called()
+
+
+def test_cli_fails_when_cli_command_missing(mock_dependencies, tmp_path, monkeypatch):
+    promptopt_root = tmp_path / "promptopt"
+    monkeypatch.delenv("PROMPTOPT_CLI_COMMAND", raising=False)
+
+    result = runner.invoke(app, [
+        "--promptopt-root", str(promptopt_root),
+        "--reflection-lm", "test",
+        "--max-full-evals", "1",
+    ])
+
+    assert result.exit_code != 0
+    assert "Missing CLI command" in result.output
 
 
 def test_bundle_program_forward_uses_feedback(tmp_path):

@@ -2,12 +2,25 @@
 name = "promptopt"
 version = "0.1.0"
 dependencies = [
-    "typer"
+    "typer",
+    "dspy-ai",
+    "python-dotenv"
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest"
+]
+
+[project.scripts]
+promptopt = "promptopt.run_gepa:cli"
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

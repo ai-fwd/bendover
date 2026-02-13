@@ -55,7 +55,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Ensure metric_fn & design is correct for practice specific mutation
 - [x] Validated a full curated run - not perfect but evaluation does work
 - [x] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
-- [ ] .bendover/agents for system prompts should get optimized separately from practices. For now we're skipping them.
+- [x] .bendover/agents for system prompts should get optimized separately from practices. For now we're skipping them.
 
 ## SDK
 - [x] Need to provide this context to the agent otherwise it has no visibility
@@ -67,6 +67,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Mutate only practices that are necessary
 - [x] Build GEPA run context from replay artifacts (goal/diff/test/build/outputs summary)
 - [x] Validate promptopt behavior on a curated run - not perfect but does work
+- [ ] Needs to use ChatGPT Pro/Plus subscription like CLI
 
 ## Infrastructure (PromptOpt artifacts)
 - [x] Capture `dotnet_build.txt` / `dotnet_build_error.txt` in PromptOpt run recorder

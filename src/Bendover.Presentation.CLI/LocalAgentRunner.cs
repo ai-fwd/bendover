@@ -83,6 +83,8 @@ public class LocalAgentRunner : IAgentRunner
                 BundleId: "current",
                 ApplySandboxPatchToSource: true
             );
+            AnsiConsole.MarkupLine($"[grey]run_id={Markup.Escape(runId)}[/]");
+            AnsiConsole.MarkupLine($"[grey]artifacts={Markup.Escape(outDir)}[/]");
 
             AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");
 

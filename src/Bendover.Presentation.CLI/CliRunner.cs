@@ -17,6 +17,13 @@ public class CliRunner
             return;
         }
 
+        if (args.Any(arg => string.Equals(arg, "/disconnect", StringComparison.OrdinalIgnoreCase)))
+        {
+            var disconnector = new ChatGptDisconnector();
+            disconnector.Run();
+            return;
+        }
+
         IAgentRunner runner;
         var mode = GetExecutionMode(args);
 
