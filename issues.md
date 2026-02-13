@@ -59,6 +59,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 
 ## SDK
 - [x] Need to provide this context to the agent otherwise it has no visibility
+- [ ] context is generated on the ScriptRunner but it should be on the SDK project not the ScriptRunner
 
 ## promptopt (Python)
 - [x] --target-practice-file limits to just 1 practice update. Auto choose based on evaluator flags (i.e. SkippingTDD -> tdd_spirit.md)

@@ -142,9 +142,13 @@ public class AgentOrchestratorTests
             Times.Once);
 
         _architectClientMock.Verify(x => x.CompleteAsync(
-           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
+           It.IsAny<IList<ChatMessage>>(),
            It.IsAny<ChatOptions>(),
-           It.IsAny<CancellationToken>()), Times.Once);
+           It.IsAny<CancellationToken>()), Times.Never);
+        // _architectClientMock.Verify(x => x.CompleteAsync(
+        //    It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
+        //    It.IsAny<ChatOptions>(),
+        //    It.IsAny<CancellationToken>()), Times.Once);
 
         _engineerClientMock.Verify(x => x.CompleteAsync(
            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null
@@ -155,9 +159,13 @@ public class AgentOrchestratorTests
            It.IsAny<CancellationToken>()), Times.Once);
 
         _reviewerClientMock.Verify(x => x.CompleteAsync(
-           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Reviewer"))),
+           It.IsAny<IList<ChatMessage>>(),
            It.IsAny<ChatOptions>(),
-           It.IsAny<CancellationToken>()), Times.Once);
+           It.IsAny<CancellationToken>()), Times.Never);
+        // _reviewerClientMock.Verify(x => x.CompleteAsync(
+        //    It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Reviewer"))),
+        //    It.IsAny<ChatOptions>(),
+        //    It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

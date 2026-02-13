@@ -130,22 +130,24 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             // Removed RecordPracticesAsync call
 
-            // 2. Planning Phase (Architect)
-            await NotifyAsync("Architect Planning...");
-            var architectClient = _clientResolver.GetClient(AgentRole.Architect);
-            var architectMessages = new List<ChatMessage>
-            {
-                new ChatMessage(ChatRole.System, $"You are an Architect.\n\nSelected Practices:\n{practicesContext}"),
-                new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
-            };
-            await _runRecorder.RecordPromptAsync("architect", architectMessages);
+            // 2. Planning Phase (Architect) is temporarily disabled.
+            // await NotifyAsync("Architect Planning...");
+            // var architectClient = _clientResolver.GetClient(AgentRole.Architect);
+            // var architectMessages = new List<ChatMessage>
+            // {
+            //     new ChatMessage(ChatRole.System, $"You are an Architect.\n\nSelected Practices:\n{practicesContext}"),
+            //     new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
+            // };
+            // await _runRecorder.RecordPromptAsync("architect", architectMessages);
+            // var planResponse = await architectClient.CompleteAsync(architectMessages);
+            // var plan = planResponse.Message.Text;
+            // await _runRecorder.RecordOutputAsync("architect", plan ?? "");
 
-            var planResponse = await architectClient.CompleteAsync(architectMessages);
-            var plan = planResponse.Message.Text;
-            await _runRecorder.RecordOutputAsync("architect", plan ?? "");
+            // Keep this as the effective plan context so Engineer still receives task direction.
+            var plan = initialGoal;
 
             var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
-            var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
+            // var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
             var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate(agentsPath);
 
             // 3. Execution with retries
@@ -195,17 +197,18 @@ public class AgentOrchestrator : IAgentOrchestrator
                         continue;
                     }
 
-                    await NotifyAsync("Reviewer Critiquing Code...");
-                    var reviewerMessages = new List<ChatMessage>
-                    {
-                        new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
-                        new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
-                    };
-                    var reviewerPhase = BuildAttemptPhase("reviewer", attemptIndex);
-                    await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
-                    var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
-                    var critique = critiqueResponse.Message.Text;
-                    await _runRecorder.RecordOutputAsync(reviewerPhase, critique ?? "");
+                    // Reviewer phase is temporarily disabled to keep the loop to Lead + Engineer only.
+                    // await NotifyAsync("Reviewer Critiquing Code...");
+                    // var reviewerMessages = new List<ChatMessage>
+                    // {
+                    //     new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
+                    //     new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
+                    // };
+                    // var reviewerPhase = BuildAttemptPhase("reviewer", attemptIndex);
+                    // await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
+                    // var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
+                    // var critique = critiqueResponse.Message.Text;
+                    // await _runRecorder.RecordOutputAsync(reviewerPhase, critique ?? "");
 
                     try
                     {
