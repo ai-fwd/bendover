@@ -43,7 +43,7 @@ internal static class EngineerBodyValidator
             violations.Add("contains using directives");
         }
 
-        if (root.Members.Any(member => member is not GlobalStatementSyntax))
+        if (root.Members.Any(member => !IsAllowedScriptMember(member)))
         {
             violations.Add("contains namespace/type/member declarations");
         }
@@ -60,5 +60,10 @@ internal static class EngineerBodyValidator
     {
         var detail = string.Join("; ", violations);
         return $"Engineer body rejected: {detail}. Return body-only C# statements (no markdown fences, #r, using, namespace/type/member declarations).";
+    }
+
+    private static bool IsAllowedScriptMember(MemberDeclarationSyntax member)
+    {
+        return member is GlobalStatementSyntax or FieldDeclarationSyntax;
     }
 }

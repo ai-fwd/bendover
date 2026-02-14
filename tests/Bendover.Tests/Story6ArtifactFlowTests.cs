@@ -84,8 +84,7 @@ public class Story6ArtifactFlowTests
                 leadAgentMock.Object,
                 runRecorder,
                 runContextAccessor,
-                gitRunnerMock.Object,
-                new EngineerBodyValidator());
+                gitRunnerMock.Object);
 
             var practices = new List<Practice>
             {

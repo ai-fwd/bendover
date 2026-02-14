@@ -1,5 +1,4 @@
 using System.Text;
-using Bendover.Application;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Docker.DotNet;
@@ -10,7 +9,6 @@ namespace Bendover.Infrastructure;
 public class DockerContainerService : IContainerService
 {
     private readonly DockerClient _client;
-    private readonly EngineerBodyValidator _validator = new();
     private string? _containerId;
     private const string ImageName = "mcr.microsoft.com/dotnet/sdk:10.0";
     private const string InputRepoPath = "/input/repo";
@@ -101,13 +99,6 @@ public class DockerContainerService : IContainerService
     public async Task<SandboxExecutionResult> ExecuteEngineerBodyAsync(string bodyContent)
     {
         EnsureContainerStarted();
-
-        var validation = _validator.Validate(bodyContent);
-        if (!validation.IsValid)
-        {
-            var error = validation.ErrorMessage ?? "Engineer body rejected.";
-            return new SandboxExecutionResult(1, string.Empty, error, error);
-        }
 
         var encodedBody = Convert.ToBase64String(Encoding.UTF8.GetBytes(bodyContent));
         var writeBodyResult = await ExecuteCommandAsync($"printf '%s' '{encodedBody}' | base64 -d > {EngineerBodyPath}");

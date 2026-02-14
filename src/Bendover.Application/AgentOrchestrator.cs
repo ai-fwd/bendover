@@ -19,7 +19,6 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IPromptOptRunRecorder _runRecorder;
     private readonly IPromptOptRunContextAccessor _runContextAccessor;
     private readonly IGitRunner _gitRunner;
-    private readonly IEngineerBodyValidator _engineerBodyValidator;
 
     private readonly IEnumerable<IAgentObserver> _observers;
 
@@ -33,8 +32,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ILeadAgent leadAgent,
         IPromptOptRunRecorder runRecorder,
         IPromptOptRunContextAccessor runContextAccessor,
-        IGitRunner gitRunner,
-        IEngineerBodyValidator engineerBodyValidator)
+        IGitRunner gitRunner)
     {
         _agentPromptService = agentPromptService;
         _clientResolver = clientResolver;
@@ -45,7 +43,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         _runRecorder = runRecorder;
         _runContextAccessor = runContextAccessor;
         _gitRunner = gitRunner;
-        _engineerBodyValidator = engineerBodyValidator;
     }
 
     private async Task NotifyAsync(string message)
@@ -174,23 +171,6 @@ public class AgentOrchestrator : IAgentOrchestrator
                     var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
                     var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
                     await _runRecorder.RecordOutputAsync(engineerPhase, actorCode);
-
-                    var validation = _engineerBodyValidator.Validate(actorCode);
-                    if (!validation.IsValid)
-                    {
-                        failureDigest = BuildFailureDigest(
-                            exitCode: 1,
-                            exception: null,
-                            combinedOutput: validation.ErrorMessage ?? "Engineer body rejected.");
-                        await _runRecorder.RecordOutputAsync(BuildAttemptPhase("engineer_failure_digest", attemptIndex), failureDigest);
-
-                        if (attemptIndex == MaxEngineerRetries)
-                        {
-                            throw new InvalidOperationException($"Engineer failed after {MaxEngineerRetries + 1} attempts.\n{failureDigest}");
-                        }
-
-                        continue;
-                    }
 
                     // Reviewer phase is temporarily disabled to keep the loop to Lead + Engineer only.
                     // await NotifyAsync("Reviewer Critiquing Code...");

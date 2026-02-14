@@ -25,7 +25,6 @@ public class AgentOrchestratorTests
     private readonly Mock<IPromptOptRunRecorder> _runRecorderMock;
     private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
     private readonly Mock<IGitRunner> _gitRunnerMock;
-    private readonly Mock<IEngineerBodyValidator> _engineerBodyValidatorMock;
     private readonly AgentOrchestrator _sut;
 
     public AgentOrchestratorTests()
@@ -42,7 +41,6 @@ public class AgentOrchestratorTests
         _runRecorderMock = new Mock<IPromptOptRunRecorder>();
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
         _gitRunnerMock = new Mock<IGitRunner>();
-        _engineerBodyValidatorMock = new Mock<IEngineerBodyValidator>();
 
         _observerMock.Setup(x => x.OnProgressAsync(It.IsAny<string>()))
             .Returns(Task.CompletedTask);
@@ -56,8 +54,6 @@ public class AgentOrchestratorTests
             .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
         _containerServiceMock.Setup(x => x.StopContainerAsync())
             .Returns(Task.CompletedTask);
-        _engineerBodyValidatorMock.Setup(x => x.Validate(It.IsAny<string>()))
-            .Returns(EngineerBodyValidationResult.Success());
         _agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate())
             .Returns($"Engineer prompt template\n\n{ToolsPromptContent}");
 
@@ -88,8 +84,7 @@ public class AgentOrchestratorTests
             _leadAgentMock.Object,
             _runRecorderMock.Object,
             _runContextAccessorMock.Object,
-            _gitRunnerMock.Object,
-            _engineerBodyValidatorMock.Object
+            _gitRunnerMock.Object
         );
     }
 
@@ -233,9 +228,6 @@ public class AgentOrchestratorTests
         _engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"bad\"") }))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"good\");") }));
-
-        _engineerBodyValidatorMock.Setup(x => x.Validate(It.IsAny<string>()))
-            .Returns(EngineerBodyValidationResult.Success());
 
         _reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Looks good") }));
