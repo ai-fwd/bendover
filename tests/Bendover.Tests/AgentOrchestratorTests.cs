@@ -262,6 +262,61 @@ public class AgentOrchestratorTests
     }
 
     [Fact]
+    public async Task RunAsync_ShouldStreamCompactTranscript_WhenEnabled()
+    {
+        // Arrange
+        var goal = "Create feature";
+        var practices = new List<Practice>
+        {
+            new Practice("codebase_overview", AgentRole.Architect, "Architecture", "Repo overview.")
+        };
+
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
+            .ReturnsAsync(new[] { "codebase_overview" });
+
+        _engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"bad\";") }))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"good\");") }));
+
+        _containerServiceMock.SetupSequence(x => x.ExecuteEngineerBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new SandboxExecutionResult(1, string.Empty, "error", "error"))
+            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(
+                "/out",
+                Capture: true,
+                RunId: "run-1",
+                BundleId: "bundle-123",
+                StreamTranscript: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        // Act
+        await _sut.RunAsync(goal, practices);
+
+        // Assert
+        _observerMock.Verify(
+            x => x.OnProgressAsync(It.Is<string>(msg =>
+                msg.Contains("[transcript][prompt] phase=engineer", StringComparison.Ordinal))),
+            Times.AtLeastOnce);
+        _observerMock.Verify(
+            x => x.OnProgressAsync(It.Is<string>(msg =>
+                msg.Contains("[transcript][output] phase=engineer", StringComparison.Ordinal))),
+            Times.AtLeastOnce);
+        _observerMock.Verify(
+            x => x.OnProgressAsync(It.Is<string>(msg =>
+                msg.Contains("[transcript][failure] phase=engineer_failure_digest", StringComparison.Ordinal))),
+            Times.AtLeastOnce);
+        _observerMock.Verify(
+            x => x.OnProgressAsync(It.Is<string>(msg =>
+                msg.Contains("[transcript][audit] phase=engineer", StringComparison.Ordinal)
+                && msg.Contains("practice=codebase_overview", StringComparison.Ordinal)
+                && msg.Contains("delivered=yes", StringComparison.Ordinal))),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
     public async Task RunAsync_ShouldApplySandboxPatchToSource_WhenEnabled()
     {
         // Arrange

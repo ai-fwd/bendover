@@ -71,6 +71,42 @@ public class PromptOptRunRecorderTests
         // Assert
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
         Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+    }
+
+    [Fact]
+    public async Task FinalizeRunAsync_CaptureEnabled_WritesTranscriptWithPracticeDeliveryAudit()
+    {
+        // Arrange
+        var outDir = "/runs/out-2-audit";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordOutputAsync("lead", "[\"codebase_overview\", \"tdd_spirit\"]");
+        await _sut.RecordPromptAsync(
+            "engineer",
+            new List<ChatMessage>
+            {
+                new(ChatRole.System, "Header\n\nSelected Practices:\n- [codebase_overview] (Architecture): desc"),
+                new(ChatRole.User, "Plan: Test Goal")
+            });
+        await _sut.RecordOutputAsync("engineer", "Console.WriteLine(\"hello\");");
+
+        // Act
+        await _sut.FinalizeRunAsync();
+
+        // Assert
+        var transcriptPath = Path.Combine(outDir, "transcript.md");
+        Assert.True(_fileSystem.File.Exists(transcriptPath));
+        var transcript = _fileSystem.File.ReadAllText(transcriptPath);
+
+        Assert.Contains("## Practice Delivery Audit", transcript);
+        Assert.Contains("| engineer | codebase_overview | yes |", transcript);
+        Assert.Contains("| engineer | tdd_spirit | no |", transcript);
+        Assert.Contains("### engineer", transcript);
+        Assert.Contains("#### Prompt Message 1", transcript);
+        Assert.Contains("#### Output", transcript);
     }
 
     [Fact]
@@ -107,5 +143,23 @@ public class PromptOptRunRecorderTests
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "base_commit.txt")));
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "bundle_id.txt")));
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "run_meta.json")));
+    }
+
+    [Fact]
+    public async Task FinalizeRunAsync_CaptureDisabled_DoesNotWriteTranscript()
+    {
+        // Arrange
+        var outDir = "/runs/out-4";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: false));
+
+        // Act
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("lead", new List<ChatMessage> { new(ChatRole.User, "Goal: Test Goal") });
+        await _sut.RecordOutputAsync("lead", "[\"practice1\"]");
+        await _sut.FinalizeRunAsync();
+
+        // Assert
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
     }
 }

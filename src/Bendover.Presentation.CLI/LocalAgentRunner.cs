@@ -18,6 +18,12 @@ namespace Bendover.Presentation.CLI;
 
 public class LocalAgentRunner : IAgentRunner
 {
+    private static readonly string[] ControlFlags =
+    {
+        "--remote",
+        "--transcript"
+    };
+
     public async Task RunAsync(string[] args)
     {
         // Setup Dependency Injection
@@ -71,6 +77,7 @@ public class LocalAgentRunner : IAgentRunner
             var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
             var practices = (await practiceService.GetPracticesAsync()).ToList();
 
+            var streamTranscript = HasFlag(args, "--transcript");
             var goal = ResolveGoal(args);
 
             var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
@@ -80,7 +87,8 @@ public class LocalAgentRunner : IAgentRunner
                 Capture: true,
                 RunId: runId,
                 BundleId: "current",
-                ApplySandboxPatchToSource: true
+                ApplySandboxPatchToSource: true,
+                StreamTranscript: streamTranscript
             );
             AnsiConsole.MarkupLine($"[grey]run_id={Markup.Escape(runId)}[/]");
             AnsiConsole.MarkupLine($"[grey]artifacts={Markup.Escape(outDir)}[/]");
@@ -110,7 +118,7 @@ public class LocalAgentRunner : IAgentRunner
     {
         var goalFromArgs = string.Join(
             " ",
-            (args ?? Array.Empty<string>()).Where(a => !string.Equals(a, "--remote", StringComparison.OrdinalIgnoreCase)))
+            (args ?? Array.Empty<string>()).Where(a => !IsControlFlag(a)))
             .Trim();
 
         if (!string.IsNullOrWhiteSpace(goalFromArgs))
@@ -119,6 +127,17 @@ public class LocalAgentRunner : IAgentRunner
         }
 
         return AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
+    }
+
+    private static bool HasFlag(string[] args, string flag)
+    {
+        return (args ?? Array.Empty<string>())
+            .Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsControlFlag(string arg)
+    {
+        return ControlFlags.Any(flag => string.Equals(arg, flag, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildLmSummary(AgentOptions options)

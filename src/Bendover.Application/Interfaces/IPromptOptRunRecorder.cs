@@ -25,7 +25,8 @@ public record PromptOptRunContext(
     bool Capture,
     string? RunId = null,
     string? BundleId = null,
-    bool ApplySandboxPatchToSource = true
+    bool ApplySandboxPatchToSource = true,
+    bool StreamTranscript = false
 );
 
 public interface IPromptOptRunEvaluator

@@ -7,7 +7,7 @@ public class ConsoleAgentObserver : IAgentObserver
 {
     public Task OnProgressAsync(string message)
     {
-        AnsiConsole.MarkupLine($"[grey]Info:[/] {message}");
+        AnsiConsole.MarkupLine($"[grey]Info:[/] {Markup.Escape(message ?? string.Empty)}");
         return Task.CompletedTask;
     }
 }

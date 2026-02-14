@@ -10,6 +10,7 @@ namespace Bendover.Application;
 public class AgentOrchestrator : IAgentOrchestrator
 {
     private const int MaxEngineerRetries = 3;
+    private const int TranscriptPreviewLimit = 320;
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
@@ -167,10 +168,16 @@ public class AgentOrchestrator : IAgentOrchestrator
                         failureDigest);
                     var engineerPhase = BuildAttemptPhase("engineer", attemptIndex);
                     await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
+                    await EmitTranscriptPromptAsync(
+                        context.StreamTranscript,
+                        engineerPhase,
+                        engineerMessages,
+                        selectedPracticeNames);
 
                     var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
                     var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
                     await _runRecorder.RecordOutputAsync(engineerPhase, actorCode);
+                    await EmitTranscriptOutputAsync(context.StreamTranscript, engineerPhase, actorCode);
 
                     // Reviewer phase is temporarily disabled to keep the loop to Lead + Engineer only.
                     // await NotifyAsync("Reviewer Critiquing Code...");
@@ -195,7 +202,9 @@ public class AgentOrchestrator : IAgentOrchestrator
                         }
 
                         failureDigest = BuildFailureDigest(executionResult.ExitCode, null, executionResult.CombinedOutput);
-                        await _runRecorder.RecordOutputAsync(BuildAttemptPhase("engineer_failure_digest", attemptIndex), failureDigest);
+                        var failurePhase = BuildAttemptPhase("engineer_failure_digest", attemptIndex);
+                        await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
+                        await EmitTranscriptFailureAsync(context.StreamTranscript, failurePhase, failureDigest);
                     }
                     catch (Exception ex)
                     {
@@ -203,7 +212,9 @@ public class AgentOrchestrator : IAgentOrchestrator
                             exitCode: 1,
                             exception: ex,
                             combinedOutput: ex.ToString());
-                        await _runRecorder.RecordOutputAsync(BuildAttemptPhase("engineer_failure_digest", attemptIndex), failureDigest);
+                        var failurePhase = BuildAttemptPhase("engineer_failure_digest", attemptIndex);
+                        await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
+                        await EmitTranscriptFailureAsync(context.StreamTranscript, failurePhase, failureDigest);
                     }
 
                     if (attemptIndex == MaxEngineerRetries)
@@ -256,6 +267,131 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
 
         return messages;
+    }
+
+    private async Task EmitTranscriptPromptAsync(
+        bool enabled,
+        string phase,
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyCollection<string> selectedPractices)
+    {
+        if (!enabled)
+        {
+            return;
+        }
+
+        var roles = string.Join(",", messages.Select(m => m.Role.Value));
+        var userPrompt = messages
+            .Where(m => string.Equals(m.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
+            .Select(m => ToCompactSingleLine(m.Text))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+        var userSummary = userPrompt.Length == 0 ? "(none)" : string.Join(" | ", userPrompt);
+
+        var systemPrompt = messages
+            .FirstOrDefault(m => string.Equals(m.Role.Value, ChatRole.System.Value, StringComparison.OrdinalIgnoreCase))
+            ?.Text ?? string.Empty;
+        var deliveredPractices = ExtractPracticesFromSystemPrompt(systemPrompt);
+        var deliveredCsv = deliveredPractices.Count == 0
+            ? "(none)"
+            : string.Join(", ", deliveredPractices.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+
+        await NotifyAsync($"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}");
+
+        foreach (var practice in selectedPractices
+                     .Where(x => !string.IsNullOrWhiteSpace(x))
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        {
+            var delivered = deliveredPractices.Contains(practice) ? "yes" : "no";
+            await NotifyAsync($"[transcript][audit] phase={phase} practice={practice} delivered={delivered}");
+        }
+    }
+
+    private async Task EmitTranscriptOutputAsync(bool enabled, string phase, string output)
+    {
+        if (!enabled)
+        {
+            return;
+        }
+
+        var preview = ToCompactSingleLine(output);
+        await NotifyAsync($"[transcript][output] phase={phase} chars={output.Length} preview={preview}");
+    }
+
+    private async Task EmitTranscriptFailureAsync(bool enabled, string phase, string failureDigest)
+    {
+        if (!enabled)
+        {
+            return;
+        }
+
+        await NotifyAsync($"[transcript][failure] phase={phase}\n{failureDigest}");
+    }
+
+    private static HashSet<string> ExtractPracticesFromSystemPrompt(string systemPrompt)
+    {
+        var delivered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            return delivered;
+        }
+
+        const string marker = "Selected Practices:";
+        var markerIndex = systemPrompt.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+        {
+            return delivered;
+        }
+
+        var lines = systemPrompt
+            .Substring(markerIndex + marker.Length)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.None);
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (!line.StartsWith("- [", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var endBracket = line.IndexOf(']', 3);
+            if (endBracket <= 3)
+            {
+                continue;
+            }
+
+            var name = line.Substring(3, endBracket - 3).Trim();
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                delivered.Add(name);
+            }
+        }
+
+        return delivered;
+    }
+
+    private static string ToCompactSingleLine(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "(none)";
+        }
+
+        var singleLine = text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Trim();
+
+        if (singleLine.Length <= TranscriptPreviewLimit)
+        {
+            return singleLine;
+        }
+
+        return $"{singleLine[..TranscriptPreviewLimit]}...(truncated)";
     }
 
     private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)
