@@ -38,34 +38,38 @@ From here on, everything in this repo has been written by an agent.
 ## Quickstart (First Successful Loop)
 
 This is the shortest end-to-end path from real run capture to GEPA optimization.
+If you're on macOS/Windows, skip the Linux/WSL-only setup step and rely on the prerequisites above.
 
 ```bash
 # 1) Ensure .env exists
 cp .env.example .env
 
-# 2) Build and test
+# 2) Linux/WSL only: bootstrap dependencies and wrapper
+./setup.sh
+
+# 3) Build and test
 dotnet build
 dotnet test
 
-# 3) Capture a real run
+# 4) Capture a real run
 # The CLI prints: run_id=<value>
-dotnet run --project src/Bendover.Presentation.CLI -- "Add a unit test for run scoring"
+./bendover "Add a unit test for run scoring"
 
-# 4) Score the captured run (use the printed run_id)
+# 5) Score the captured run (use the printed run_id)
 dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
 
-# 5) Create GEPA training split
+# 6) Create GEPA training split
 mkdir -p .bendover/promptopt/datasets
 printf "%s\n" "<run_id>" > .bendover/promptopt/datasets/train.txt
 
-# 6) Install promptopt in editable mode
+# 7) Install promptopt in editable mode
 python -m venv .venv
 ./.venv/bin/pip install -e .
 
-# 7) Run GEPA 
+# 8) Run GEPA 
 ./.venv/bin/promptopt --promptopt-root .bendover/promptopt --max-full-evals 3
 
-# 8) Inspect active optimized bundle
+# 9) Inspect active optimized bundle
 cat .bendover/promptopt/active.json
 ```
 
@@ -98,13 +102,13 @@ DSPY_REFLECTION_MODEL=openai/gpt-4o
 Connect once:
 
 ```bash
-dotnet run --project src/Bendover.Presentation.CLI -- /connect
+./bendover /connect
 ```
 
 Disconnect when needed:
 
 ```bash
-dotnet run --project src/Bendover.Presentation.CLI -- /disconnect
+./bendover /disconnect
 ```
 
 Manual fallback: delete `~/.bendover/chatgpt.json`.
@@ -152,7 +156,7 @@ flowchart TD
 Capture a run:
 
 ```bash
-dotnet run --project src/Bendover.Presentation.CLI -- "Your task description"
+./bendover "Your task description"
 ```
 
 The CLI prints:
