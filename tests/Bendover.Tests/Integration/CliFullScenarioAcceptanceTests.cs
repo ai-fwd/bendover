@@ -11,7 +11,6 @@ namespace Bendover.Tests.Integration;
 public class CliFullScenarioAcceptanceTests
 {
     private const string RealLlmToggleEnvVar = "BENDOVER_ACCEPTANCE_USE_REAL_LLM";
-    private const string SdkContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
 
     [Fact]
     [Trait("Category", "Acceptance")]
@@ -43,7 +42,6 @@ public class CliFullScenarioAcceptanceTests
         Assert.Contains(scenario.MarkerLine, gitDiff, StringComparison.Ordinal);
 
         AssertBuildAndTestArtifactsExist(result.RunDirectoryPath);
-        AssertSdkContextArtifactExists(result.RunDirectoryPath);
 
         var patchedFilePath = Path.Combine(result.RepoClonePath, scenario.TargetFilePath);
         Assert.True(File.Exists(patchedFilePath), $"Expected patched file at {patchedFilePath}");
@@ -85,7 +83,6 @@ public class CliFullScenarioAcceptanceTests
         Assert.False(string.IsNullOrWhiteSpace(File.ReadAllText(result.GitDiffPath)));
 
         AssertBuildAndTestArtifactsExist(result.RunDirectoryPath);
-        AssertSdkContextArtifactExists(result.RunDirectoryPath);
         Assert.True(result.GitChangedPaths.Length > 0, "Expected repository changes after patch apply.");
     }
 
@@ -189,15 +186,6 @@ public class CliFullScenarioAcceptanceTests
         Assert.True(
             File.Exists(testSuccessPath) || File.Exists(testFailurePath),
             $"Expected test artifact at {testSuccessPath} or {testFailurePath}");
-    }
-
-    private static void AssertSdkContextArtifactExists(string runDirectoryPath)
-    {
-        var sdkSurfacePath = Path.Combine(runDirectoryPath, "sdk_surface_context.md");
-        Assert.True(File.Exists(sdkSurfacePath), $"Expected SDK surface artifact at {sdkSurfacePath}");
-
-        var sdkSurface = File.ReadAllText(sdkSurfacePath);
-        Assert.Contains(SdkContractHeading, sdkSurface, StringComparison.Ordinal);
     }
 
     private static HashSet<string> ReadOutputPhases(string outputsPath)

@@ -57,13 +57,66 @@ public class AgentPromptServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetWorkspaceToolsMarkdownPath_UsesProvidedBundleAgentsPath()
+    public void LoadEngineerPromptTemplate_ConcatenatesEngineerAndTools()
     {
+        var agentsDirectory = Path.Combine(_tempDirectory.FullName, ".bendover", "agents");
+        Directory.CreateDirectory(agentsDirectory);
+        File.WriteAllText(Path.Combine(agentsDirectory, "engineer.md"), "Engineer prompt");
+        File.WriteAllText(Path.Combine(agentsDirectory, "tools.md"), "Generated tools content");
+
+        Directory.SetCurrentDirectory(_tempDirectory.FullName);
         var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
 
-        var path = sut.GetWorkspaceToolsMarkdownPath(".bendover/promptopt/bundles/bundle-1/agents");
+        var prompt = sut.LoadEngineerPromptTemplate();
 
-        Assert.Equal("/workspace/.bendover/promptopt/bundles/bundle-1/agents/tools.md", path);
+        Assert.Equal("Engineer prompt\n\nGenerated tools content", prompt);
+    }
+
+    [Fact]
+    public void LoadEngineerPromptTemplate_UsesProvidedAgentsPath()
+    {
+        var agentsDirectory = Path.Combine(_tempDirectory.FullName, ".bendover", "promptopt", "bundles", "bundle-1", "agents");
+        Directory.CreateDirectory(agentsDirectory);
+        File.WriteAllText(Path.Combine(agentsDirectory, "engineer.md"), "Engineer from bundle");
+        File.WriteAllText(Path.Combine(agentsDirectory, "tools.md"), "Tools from bundle");
+
+        Directory.SetCurrentDirectory(_tempDirectory.FullName);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
+
+        var prompt = sut.LoadEngineerPromptTemplate(".bendover/promptopt/bundles/bundle-1/agents");
+
+        Assert.Equal("Engineer from bundle\n\nTools from bundle", prompt);
+    }
+
+    [Fact]
+    public void LoadEngineerPromptTemplate_Throws_WhenToolsMissing()
+    {
+        var agentsDirectory = Path.Combine(_tempDirectory.FullName, ".bendover", "agents");
+        Directory.CreateDirectory(agentsDirectory);
+        File.WriteAllText(Path.Combine(agentsDirectory, "engineer.md"), "Engineer prompt");
+
+        Directory.SetCurrentDirectory(_tempDirectory.FullName);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => sut.LoadEngineerPromptTemplate());
+        Assert.Contains("missing", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".bendover/agents/tools.md", ex.Message.Replace('\\', '/'), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadEngineerPromptTemplate_Throws_WhenToolsEmpty()
+    {
+        var agentsDirectory = Path.Combine(_tempDirectory.FullName, ".bendover", "agents");
+        Directory.CreateDirectory(agentsDirectory);
+        File.WriteAllText(Path.Combine(agentsDirectory, "engineer.md"), "Engineer prompt");
+        File.WriteAllText(Path.Combine(agentsDirectory, "tools.md"), " ");
+
+        Directory.SetCurrentDirectory(_tempDirectory.FullName);
+        var sut = new AgentPromptService(new FileService(new System.IO.Abstractions.FileSystem()));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => sut.LoadEngineerPromptTemplate());
+        Assert.Contains("empty", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".bendover/agents/tools.md", ex.Message.Replace('\\', '/'), StringComparison.Ordinal);
     }
 
     public void Dispose()

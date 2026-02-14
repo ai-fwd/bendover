@@ -5,9 +5,6 @@ namespace Bendover.Application;
 
 public sealed class AgentPromptService : IAgentPromptService
 {
-    public const string ToolsContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
-
-    private const string DefaultAgentsRelativePath = ".bendover/agents";
     private const string LeadPromptFileName = "lead.md";
     private const string EngineerPromptFileName = "engineer.md";
     private const string ToolsMarkdownFileName = "tools.md";
@@ -28,12 +25,9 @@ public sealed class AgentPromptService : IAgentPromptService
 
     public string LoadEngineerPromptTemplate(string? agentsPath = null)
     {
-        return LoadRequiredTemplate(EngineerPromptFileName, agentsPath);
-    }
-
-    public string GetWorkspaceToolsMarkdownPath(string? agentsPath = null)
-    {
-        return BuildWorkspacePath(ToolsMarkdownFileName, agentsPath);
+        var engineerTemplate = LoadRequiredTemplate(EngineerPromptFileName, agentsPath);
+        var toolsTemplate = LoadRequiredTemplate(ToolsMarkdownFileName, agentsPath);
+        return $"{engineerTemplate}\n\n{toolsTemplate}";
     }
 
     private string LoadRequiredTemplate(string fileName, string? agentsPath)
@@ -57,13 +51,6 @@ public sealed class AgentPromptService : IAgentPromptService
     {
         var hostAgentsPath = ResolveHostAgentsPath(agentsPath);
         return Path.Combine(hostAgentsPath, fileName);
-    }
-
-    private string BuildWorkspacePath(string fileName, string? agentsPath)
-    {
-        var workspaceAgentsPath = ResolveWorkspaceAgentsPath(agentsPath);
-        var fullPath = Path.Combine(workspaceAgentsPath, fileName);
-        return fullPath.Replace('\\', '/');
     }
 
     private string ResolveHostAgentsPath(string? agentsPath)
@@ -90,28 +77,6 @@ public sealed class AgentPromptService : IAgentPromptService
         }
 
         return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), configured));
-    }
-
-    private string ResolveWorkspaceAgentsPath(string? agentsPath)
-    {
-        var configured = string.IsNullOrWhiteSpace(agentsPath)
-            ? (_agentsPath ?? DefaultAgentsRelativePath)
-            : agentsPath;
-        var normalized = NormalizePath(configured).TrimEnd('/');
-
-        if (Path.IsPathRooted(normalized))
-        {
-            if (!normalized.StartsWith("/workspace/", StringComparison.Ordinal)
-                && !string.Equals(normalized, "/workspace", StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"Agents path for workspace must be relative or under /workspace, but was '{normalized}'.");
-            }
-
-            return normalized;
-        }
-
-        return Path.Combine("/workspace", normalized).Replace('\\', '/');
     }
 
     private static string NormalizePath(string path)

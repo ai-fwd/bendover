@@ -11,10 +11,7 @@ namespace Bendover.Tests;
 
 public class AgentOrchestratorTests
 {
-    private const string SdkSurfacePath = "/workspace/.bendover/agents/tools.md";
-    private const string SdkSurfaceCommand = $"cat '{SdkSurfacePath}'";
-    private const string SdkContractHeading = "# SDK Tool Usage Contract (Auto-generated)";
-    private static readonly string ValidSdkSurfaceContext = $"{SdkContractHeading}\n- sdk contract";
+    private const string ToolsPromptContent = "Generated tools content";
 
     private readonly Mock<IAgentPromptService> _agentPromptServiceMock;
     private readonly Mock<ILeadAgent> _leadAgentMock;
@@ -56,17 +53,13 @@ public class AgentOrchestratorTests
         _containerServiceMock.Setup(x => x.ExecuteEngineerBodyAsync(It.IsAny<string>()))
             .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
         _containerServiceMock.Setup(x => x.ExecuteCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync((string command) => command == SdkSurfaceCommand
-                ? new SandboxExecutionResult(0, ValidSdkSurfaceContext, string.Empty, ValidSdkSurfaceContext)
-                : new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
         _containerServiceMock.Setup(x => x.StopContainerAsync())
             .Returns(Task.CompletedTask);
         _engineerBodyValidatorMock.Setup(x => x.Validate(It.IsAny<string>()))
             .Returns(EngineerBodyValidationResult.Success());
         _agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate())
-            .Returns("Engineer prompt template");
-        _agentPromptServiceMock.Setup(x => x.GetWorkspaceToolsMarkdownPath())
-            .Returns(SdkSurfacePath);
+            .Returns($"Engineer prompt template\n\n{ToolsPromptContent}");
 
         _runRecorderMock.Setup(x => x.StartRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("test_run_id");
@@ -154,7 +147,7 @@ public class AgentOrchestratorTests
            It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null
                                                             && m.Text.Contains("Engineer prompt template", StringComparison.Ordinal)
                                                             && m.Text.Contains("tdd_spirit", StringComparison.Ordinal)
-                                                            && m.Text.Contains(SdkContractHeading, StringComparison.Ordinal))),
+                                                            && m.Text.Contains(ToolsPromptContent, StringComparison.Ordinal))),
            It.IsAny<ChatOptions>(),
            It.IsAny<CancellationToken>()), Times.Once);
 
@@ -223,96 +216,6 @@ public class AgentOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_ShouldHardFail_WhenSdkContextReadCommandFails()
-    {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync(SdkSurfaceCommand))
-            .ReturnsAsync(new SandboxExecutionResult(1, string.Empty, "cat: missing", "cat: missing"));
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
-
-        // Assert
-        Assert.Contains("reason=read failed", exception.Message);
-        Assert.Contains(SdkSurfacePath, exception.Message);
-        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldHardFail_WhenSdkContextIsEmpty()
-    {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync(SdkSurfaceCommand))
-            .ReturnsAsync(new SandboxExecutionResult(0, "   ", string.Empty, "   "));
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
-
-        // Assert
-        Assert.Contains("reason=empty", exception.Message);
-        Assert.Contains(SdkSurfacePath, exception.Message);
-        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldHardFail_WhenSdkContextHeadingIsMissing()
-    {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync(SdkSurfaceCommand))
-            .ReturnsAsync(new SandboxExecutionResult(0, "## Not sdk contract", string.Empty, "## Not sdk contract"));
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
-
-        // Assert
-        Assert.Contains("reason=invalid format", exception.Message);
-        Assert.Contains(SdkSurfacePath, exception.Message);
-        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
     public async Task RunAsync_ShouldRetryEngineer_WhenExecutionFailsThenSucceed()
     {
         // Arrange
@@ -363,7 +266,7 @@ public class AgentOrchestratorTests
                                               && messages.Any(m => (m.Text ?? string.Empty).Contains("exit_code=1", StringComparison.Ordinal))
                                               && messages.Any(m => (m.Text ?? string.Empty).Contains("CS1026", StringComparison.Ordinal)))),
             Times.Once);
-        _containerServiceMock.Verify(x => x.ExecuteCommandAsync(SdkSurfaceCommand), Times.Once);
+        _containerServiceMock.Verify(x => x.ExecuteCommandAsync("cat '/workspace/.bendover/agents/tools.md'"), Times.Never);
     }
 
     [Fact]

@@ -51,8 +51,6 @@ public class Story6ArtifactFlowTests
                 .Returns(Task.CompletedTask);
             containerServiceMock.Setup(x => x.ExecuteEngineerBodyAsync(It.IsAny<string>()))
                 .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
-            containerServiceMock.Setup(x => x.ExecuteCommandAsync("cat '/workspace/.bendover/agents/tools.md'"))
-                .ReturnsAsync(new SandboxExecutionResult(0, "# SDK Tool Usage Contract (Auto-generated)\n- sdk contract", string.Empty, "# SDK Tool Usage Contract (Auto-generated)\n- sdk contract"));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))
@@ -65,9 +63,7 @@ public class Story6ArtifactFlowTests
             gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
                 .ReturnsAsync("abc123");
             agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate())
-                .Returns("Engineer prompt template");
-            agentPromptServiceMock.Setup(x => x.GetWorkspaceToolsMarkdownPath())
-                .Returns("/workspace/.bendover/agents/tools.md");
+                .Returns("Engineer prompt template\n\nGenerated tools content");
 
             var runContextAccessor = new PromptOptRunContextAccessor
             {

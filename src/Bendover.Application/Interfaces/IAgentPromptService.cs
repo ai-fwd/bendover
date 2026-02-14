@@ -4,5 +4,4 @@ public interface IAgentPromptService
 {
     string LoadLeadPromptTemplate(string? agentsPath = null);
     string LoadEngineerPromptTemplate(string? agentsPath = null);
-    string GetWorkspaceToolsMarkdownPath(string? agentsPath = null);
 }

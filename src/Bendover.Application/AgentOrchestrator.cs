@@ -10,7 +10,6 @@ namespace Bendover.Application;
 public class AgentOrchestrator : IAgentOrchestrator
 {
     private const int MaxEngineerRetries = 3;
-    private const string SdkSurfaceArtifactName = "sdk_surface_context.md";
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
@@ -155,9 +154,6 @@ public class AgentOrchestrator : IAgentOrchestrator
             await _containerService.StartContainerAsync(new SandboxExecutionSettings(Directory.GetCurrentDirectory()));
             try
             {
-                var sdkSurfaceContext = await LoadSdkSurfaceContextAsync(agentsPath);
-                await _runRecorder.RecordArtifactAsync(SdkSurfaceArtifactName, sdkSurfaceContext);
-
                 string? failureDigest = null;
                 var completed = false;
                 for (var attemptIndex = 0; attemptIndex <= MaxEngineerRetries; attemptIndex++)
@@ -171,7 +167,6 @@ public class AgentOrchestrator : IAgentOrchestrator
                         engineerPromptTemplate,
                         practicesContext,
                         plan ?? string.Empty,
-                        sdkSurfaceContext,
                         failureDigest);
                     var engineerPhase = BuildAttemptPhase("engineer", attemptIndex);
                     await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
@@ -262,14 +257,12 @@ public class AgentOrchestrator : IAgentOrchestrator
         string engineerPromptTemplate,
         string practicesContext,
         string plan,
-        string sdkSurfaceContext,
         string? failureDigest)
     {
         var messages = new List<ChatMessage>
         {
             new ChatMessage(ChatRole.System,
                 $"{engineerPromptTemplate}\n\n" +
-                $"Available SDK Surface (auto-generated):\n{sdkSurfaceContext}\n\n" +
                 $"Selected Practices:\n{practicesContext}"),
             new ChatMessage(ChatRole.User, $"Plan: {plan}")
         };
@@ -315,56 +308,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
 
         return string.Join('\n', lines.Skip(lines.Length - maxLines));
-    }
-
-    private async Task<string> LoadSdkSurfaceContextAsync(string? agentsPath)
-    {
-        var sdkSurfaceFilePath = _agentPromptService.GetWorkspaceToolsMarkdownPath(agentsPath);
-        var escapedPath = EscapeSingleQuotedShellString(sdkSurfaceFilePath);
-        var readCommand = $"cat '{escapedPath}'";
-
-        SandboxExecutionResult commandResult;
-        try
-        {
-            commandResult = await _containerService.ExecuteCommandAsync(readCommand);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException(
-                $"SDK context unavailable (reason=read failed, path={sdkSurfaceFilePath}).\noutput_tail:\n{GetLastLines(ex.ToString(), 40)}",
-                ex);
-        }
-
-        if (commandResult.ExitCode != 0)
-        {
-            var reason = commandResult.CombinedOutput.Contains("No such file", StringComparison.OrdinalIgnoreCase)
-                || commandResult.CombinedOutput.Contains("cannot open", StringComparison.OrdinalIgnoreCase)
-                || commandResult.CombinedOutput.Contains("not found", StringComparison.OrdinalIgnoreCase)
-                ? "missing"
-                : "read failed";
-            throw new InvalidOperationException(
-                $"SDK context unavailable (reason={reason}, path={sdkSurfaceFilePath}, exit_code={commandResult.ExitCode}).\noutput_tail:\n{GetLastLines(commandResult.CombinedOutput, 40)}");
-        }
-
-        var markdown = commandResult.Stdout;
-        if (string.IsNullOrWhiteSpace(markdown))
-        {
-            throw new InvalidOperationException(
-                $"SDK context unavailable (reason=empty, path={sdkSurfaceFilePath}).\noutput_tail:\n{GetLastLines(commandResult.CombinedOutput, 40)}");
-        }
-
-        if (!markdown.Contains(AgentPromptService.ToolsContractHeading, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"SDK context unavailable (reason=invalid format, path={sdkSurfaceFilePath}).\noutput_tail:\n{GetLastLines(markdown, 40)}");
-        }
-
-        return markdown;
-    }
-
-    private static string EscapeSingleQuotedShellString(string value)
-    {
-        return value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
     }
 
     private async Task<string> PersistSandboxArtifactsAsync()

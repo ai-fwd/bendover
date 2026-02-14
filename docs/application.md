@@ -25,7 +25,7 @@ Keep the agent loop deterministic and debuggable by treating orchestration phase
   - Current behavior uses goal as effective plan context.
   - Architect planning is currently disabled and must be treated as inactive unless explicitly re-enabled.
 - Engineer phase:
-  - Build engineer prompt from selected practices, plan context, and SDK surface context.
+  - Build engineer prompt from selected practices, plan context, and composed agent templates (`engineer.md` + `tools.md`).
   - Enforce body validation before execution.
   - Execute in sandbox with retry loop and failure digest feedback.
   - Record per-attempt prompts/outputs and failure digests.
