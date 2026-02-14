@@ -3,6 +3,9 @@ Name: readme_hygiene
 TargetRole: Reviewer
 AreaOfConcern: Documentation
 ---
-Confirm README reflects any user-facing behavior or setup changes. If no updates are needed, note why.
 
-Confirm any issues in the issues.md are checked as completed as part of this update.
+- Prefer keeping README aligned with current behavior, usage, and setup so it remains a reliable source of truth.
+- Update README when changes affect user workflows, commands, configuration, or artifact structure.
+- Keep issues.md accurate and reflective of the current project state.
+- Mark issues as complete in the same change that resolves them.
+

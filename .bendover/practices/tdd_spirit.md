@@ -1,6 +1,12 @@
 ---
 Name: tdd_spirit
-TargetRole: Architect
-AreaOfConcern: Architecture
+TargetRole: Engineer
+AreaOfConcern: Design
 ---
-This work MUST be done using a strict TDD approach. Write tests first and let the tests drive the design. The goal is clean, well-designed, easily testable code — not brittle or over-mocked tests.
+
+- Prefer writing tests before introducing new behavior so design emerges from usage.
+- Let tests define the public surface area and expected behavior of the system.
+- Treat difficulty in testing as a signal to improve the design, not the test.
+- Favor simple implementations that satisfy the test, then refine through refactoring.
+- Keep core logic deterministic and independent from external IO and frameworks.
+- Prefer explicit dependencies and constructor injection over hidden or global state.

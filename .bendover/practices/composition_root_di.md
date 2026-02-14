@@ -3,11 +3,21 @@ Name: composition_root_di
 TargetRole: Engineer
 AreaOfConcern: Composition
 ---
-Dependency injection is configured only in the Presentation projects (CLI/Server/PromptOpt.CLI). Application and Infrastructure stay DI-agnostic and accept dependencies via constructors.
 
-When introducing a new service:
-- Add the interface in `Bendover.Domain` or `Bendover.Application` (as appropriate).
-- Implement it in `Bendover.Infrastructure` (or the relevant adapter project).
-- Register it in the composition root (`Program.cs` or `LocalAgentRunner`) as a singleton unless there is a clear need for a shorter lifetime.
+## Intent
+Centralize dependency wiring and keep core projects DI container agnostic.
 
-Avoid creating service locators or static access; prefer constructor injection and pass the dependency down from the composition root.
+## Rules
+- DI registrations occur only in Presentation composition roots (Program.cs / LocalAgentRunner).
+- Domain, Application, Infrastructure must not reference the DI container or register services.
+- All dependencies are provided through constructors. No service locator, no statics.
+
+## Adding a new service
+- Define the interface in Domain or Application (where it is consumed).
+- Implement it in Infrastructure or a dedicated adapter project.
+- Register the mapping in the composition root.
+
+## Lifetime defaults
+- Default to transient unless the type is stateless and safe to share.
+- Use scoped only when request scoped state is required.
+- Singleton requires explicit justification (thread safe, no request state, no disposable resources).
