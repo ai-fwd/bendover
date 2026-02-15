@@ -15,6 +15,8 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] AgentOrchestrator doesn't iterate based on reviewer feedback
 - [x] AgentOrchestrator practice selection needs to be more robust
 - [ ] AgentOrchestrator doesn't pass any context so evaluation runs are meaningless
+- [ ] AgentOrchestrator is currently running as 1 shot with retries vs. multi-turn
+- [ ] AgentOrchestrator is focused on script run vs. goal accomplished
 
 
 ## Infrastructure
@@ -57,11 +59,14 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
 - [x] .bendover/agents for system prompts should get optimized separately from practices. For now we're skipping them.
 
+## ScriptRunner
+- [ ] Respect the author of the patch, Bendover should get credit.
+
 ## SDK
 - [x] Need to provide this context to the agent otherwise it has no visibility
 - [x] Context is generated on the ScriptRunner but it should be on the SDK project not the ScriptRunner
 - [ ] Add a delete file tool
-- [ ] Respect the author of the patch, Bendover should get credit.
+
 
 ## promptopt (Python)
 - [x] --target-practice-file limits to just 1 practice update. Auto choose based on evaluator flags (i.e. SkippingTDD -> tdd_spirit.md)
