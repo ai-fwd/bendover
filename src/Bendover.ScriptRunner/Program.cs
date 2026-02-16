@@ -29,7 +29,12 @@ internal static class Program
                 .AddReferences(typeof(ScriptGlobals).Assembly)
                 .AddReferences(typeof(Bendover.SDK.BendoverSDK).Assembly)
                 .AddReferences(typeof(Bendover.Domain.Interfaces.IBendoverSDK).Assembly)
-                .AddImports("System");
+                .AddImports(
+                    "System",
+                    "System.IO",
+                    "System.Linq",
+                    "System.Collections.Generic"
+                );
             await CSharpScript.RunAsync(bodyContent, scriptOptions, new ScriptGlobals());
             return 0;
         }

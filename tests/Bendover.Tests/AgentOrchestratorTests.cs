@@ -131,6 +131,11 @@ public class AgentOrchestratorTests
         _runRecorderMock.Verify(
             x => x.StartRunAsync(goal, "abc123", "bundle-123"),
             Times.Once);
+        _containerServiceMock.Verify(
+            x => x.StartContainerAsync(It.Is<SandboxExecutionSettings>(settings =>
+                string.Equals(settings.BaseCommit, "abc123", StringComparison.Ordinal)
+                && string.Equals(settings.SourceRepositoryPath, Directory.GetCurrentDirectory(), StringComparison.Ordinal))),
+            Times.Once);
 
         _architectClientMock.Verify(x => x.CompleteAsync(
            It.IsAny<IList<ChatMessage>>(),
@@ -157,6 +162,29 @@ public class AgentOrchestratorTests
         //    It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Reviewer"))),
         //    It.IsAny<ChatOptions>(),
         //    It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldFailFast_WhenBaseCommitCannotBeResolved()
+    {
+        // Arrange
+        var goal = "Build a login feature";
+        var practices = new List<Practice>
+        {
+            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
+        };
+
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ThrowsAsync(new Exception("git failed"));
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
+
+        // Assert
+        Assert.Contains("Failed to resolve base commit from git HEAD", exception.Message, StringComparison.Ordinal);
+        _containerServiceMock.Verify(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()), Times.Never);
     }
 
     [Fact]

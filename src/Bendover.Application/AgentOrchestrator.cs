@@ -69,13 +69,21 @@ public class AgentOrchestrator : IAgentOrchestrator
             allPractices.Select(p => p.Name),
             StringComparer.OrdinalIgnoreCase);
 
-        // Capture Run Start
-        string baseCommit = "unknown";
+        // Capture Run Start and enforce a reproducible sandbox baseline.
+        string baseCommit;
         try
         {
             baseCommit = (await _gitRunner.RunAsync("rev-parse HEAD")).Trim();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("Failed to resolve base commit from git HEAD.", ex);
+        }
+
+        if (string.IsNullOrWhiteSpace(baseCommit))
+        {
+            throw new InvalidOperationException("Failed to resolve base commit from git HEAD: command returned an empty commit hash.");
+        }
 
         var context = _runContextAccessor.Current
             ?? throw new InvalidOperationException("PromptOpt run context is not set.");
@@ -152,7 +160,9 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             // 3. Execution with retries
             await NotifyAsync("Executing in Container...");
-            await _containerService.StartContainerAsync(new SandboxExecutionSettings(Directory.GetCurrentDirectory()));
+            await _containerService.StartContainerAsync(new SandboxExecutionSettings(
+                Directory.GetCurrentDirectory(),
+                BaseCommit: baseCommit));
             try
             {
                 string? failureDigest = null;
