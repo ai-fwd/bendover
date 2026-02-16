@@ -19,6 +19,7 @@ builder.Services.AddSingleton<IChatClientResolver, ChatClientResolver>();
 builder.Services.AddSingleton<IAgentPromptService, AgentPromptService>();
 builder.Services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
 builder.Services.AddSingleton<IContainerService, DockerContainerService>();
+builder.Services.AddSingleton<IAgenticTurnService, AgenticTurnService>();
 builder.Services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
 builder.Services.AddSingleton<IAgentObserver, HubAgentObserver>();
 builder.Services.AddSingleton<ILeadAgent, LeadAgent>();

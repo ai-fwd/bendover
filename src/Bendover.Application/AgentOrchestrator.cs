@@ -9,11 +9,12 @@ namespace Bendover.Application;
 
 public class AgentOrchestrator : IAgentOrchestrator
 {
-    private const int MaxEngineerRetries = 3;
+    private const int MaxAgenticTurns = 4;
     private const int TranscriptPreviewLimit = 320;
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
+    private readonly IAgenticTurnService _agenticTurnService;
     private readonly IContainerService _containerService;
     private readonly IEnvironmentValidator _environmentValidator;
     private readonly ILeadAgent _leadAgent;
@@ -28,6 +29,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IChatClientResolver clientResolver,
         IContainerService containerService,
         ScriptGenerator scriptGenerator,
+        IAgenticTurnService agenticTurnService,
         IEnvironmentValidator environmentValidator,
         IEnumerable<IAgentObserver> observers,
         ILeadAgent leadAgent,
@@ -37,6 +39,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     {
         _agentPromptService = agentPromptService;
         _clientResolver = clientResolver;
+        _agenticTurnService = agenticTurnService;
         _containerService = containerService;
         _environmentValidator = environmentValidator;
         _observers = observers;
@@ -154,11 +157,13 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 string? failureDigest = null;
                 var completed = false;
-                for (var attemptIndex = 0; attemptIndex <= MaxEngineerRetries; attemptIndex++)
+                var turnSettings = new AgenticTurnSettings();
+
+                for (var attemptIndex = 0; attemptIndex < MaxAgenticTurns; attemptIndex++)
                 {
                     var isRetry = attemptIndex > 0;
                     await NotifyAsync(isRetry
-                        ? $"Engineer retry {attemptIndex} of {MaxEngineerRetries}..."
+                        ? $"Engineer retry {attemptIndex} of {MaxAgenticTurns - 1}..."
                         : "Engineer Generating Code...");
 
                     var engineerMessages = BuildEngineerMessages(
@@ -194,14 +199,21 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                     try
                     {
-                        var executionResult = await _containerService.ExecuteEngineerBodyAsync(actorCode);
-                        if (executionResult.ExitCode == 0)
+                        var turnObservation = await _agenticTurnService.ExecuteAgenticTurnAsync(actorCode, turnSettings);
+                        var observationPhase = BuildAttemptPhase("agentic_turn_observation", attemptIndex);
+                        var serializedObservation = JsonSerializer.Serialize(turnObservation);
+                        await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
+                        await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
+
+                        if (turnObservation.ScriptExecution.ExitCode == 0
+                            && turnObservation.HasChanges
+                            && turnObservation.BuildPassed)
                         {
                             completed = true;
                             break;
                         }
 
-                        failureDigest = BuildFailureDigest(executionResult.ExitCode, null, executionResult.CombinedOutput);
+                        failureDigest = BuildTurnFailureDigest(turnObservation);
                         var failurePhase = BuildAttemptPhase("engineer_failure_digest", attemptIndex);
                         await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
                         await EmitTranscriptFailureAsync(context.StreamTranscript, failurePhase, failureDigest);
@@ -217,9 +229,9 @@ public class AgentOrchestrator : IAgentOrchestrator
                         await EmitTranscriptFailureAsync(context.StreamTranscript, failurePhase, failureDigest);
                     }
 
-                    if (attemptIndex == MaxEngineerRetries)
+                    if (attemptIndex == MaxAgenticTurns - 1)
                     {
-                        throw new InvalidOperationException($"Engineer failed after {MaxEngineerRetries + 1} attempts.\n{failureDigest}");
+                        throw new InvalidOperationException($"Engineer failed after {MaxAgenticTurns} turns.\n{failureDigest}");
                     }
                 }
 
@@ -392,6 +404,41 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
 
         return $"{singleLine[..TranscriptPreviewLimit]}...(truncated)";
+    }
+
+    private static string BuildTurnFailureDigest(AgenticTurnObservation observation)
+    {
+        var failedGates = new List<string>();
+        if (observation.ScriptExecution.ExitCode != 0)
+        {
+            failedGates.Add("script_exit_non_zero");
+        }
+
+        if (!observation.HasChanges)
+        {
+            failedGates.Add("empty_diff");
+        }
+
+        if (!observation.BuildPassed)
+        {
+            failedGates.Add("build_failed");
+        }
+
+        var changedFiles = observation.ChangedFiles.Length == 0
+            ? "(none)"
+            : string.Join(", ", observation.ChangedFiles);
+        var gateSummary = failedGates.Count == 0
+            ? "(none)"
+            : string.Join(", ", failedGates);
+        var scriptTail = GetLastLines(observation.ScriptExecution.CombinedOutput, 40);
+        var buildTail = GetLastLines(observation.BuildExecution.CombinedOutput, 40);
+
+        return $"failed_gates={gateSummary}\n" +
+               $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
+               $"build_exit_code={observation.BuildExecution.ExitCode}\n" +
+               $"changed_files={changedFiles}\n" +
+               $"script_output_tail:\n{scriptTail}\n\n" +
+               $"build_output_tail:\n{buildTail}";
     }
 
     private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)

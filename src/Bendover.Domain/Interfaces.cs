@@ -6,7 +6,7 @@ namespace Bendover.Domain.Interfaces;
 public interface IContainerService
 {
     Task StartContainerAsync(SandboxExecutionSettings settings);
-    Task<SandboxExecutionResult> ExecuteEngineerBodyAsync(string bodyContent);
+    Task<SandboxExecutionResult> ExecuteScriptBodyAsync(string bodyContent);
     Task<SandboxExecutionResult> ExecuteCommandAsync(string command);
     Task StopContainerAsync();
 }

@@ -13,7 +13,7 @@ public class DockerContainerService : IContainerService
     private const string ImageName = "mcr.microsoft.com/dotnet/sdk:10.0";
     private const string InputRepoPath = "/input/repo";
     private const string WorkspacePath = "/workspace";
-    private const string EngineerBodyPath = "/workspace/engineer_body.csx";
+    private const string ScriptBodyPath = "/workspace/script_body.csx";
 
     public DockerContainerService()
     {
@@ -96,18 +96,18 @@ public class DockerContainerService : IContainerService
         }
     }
 
-    public async Task<SandboxExecutionResult> ExecuteEngineerBodyAsync(string bodyContent)
+    public async Task<SandboxExecutionResult> ExecuteScriptBodyAsync(string bodyContent)
     {
         EnsureContainerStarted();
 
         var encodedBody = Convert.ToBase64String(Encoding.UTF8.GetBytes(bodyContent));
-        var writeBodyResult = await ExecuteCommandAsync($"printf '%s' '{encodedBody}' | base64 -d > {EngineerBodyPath}");
+        var writeBodyResult = await ExecuteCommandAsync($"printf '%s' '{encodedBody}' | base64 -d > {ScriptBodyPath}");
         if (writeBodyResult.ExitCode != 0)
         {
             return writeBodyResult;
         }
 
-        return await ExecuteCommandAsync($"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {EngineerBodyPath}");
+        return await ExecuteCommandAsync($"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {ScriptBodyPath}");
     }
 
     public async Task StopContainerAsync()
