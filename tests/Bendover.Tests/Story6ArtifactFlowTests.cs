@@ -102,6 +102,11 @@ public class Story6ArtifactFlowTests
 
             await orchestrator.RunAsync("Do work", practices);
 
+            containerServiceMock.Verify(
+                x => x.StartContainerAsync(It.Is<SandboxExecutionSettings>(settings =>
+                    string.Equals(settings.BaseCommit, "abc123", StringComparison.Ordinal)
+                    && string.Equals(settings.SourceRepositoryPath, Directory.GetCurrentDirectory(), StringComparison.Ordinal))),
+                Times.Once);
             Assert.True(File.Exists(Path.Combine(outDir, "git_diff.patch")));
             Assert.True(File.Exists(Path.Combine(outDir, "dotnet_build.txt")));
             Assert.True(File.Exists(Path.Combine(outDir, "dotnet_test.txt")));

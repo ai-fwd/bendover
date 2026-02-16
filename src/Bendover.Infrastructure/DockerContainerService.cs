@@ -73,6 +73,7 @@ public class DockerContainerService : IContainerService
 
         if (!string.IsNullOrWhiteSpace(settings.BaseCommit))
         {
+            // Restore tracked files to the run's base commit before executing any turns.
             var resetResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git reset --hard {settings.BaseCommit}");
             if (resetResult.ExitCode != 0)
             {
@@ -82,6 +83,7 @@ public class DockerContainerService : IContainerService
 
         if (settings.CleanWorkspace || !string.IsNullOrWhiteSpace(settings.BaseCommit))
         {
+            // Remove untracked files while preserving ignored local config (for example `.env`).
             var cleanResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git clean -fd");
             if (cleanResult.ExitCode != 0)
             {
