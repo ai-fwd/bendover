@@ -40,6 +40,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
       ]
     }
     ```
+- [ ] do we need to run the all the `StartContainerAsync` commands individually or is there a more efficient way?
 
 ## Presentation.CLI
 - [ ] Support multi-line input via Shift+Enter

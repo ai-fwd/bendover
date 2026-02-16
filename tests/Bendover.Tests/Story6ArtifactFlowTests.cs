@@ -27,6 +27,7 @@ public class Story6ArtifactFlowTests
             var engineerClientMock = new Mock<IChatClient>();
             var reviewerClientMock = new Mock<IChatClient>();
             var containerServiceMock = new Mock<IContainerService>();
+            var agenticTurnServiceMock = new Mock<IAgenticTurnService>();
             var environmentValidatorMock = new Mock<IEnvironmentValidator>();
             var observerMock = new Mock<IAgentObserver>();
             var gitRunnerMock = new Mock<IGitRunner>();
@@ -49,8 +50,15 @@ public class Story6ArtifactFlowTests
 
             containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
                 .Returns(Task.CompletedTask);
-            containerServiceMock.Setup(x => x.ExecuteEngineerBodyAsync(It.IsAny<string>()))
-                .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+            agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+                .ReturnsAsync(new AgenticTurnObservation(
+                    ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                    DiffExecution: new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"),
+                    ChangedFilesExecution: new SandboxExecutionResult(0, "a.txt", string.Empty, "a.txt"),
+                    BuildExecution: new SandboxExecutionResult(0, "sandbox build output", string.Empty, "sandbox build output"),
+                    ChangedFiles: new[] { "a.txt" },
+                    HasChanges: true,
+                    BuildPassed: true));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))
@@ -79,6 +87,7 @@ public class Story6ArtifactFlowTests
                 clientResolverMock.Object,
                 containerServiceMock.Object,
                 new ScriptGenerator(),
+                agenticTurnServiceMock.Object,
                 environmentValidatorMock.Object,
                 new[] { observerMock.Object },
                 leadAgentMock.Object,

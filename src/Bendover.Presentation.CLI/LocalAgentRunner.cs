@@ -45,6 +45,7 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IAgentPromptService, AgentPromptService>();
         services.AddSingleton<IEnvironmentValidator, DockerEnvironmentValidator>();
         services.AddSingleton<IContainerService, DockerContainerService>();
+        services.AddSingleton<IAgenticTurnService, AgenticTurnService>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
         services.AddSingleton<IAgentObserver, ConsoleAgentObserver>();

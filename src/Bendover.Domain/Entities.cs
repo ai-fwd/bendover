@@ -15,6 +15,22 @@ public sealed record SandboxExecutionResult(
     string CombinedOutput
 );
 
+public sealed record AgenticTurnSettings(
+    string DiffCommand = "cd /workspace && git diff",
+    string ChangedFilesCommand = "cd /workspace && git diff --name-only",
+    string BuildCommand = "cd /workspace && dotnet build Bendover.sln"
+);
+
+public sealed record AgenticTurnObservation(
+    SandboxExecutionResult ScriptExecution,
+    SandboxExecutionResult DiffExecution,
+    SandboxExecutionResult ChangedFilesExecution,
+    SandboxExecutionResult BuildExecution,
+    string[] ChangedFiles,
+    bool HasChanges,
+    bool BuildPassed
+);
+
 public enum AgentState
 {
     Planning,
