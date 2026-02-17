@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Docker.DotNet;
@@ -96,7 +97,7 @@ public class DockerContainerService : IContainerService
         }
     }
 
-    public async Task<SandboxExecutionResult> ExecuteScriptBodyAsync(string bodyContent)
+    public async Task<ScriptExecutionResult> ExecuteScriptBodyAsync(string bodyContent)
     {
         EnsureContainerStarted();
 
@@ -104,10 +105,31 @@ public class DockerContainerService : IContainerService
         var writeBodyResult = await ExecuteCommandAsync($"printf '%s' '{encodedBody}' | base64 -d > {ScriptBodyPath}");
         if (writeBodyResult.ExitCode != 0)
         {
-            return writeBodyResult;
+            return new ScriptExecutionResult(
+                Execution: writeBodyResult,
+                Action: new AgenticStepAction(AgenticStepActionKind.Unknown));
         }
 
-        return await ExecuteCommandAsync($"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {ScriptBodyPath}");
+        var scriptResultPath = $"{WorkspacePath}/script_result.json";
+        try
+        {
+            await ExecuteCommandAsync($"rm -f '{scriptResultPath}'");
+        }
+        catch
+        {
+            // Best effort cleanup before each execution.
+        }
+
+        var executeResult = await ExecuteCommandAsync(
+            $"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {ScriptBodyPath} --result-file {scriptResultPath}");
+
+        var (action, warning) = await TryReadScriptActionAsync(scriptResultPath);
+        if (!string.IsNullOrWhiteSpace(warning))
+        {
+            executeResult = AppendCombinedOutput(executeResult, warning);
+        }
+
+        return new ScriptExecutionResult(executeResult, action);
     }
 
     public async Task<SandboxExecutionResult> ResetWorkspaceAsync(string baseCommit, bool cleanWorkspace = true)
@@ -248,4 +270,74 @@ public class DockerContainerService : IContainerService
     {
         return value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
     }
+
+    private async Task<(AgenticStepAction Action, string? Warning)> TryReadScriptActionAsync(string scriptResultPath)
+    {
+        SandboxExecutionResult readResult;
+        try
+        {
+            readResult = await ExecuteCommandAsync($"cat '{scriptResultPath}'");
+        }
+        catch (Exception ex)
+        {
+            return (
+                new AgenticStepAction(AgenticStepActionKind.Unknown),
+                $"script action metadata missing: {ex.Message}");
+        }
+
+        if (readResult.ExitCode != 0 || string.IsNullOrWhiteSpace(readResult.CombinedOutput))
+        {
+            return (
+                new AgenticStepAction(AgenticStepActionKind.Unknown),
+                $"script action metadata unavailable.\n{readResult.CombinedOutput}");
+        }
+
+        try
+        {
+            var dto = JsonSerializer.Deserialize<ScriptRunnerActionDto>(
+                readResult.CombinedOutput,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (dto is null || string.IsNullOrWhiteSpace(dto.kind))
+            {
+                return (
+                    new AgenticStepAction(AgenticStepActionKind.Unknown),
+                    $"script action metadata invalid.\n{readResult.CombinedOutput}");
+            }
+
+            var kind = dto.kind.Trim().ToLowerInvariant() switch
+            {
+                "mutation_write" => AgenticStepActionKind.MutationWrite,
+                "mutation_delete" => AgenticStepActionKind.MutationDelete,
+                "verification_build" => AgenticStepActionKind.VerificationBuild,
+                "verification_test" => AgenticStepActionKind.VerificationTest,
+                _ => AgenticStepActionKind.Unknown
+            };
+
+            var warning = kind == AgenticStepActionKind.Unknown
+                ? $"script action metadata kind '{dto.kind}' not recognized."
+                : null;
+            return (new AgenticStepAction(kind, dto.command), warning);
+        }
+        catch (Exception ex)
+        {
+            return (
+                new AgenticStepAction(AgenticStepActionKind.Unknown),
+                $"script action metadata parse failed: {ex.Message}\n{readResult.CombinedOutput}");
+        }
+    }
+
+    private static SandboxExecutionResult AppendCombinedOutput(SandboxExecutionResult result, string text)
+    {
+        var suffix = string.IsNullOrWhiteSpace(text)
+            ? string.Empty
+            : $"\n\n[script_action_metadata]\n{text}";
+
+        return new SandboxExecutionResult(
+            result.ExitCode,
+            result.Stdout,
+            result.Stderr,
+            $"{result.CombinedOutput}{suffix}");
+    }
+
+    private sealed record ScriptRunnerActionDto(string kind, string? command);
 }

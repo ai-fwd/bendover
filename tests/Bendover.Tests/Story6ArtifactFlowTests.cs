@@ -63,9 +63,7 @@ public class Story6ArtifactFlowTests
                     ChangedFiles: new[] { "a.txt" },
                     HasChanges: true,
                     BuildPassed: false,
-                    ActionKind: "mutation_write",
-                    IsVerificationAction: false,
-                    IsMutationAction: true))
+                    Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write")))
                 .ReturnsAsync(new AgenticTurnObservation(
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"),
@@ -74,10 +72,7 @@ public class Story6ArtifactFlowTests
                     ChangedFiles: new[] { "a.txt" },
                     HasChanges: true,
                     BuildPassed: true,
-                    ActionKind: "verification_build",
-                    ActionCommand: "dotnet build Bendover.sln",
-                    IsVerificationAction: true,
-                    IsMutationAction: false));
+                    Action: new AgenticStepAction(AgenticStepActionKind.VerificationBuild, "dotnet build Bendover.sln")));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))

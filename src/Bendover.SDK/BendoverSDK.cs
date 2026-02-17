@@ -1,6 +1,6 @@
 using Bendover.Domain.Interfaces;
+using Bendover.Domain.Agentic;
 using System.Diagnostics;
-using System.Text.RegularExpressions;
 
 namespace Bendover.SDK;
 
@@ -96,60 +96,11 @@ public class GitSystem : IGit
 
 public class ShellSystem : IShell
 {
-    private static readonly Regex SegmentSplitRegex = new(@"\|\||&&|\||;", RegexOptions.Compiled);
-    private static readonly string[] ReadOnlyPrefixes =
-    {
-        "cat ",
-        "sed ",
-        "ls",
-        "find ",
-        "rg ",
-        "grep ",
-        "head ",
-        "tail ",
-        "wc ",
-        "pwd",
-        "git status",
-        "git diff",
-        "git log",
-        "git show",
-        "git rev-parse",
-        "which ",
-        "dotnet --info",
-        "dotnet --list-sdks",
-        "dotnet --list-runtimes"
-    };
-
-    private static readonly string[] MutatingFragments =
-    {
-        " rm ",
-        " rm\t",
-        "rm -",
-        "mv ",
-        "cp ",
-        "mkdir ",
-        "touch ",
-        "truncate ",
-        "chmod ",
-        "chown ",
-        "ln ",
-        "git reset",
-        "git clean",
-        "git checkout",
-        "git apply",
-        "git am",
-        "git commit",
-        "git push",
-        "git merge",
-        "git rebase",
-        "git tag"
-    };
-
     public string Execute(string command)
     {
-        if (!IsAllowedShellCommand(command, out var reason))
+        if (!ShellCommandPolicy.TryValidateAllowedForEngineer(command, out var reason))
         {
-            throw new InvalidOperationException($"Shell command rejected: {reason}");
+            throw new InvalidOperationException(reason);
         }
 
         var process = new Process
@@ -178,73 +129,5 @@ public class ShellSystem : IShell
         return string.IsNullOrWhiteSpace(stderr)
             ? stdout
             : $"{stdout}{stderr}";
-    }
-
-    private static bool IsAllowedShellCommand(string command, out string reason)
-    {
-        if (string.IsNullOrWhiteSpace(command))
-        {
-            reason = "command is empty";
-            return false;
-        }
-
-        var trimmed = command.Trim();
-        var lower = $" {trimmed.ToLowerInvariant()} ";
-
-        if (trimmed.Contains('>'))
-        {
-            reason = "redirect operators are not allowed";
-            return false;
-        }
-
-        if (MutatingFragments.Any(fragment => lower.Contains(fragment, StringComparison.Ordinal)))
-        {
-            reason = "mutating shell commands are not allowed";
-            return false;
-        }
-
-        var segments = SegmentSplitRegex
-            .Split(trimmed)
-            .Select(segment => segment.Trim())
-            .Where(segment => !string.IsNullOrWhiteSpace(segment))
-            .ToArray();
-
-        if (segments.Length == 0)
-        {
-            reason = "command has no executable segments";
-            return false;
-        }
-
-        foreach (var segment in segments)
-        {
-            if (segment.StartsWith("cd ", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (IsVerificationSegment(segment) || IsReadOnlySegment(segment))
-            {
-                continue;
-            }
-
-            reason = $"segment '{segment}' is not in the read/verification allowlist";
-            return false;
-        }
-
-        reason = string.Empty;
-        return true;
-    }
-
-    private static bool IsVerificationSegment(string segment)
-    {
-        return Regex.IsMatch(
-            segment,
-            @"^dotnet\s+(build|test)\b",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    }
-
-    private static bool IsReadOnlySegment(string segment)
-    {
-        return ReadOnlyPrefixes.Any(prefix => segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 }
