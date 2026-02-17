@@ -247,7 +247,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                             continue;
                         }
 
-                        if (turnObservation.IsMutationAction)
+                        if (turnObservation.Action.IsMutationAction)
                         {
                             if (turnObservation.ChangedFiles.Length == 0
                                 || !turnObservation.HasChanges
@@ -265,7 +265,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                             continue;
                         }
 
-                        if (turnObservation.IsVerificationAction)
+                        if (turnObservation.Action.IsVerificationAction)
                         {
                             if (string.IsNullOrWhiteSpace(acceptedPatch))
                             {
@@ -498,8 +498,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         var verificationTail = GetLastLines(observation.BuildExecution.CombinedOutput, 40);
 
         return $"failed_checks={gateSummary}\n" +
-               $"action_kind={observation.ActionKind}\n" +
-               $"action_command={observation.ActionCommand ?? "(none)"}\n" +
+               $"action_kind={observation.Action.KindToken}\n" +
+               $"action_command={observation.Action.Command ?? "(none)"}\n" +
                $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
                $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +
                $"changed_files={changedFiles}\n" +

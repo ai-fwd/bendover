@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Bendover.Domain.Agentic;
+using Bendover.Domain.Entities;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -8,67 +10,17 @@ namespace Bendover.ScriptRunner;
 internal static class EngineerBodyValidator
 {
     private static readonly Regex MarkdownFenceRegex = new(@"(^|\r?\n)\s*```", RegexOptions.Compiled);
-    private static readonly Regex SegmentSplitRegex = new(@"\|\||&&|\||;", RegexOptions.Compiled);
-    private static readonly Regex VerificationCommandRegex = new(
-        @"^\s*(?:cd\s+\S+\s*&&\s*)?dotnet\s+(build|test)\b",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    private static readonly string[] ReadOnlyShellPrefixes =
-    {
-        "cat ",
-        "sed ",
-        "ls",
-        "find ",
-        "rg ",
-        "grep ",
-        "head ",
-        "tail ",
-        "wc ",
-        "pwd",
-        "git status",
-        "git diff",
-        "git log",
-        "git show",
-        "git rev-parse",
-        "which ",
-        "dotnet --info",
-        "dotnet --list-sdks",
-        "dotnet --list-runtimes"
-    };
-
-    private static readonly string[] MutatingShellFragments =
-    {
-        " rm ",
-        " rm\t",
-        "rm -",
-        "mv ",
-        "cp ",
-        "mkdir ",
-        "touch ",
-        "truncate ",
-        "chmod ",
-        "chown ",
-        "ln ",
-        "git reset",
-        "git clean",
-        "git checkout",
-        "git apply",
-        "git am",
-        "git commit",
-        "git push",
-        "git merge",
-        "git rebase",
-        "git tag"
-    };
-
-    public static string? Validate(string bodyContent)
+    public static EngineerBodyAnalysis Analyze(string bodyContent)
     {
         var violations = new List<string>();
 
         if (string.IsNullOrWhiteSpace(bodyContent))
         {
             violations.Add("body is empty");
-            return BuildErrorMessage(violations);
+            return new EngineerBodyAnalysis(
+                ValidationError: BuildErrorMessage(violations),
+                Action: new AgenticStepAction(AgenticStepActionKind.Unknown));
         }
 
         if (MarkdownFenceRegex.IsMatch(bodyContent))
@@ -105,9 +57,16 @@ internal static class EngineerBodyValidator
             violations.Add("must include at least one global statement");
         }
 
-        ValidateSingleActionProtocol(root, violations);
+        var action = ValidateSingleActionProtocol(root, violations);
 
-        return violations.Count == 0 ? null : BuildErrorMessage(violations);
+        return new EngineerBodyAnalysis(
+            ValidationError: violations.Count == 0 ? null : BuildErrorMessage(violations),
+            Action: action);
+    }
+
+    public static string? Validate(string bodyContent)
+    {
+        return Analyze(bodyContent).ValidationError;
     }
 
     private static string BuildErrorMessage(IReadOnlyCollection<string> violations)
@@ -121,11 +80,13 @@ internal static class EngineerBodyValidator
         return member is GlobalStatementSyntax or FieldDeclarationSyntax;
     }
 
-    private static void ValidateSingleActionProtocol(CompilationUnitSyntax root, List<string> violations)
+    private static AgenticStepAction ValidateSingleActionProtocol(CompilationUnitSyntax root, List<string> violations)
     {
         var actionableStepCount = 0;
         var mutationStepCount = 0;
         var verificationStepCount = 0;
+        AgenticStepAction? firstAction = null;
+
         var invocationInfos = root
             .DescendantNodes()
             .OfType<InvocationExpressionSyntax>()
@@ -139,16 +100,22 @@ internal static class EngineerBodyValidator
                 violations.Add(invocationInfo.Violation!);
             }
 
+            if (invocationInfo.Action is null)
+            {
+                continue;
+            }
+
+            firstAction ??= invocationInfo.Action;
+            actionableStepCount++;
+
             if (invocationInfo.IsMutation)
             {
                 mutationStepCount++;
-                actionableStepCount++;
             }
 
             if (invocationInfo.IsVerification)
             {
                 verificationStepCount++;
-                actionableStepCount++;
             }
         }
 
@@ -194,6 +161,8 @@ internal static class EngineerBodyValidator
                 break;
             }
         }
+
+        return firstAction ?? new AgenticStepAction(AgenticStepActionKind.Unknown);
     }
 
     private static InvocationInfo ClassifyInvocation(InvocationExpressionSyntax invocation)
@@ -205,13 +174,21 @@ internal static class EngineerBodyValidator
         if (expressionText.Equals("sdk.File.Write", StringComparison.OrdinalIgnoreCase)
             || expressionText.Equals("sdk.WriteFile", StringComparison.OrdinalIgnoreCase))
         {
-            return new InvocationInfo(IsMutation: true, IsVerification: false, Violation: null);
+            return new InvocationInfo(
+                IsMutation: true,
+                IsVerification: false,
+                Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write"),
+                Violation: null);
         }
 
         if (expressionText.Equals("sdk.File.Delete", StringComparison.OrdinalIgnoreCase)
             || expressionText.Equals("sdk.DeleteFile", StringComparison.OrdinalIgnoreCase))
         {
-            return new InvocationInfo(IsMutation: true, IsVerification: false, Violation: null);
+            return new InvocationInfo(
+                IsMutation: true,
+                IsVerification: false,
+                Action: new AgenticStepAction(AgenticStepActionKind.MutationDelete, "sdk.File.Delete"),
+                Violation: null);
         }
 
         if (expressionText.StartsWith("sdk.Git.", StringComparison.OrdinalIgnoreCase))
@@ -219,13 +196,14 @@ internal static class EngineerBodyValidator
             return new InvocationInfo(
                 IsMutation: false,
                 IsVerification: false,
+                Action: null,
                 Violation: "sdk.Git operations are not allowed in single-step mode; use sdk.File.Write or sdk.File.Delete");
         }
 
         if (!expressionText.Equals("sdk.Shell.Execute", StringComparison.OrdinalIgnoreCase)
             && !expressionText.Equals("sdk.Run", StringComparison.OrdinalIgnoreCase))
         {
-            return new InvocationInfo(IsMutation: false, IsVerification: false, Violation: null);
+            return new InvocationInfo(IsMutation: false, IsVerification: false, Action: null, Violation: null);
         }
 
         if (!TryGetShellCommand(invocation, out var command))
@@ -233,31 +211,29 @@ internal static class EngineerBodyValidator
             return new InvocationInfo(
                 IsMutation: false,
                 IsVerification: false,
+                Action: null,
                 Violation: "shell command must use a single string-literal argument");
         }
 
-        if (IsMutatingShellCommand(command))
+        if (!ShellCommandPolicy.TryValidateAllowedForEngineer(command, out var violation))
         {
             return new InvocationInfo(
                 IsMutation: false,
                 IsVerification: false,
-                Violation: $"shell command '{command}' is mutating and not allowed");
+                Action: null,
+                Violation: violation);
         }
 
-        if (IsVerificationCommand(command))
+        if (ShellCommandPolicy.TryGetVerificationKind(command, out var verificationKind))
         {
-            return new InvocationInfo(IsMutation: false, IsVerification: true, Violation: null);
+            return new InvocationInfo(
+                IsMutation: false,
+                IsVerification: true,
+                Action: new AgenticStepAction(verificationKind, command),
+                Violation: null);
         }
 
-        if (IsReadOnlyShellCommand(command))
-        {
-            return new InvocationInfo(IsMutation: false, IsVerification: false, Violation: null);
-        }
-
-        return new InvocationInfo(
-            IsMutation: false,
-            IsVerification: false,
-            Violation: $"shell command '{command}' is not in the read/verification allowlist");
+        return new InvocationInfo(IsMutation: false, IsVerification: false, Action: null, Violation: null);
     }
 
     private static bool TryGetShellCommand(InvocationExpressionSyntax invocation, out string command)
@@ -278,55 +254,14 @@ internal static class EngineerBodyValidator
         return !string.IsNullOrWhiteSpace(command);
     }
 
-    private static bool IsVerificationCommand(string command)
-    {
-        return VerificationCommandRegex.IsMatch(command);
-    }
-
-    private static bool IsReadOnlyShellCommand(string command)
-    {
-        var segments = SegmentSplitRegex
-            .Split(command)
-            .Select(segment => segment.Trim())
-            .Where(segment => !string.IsNullOrWhiteSpace(segment))
-            .ToArray();
-
-        if (segments.Length == 0)
-        {
-            return false;
-        }
-
-        foreach (var segment in segments)
-        {
-            if (segment.StartsWith("cd ", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var allowed = ReadOnlyShellPrefixes
-                .Any(prefix => segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-            if (!allowed)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsMutatingShellCommand(string command)
-    {
-        if (command.Contains('>'))
-        {
-            return true;
-        }
-
-        var lower = $" {command.Trim().ToLowerInvariant()} ";
-        return MutatingShellFragments.Any(fragment => lower.Contains(fragment, StringComparison.Ordinal));
-    }
-
     private readonly record struct InvocationInfo(
         bool IsMutation,
         bool IsVerification,
+        AgenticStepAction? Action,
         string? Violation);
 }
+
+internal readonly record struct EngineerBodyAnalysis(
+    string? ValidationError,
+    AgenticStepAction Action
+);

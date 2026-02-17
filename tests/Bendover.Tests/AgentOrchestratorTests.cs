@@ -359,9 +359,7 @@ public class AgentOrchestratorTests
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             HasChanges: hasChanges,
             BuildPassed: false,
-            ActionKind: "mutation_write",
-            IsMutationAction: true,
-            IsVerificationAction: false);
+            Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write"));
     }
 
     private static AgenticTurnObservation CreateVerificationObservation(bool buildPassed, bool hasChanges)
@@ -375,10 +373,7 @@ public class AgentOrchestratorTests
             ChangedFiles: hasChanges ? new[] { "a.txt" } : Array.Empty<string>(),
             HasChanges: hasChanges,
             BuildPassed: buildPassed,
-            ActionKind: "verification_build",
-            ActionCommand: "dotnet build Bendover.sln",
-            IsMutationAction: false,
-            IsVerificationAction: true);
+            Action: new AgenticStepAction(AgenticStepActionKind.VerificationBuild, "dotnet build Bendover.sln"));
     }
 
     private static AgenticTurnObservation CreateUnknownObservation()
@@ -391,8 +386,6 @@ public class AgentOrchestratorTests
             ChangedFiles: Array.Empty<string>(),
             HasChanges: false,
             BuildPassed: false,
-            ActionKind: "unknown",
-            IsMutationAction: false,
-            IsVerificationAction: false);
+            Action: new AgenticStepAction(AgenticStepActionKind.Unknown));
     }
 }
