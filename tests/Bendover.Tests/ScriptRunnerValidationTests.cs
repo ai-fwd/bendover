@@ -8,16 +8,50 @@ public class ScriptRunnerValidationTests
     private static bool _scriptRunnerBuilt;
 
     [Fact]
-    public async Task ScriptBody_WithTopLevelVarDeclaration_ShouldSucceed()
+    public async Task ScriptBody_WithSingleWriteAndReadOnlySteps_ShouldSucceed()
     {
-        var body = """
-var value = "ok";
-Console.WriteLine(value);
+        var repoRoot = FindRepoRoot();
+        var targetFileName = $"tmp-script-runner-write-{Guid.NewGuid():N}.txt";
+        var targetPath = Path.Combine(repoRoot, targetFileName);
+        var body = $"""
+var target = "{targetFileName}";
+var listing = sdk.Shell.Execute("ls");
+var exists = sdk.File.Exists(target);
+sdk.File.Write(target, "ok");
+""";
+
+        try
+        {
+            var result = await RunScriptAsync(body);
+            Assert.Equal(0, result.ExitCode);
+        }
+        finally
+        {
+            if (File.Exists(targetPath))
+            {
+                File.Delete(targetPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithSingleDeleteAndReadOnlySteps_ShouldSucceed()
+    {
+        var repoRoot = FindRepoRoot();
+        var targetFileName = $"tmp-script-runner-delete-{Guid.NewGuid():N}.txt";
+        var targetPath = Path.Combine(repoRoot, targetFileName);
+        await File.WriteAllTextAsync(targetPath, "to delete");
+
+        var body = $"""
+var target = "{targetFileName}";
+var exists = sdk.File.Exists(target);
+var content = exists ? sdk.File.Read(target) : "";
+sdk.File.Delete(target);
 """;
 
         var result = await RunScriptAsync(body);
-
         Assert.Equal(0, result.ExitCode);
+        Assert.False(File.Exists(targetPath));
     }
 
     [Fact]
@@ -36,6 +70,59 @@ public class BadType
             "Engineer body rejected: contains namespace/type/member declarations",
             result.CombinedOutput,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithTwoWrites_ShouldBeRejected()
+    {
+        var body = """
+sdk.File.Write("a.txt", "a");
+sdk.File.Write("b.txt", "b");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("multiple mutation actions", result.CombinedOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithWriteAndDelete_ShouldBeRejected()
+    {
+        var body = """
+sdk.File.Write("a.txt", "a");
+sdk.File.Delete("a.txt");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("multiple mutation actions", result.CombinedOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithMutatingShellCommand_ShouldBeRejected()
+    {
+        var body = """
+sdk.Shell.Execute("rm -f a.txt");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("mutating and not allowed", result.CombinedOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithVerificationOnlyShellStep_ShouldSucceed()
+    {
+        var body = """
+sdk.Run("dotnet build --help");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
     }
 
     private static async Task<ProcessResult> RunScriptAsync(string body)

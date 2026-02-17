@@ -284,6 +284,11 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
             return true;
         }
 
+        if (TryParseEngineerStepPrompt(phase, out _))
+        {
+            return true;
+        }
+
         return phase.StartsWith("engineer_retry_", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -306,7 +311,11 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         }
 
         if (TryParseEngineerPromptAttempt(phase, out _)
-            || TryParseEngineerFailureAttempt(phase, out _))
+            || TryParseEngineerFailureAttempt(phase, out _)
+            || TryParseEngineerStepPrompt(phase, out _)
+            || TryParseEngineerStepObservation(phase, out _)
+            || TryParseEngineerStepFailure(phase, out _)
+            || TryParseLegacyObservationAttempt(phase, out _))
         {
             return 1;
         }
@@ -316,6 +325,21 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
     private static int GetPhaseAttempt(string phase)
     {
+        if (TryParseEngineerStepPrompt(phase, out var stepPrompt))
+        {
+            return stepPrompt;
+        }
+
+        if (TryParseEngineerStepObservation(phase, out var stepObservation))
+        {
+            return stepObservation;
+        }
+
+        if (TryParseEngineerStepFailure(phase, out var stepFailure))
+        {
+            return stepFailure;
+        }
+
         if (TryParseEngineerPromptAttempt(phase, out var promptAttempt))
         {
             return promptAttempt;
@@ -326,12 +350,74 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
             return failureAttempt;
         }
 
+        if (TryParseLegacyObservationAttempt(phase, out var legacyObservationAttempt))
+        {
+            return legacyObservationAttempt;
+        }
+
         return 0;
     }
 
     private static int GetPhaseStage(string phase)
     {
-        return TryParseEngineerFailureAttempt(phase, out _) ? 1 : 0;
+        if (TryParseEngineerStepPrompt(phase, out _)
+            || TryParseEngineerPromptAttempt(phase, out _))
+        {
+            return 0;
+        }
+
+        if (TryParseEngineerStepObservation(phase, out _)
+            || TryParseLegacyObservationAttempt(phase, out _))
+        {
+            return 1;
+        }
+
+        if (TryParseEngineerStepFailure(phase, out _)
+            || TryParseEngineerFailureAttempt(phase, out _))
+        {
+            return 2;
+        }
+
+        return 0;
+    }
+
+    private static bool TryParseEngineerStepPrompt(string phase, out int step)
+    {
+        const string prefix = "engineer_step_";
+        if (phase.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(phase[prefix.Length..], out step))
+        {
+            return true;
+        }
+
+        step = -1;
+        return false;
+    }
+
+    private static bool TryParseEngineerStepObservation(string phase, out int step)
+    {
+        const string prefix = "agentic_step_observation_";
+        if (phase.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(phase[prefix.Length..], out step))
+        {
+            return true;
+        }
+
+        step = -1;
+        return false;
+    }
+
+    private static bool TryParseEngineerStepFailure(string phase, out int step)
+    {
+        const string prefix = "engineer_step_failure_";
+        if (phase.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(phase[prefix.Length..], out step))
+        {
+            return true;
+        }
+
+        step = -1;
+        return false;
     }
 
     private static bool TryParseEngineerPromptAttempt(string phase, out int attempt)
@@ -343,6 +429,25 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         }
 
         const string prefix = "engineer_retry_";
+        if (phase.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(phase[prefix.Length..], out attempt))
+        {
+            return true;
+        }
+
+        attempt = -1;
+        return false;
+    }
+
+    private static bool TryParseLegacyObservationAttempt(string phase, out int attempt)
+    {
+        if (string.Equals(phase, "agentic_turn_observation", StringComparison.OrdinalIgnoreCase))
+        {
+            attempt = 0;
+            return true;
+        }
+
+        const string prefix = "agentic_turn_observation_retry_";
         if (phase.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
             && int.TryParse(phase[prefix.Length..], out attempt))
         {

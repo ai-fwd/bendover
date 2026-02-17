@@ -9,93 +9,112 @@ namespace Bendover.Tests;
 public class AgenticTurnServiceTests
 {
     [Fact]
-    public async Task ExecuteAgenticTurnAsync_ShouldReturnAggregatedObservation_WhenCommandsSucceed()
+    public async Task ExecuteAgenticTurnAsync_ShouldSkipFollowUpCommands_WhenScriptFails()
     {
-        var containerServiceMock = new Mock<IContainerService>();
-        var scriptExecution = new SandboxExecutionResult(0, "script ok", string.Empty, "script ok");
-        var diffExecution = new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt");
-        var changedFilesExecution = new SandboxExecutionResult(0, "a.txt\nb.txt", string.Empty, "a.txt\nb.txt");
-        var buildExecution = new SandboxExecutionResult(0, "build ok", string.Empty, "build ok");
-
-        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync("Console.WriteLine(\"ok\");"))
-            .ReturnsAsync(scriptExecution);
-        containerServiceMock.SetupSequence(x => x.ExecuteCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync(diffExecution)
-            .ReturnsAsync(changedFilesExecution)
-            .ReturnsAsync(buildExecution);
+        var containerServiceMock = new Mock<IContainerService>(MockBehavior.Strict);
+        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new SandboxExecutionResult(1, string.Empty, "script error", "script error"));
 
         var sut = new AgenticTurnService(containerServiceMock.Object);
+
+        var observation = await sut.ExecuteAgenticTurnAsync("sdk.File.Write(\"a.txt\", \"x\");", new AgenticTurnSettings());
+
+        Assert.Equal(1, observation.ScriptExecution.ExitCode);
+        Assert.Equal(-1, observation.DiffExecution.ExitCode);
+        Assert.Equal(-1, observation.ChangedFilesExecution.ExitCode);
+        Assert.Equal(-1, observation.BuildExecution.ExitCode);
+        Assert.True(observation.IsMutationAction);
+        Assert.False(observation.IsVerificationAction);
+        Assert.Equal("mutation_write", observation.ActionKind);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAgenticTurnAsync_ShouldClassifyMutationWrite_AndSkipVerificationCommand()
+    {
         var settings = new AgenticTurnSettings();
+        var containerServiceMock = new Mock<IContainerService>(MockBehavior.Strict);
+        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "a.txt", string.Empty, "a.txt"));
 
-        var observation = await sut.ExecuteAgenticTurnAsync("Console.WriteLine(\"ok\");", settings);
+        var sut = new AgenticTurnService(containerServiceMock.Object);
 
-        Assert.Equal(scriptExecution, observation.ScriptExecution);
-        Assert.Equal(diffExecution, observation.DiffExecution);
-        Assert.Equal(changedFilesExecution, observation.ChangedFilesExecution);
-        Assert.Equal(buildExecution, observation.BuildExecution);
+        var observation = await sut.ExecuteAgenticTurnAsync("sdk.File.Write(\"a.txt\", \"x\");", settings);
+
+        Assert.Equal("mutation_write", observation.ActionKind);
+        Assert.True(observation.IsMutationAction);
+        Assert.False(observation.IsVerificationAction);
+        Assert.True(observation.HasChanges);
+        Assert.Equal(new[] { "a.txt" }, observation.ChangedFiles);
+        Assert.False(observation.BuildPassed);
+        Assert.Equal(-1, observation.BuildExecution.ExitCode);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Never);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAgenticTurnAsync_ShouldRunBuild_ForVerificationBuildAction()
+    {
+        var settings = new AgenticTurnSettings(
+            DiffCommand: "diff-cmd",
+            ChangedFilesCommand: "changed-cmd",
+            BuildCommand: "build-cmd");
+        var containerServiceMock = new Mock<IContainerService>(MockBehavior.Strict);
+        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.BuildCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "build ok", string.Empty, "build ok"));
+
+        var sut = new AgenticTurnService(containerServiceMock.Object);
+
+        var observation = await sut.ExecuteAgenticTurnAsync("sdk.Run(\"dotnet build Bendover.sln\");", settings);
+
+        Assert.Equal("verification_build", observation.ActionKind);
+        Assert.True(observation.IsVerificationAction);
+        Assert.False(observation.IsMutationAction);
+        Assert.False(observation.HasChanges);
+        Assert.True(observation.BuildPassed);
+        Assert.Equal(0, observation.BuildExecution.ExitCode);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Once);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAgenticTurnAsync_ShouldRunTest_ForVerificationTestAction()
+    {
+        var settings = new AgenticTurnSettings(
+            DiffCommand: "diff-cmd",
+            ChangedFilesCommand: "changed-cmd",
+            TestCommand: "test-cmd");
+        var containerServiceMock = new Mock<IContainerService>(MockBehavior.Strict);
+        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "a.txt", string.Empty, "a.txt"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.TestCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "test ok", string.Empty, "test ok"));
+
+        var sut = new AgenticTurnService(containerServiceMock.Object);
+
+        var observation = await sut.ExecuteAgenticTurnAsync("sdk.Shell.Execute(\"dotnet test\");", settings);
+
+        Assert.Equal("verification_test", observation.ActionKind);
+        Assert.True(observation.IsVerificationAction);
+        Assert.False(observation.IsMutationAction);
         Assert.True(observation.HasChanges);
         Assert.True(observation.BuildPassed);
-        Assert.Equal(new[] { "a.txt", "b.txt" }, observation.ChangedFiles);
-        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.DiffCommand), Times.Once);
-        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand), Times.Once);
-        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExecuteAgenticTurnAsync_ShouldParseChangedFiles_FromChangedFilesOutput()
-    {
-        var containerServiceMock = new Mock<IContainerService>();
-
-        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
-        containerServiceMock.SetupSequence(x => x.ExecuteCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "a.txt\r\n  b.txt  \r\n\r\nc.txt\r\nb.txt", string.Empty, "a.txt\r\n  b.txt  \r\n\r\nc.txt\r\nb.txt"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "build ok", string.Empty, "build ok"));
-
-        var sut = new AgenticTurnService(containerServiceMock.Object);
-
-        var observation = await sut.ExecuteAgenticTurnAsync("body", new AgenticTurnSettings());
-
-        Assert.Equal(new[] { "a.txt", "b.txt", "c.txt" }, observation.ChangedFiles);
-    }
-
-    [Fact]
-    public async Task ExecuteAgenticTurnAsync_ShouldSetHasChangesFalse_WhenDiffOutputEmpty()
-    {
-        var containerServiceMock = new Mock<IContainerService>();
-
-        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
-        containerServiceMock.SetupSequence(x => x.ExecuteCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty))
-            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty))
-            .ReturnsAsync(new SandboxExecutionResult(0, "build ok", string.Empty, "build ok"));
-
-        var sut = new AgenticTurnService(containerServiceMock.Object);
-
-        var observation = await sut.ExecuteAgenticTurnAsync("body", new AgenticTurnSettings());
-
-        Assert.False(observation.HasChanges);
-    }
-
-    [Fact]
-    public async Task ExecuteAgenticTurnAsync_ShouldSetBuildPassedFalse_WhenBuildExitCodeNonZero()
-    {
-        var containerServiceMock = new Mock<IContainerService>();
-
-        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
-        containerServiceMock.SetupSequence(x => x.ExecuteCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "a.txt", string.Empty, "a.txt"))
-            .ReturnsAsync(new SandboxExecutionResult(1, "Build FAILED", string.Empty, "Build FAILED"));
-
-        var sut = new AgenticTurnService(containerServiceMock.Object);
-
-        var observation = await sut.ExecuteAgenticTurnAsync("body", new AgenticTurnSettings());
-
-        Assert.False(observation.BuildPassed);
-        Assert.Equal(1, observation.BuildExecution.ExitCode);
+        Assert.Equal(0, observation.BuildExecution.ExitCode);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Once);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Never);
     }
 }

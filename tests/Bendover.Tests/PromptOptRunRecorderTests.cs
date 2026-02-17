@@ -127,6 +127,34 @@ public class PromptOptRunRecorderTests
     }
 
     [Fact]
+    public async Task FinalizeRunAsync_OrdersStepPhases_ForStepProtocol()
+    {
+        var outDir = "/runs/out-step-order";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("engineer_step_2", new List<ChatMessage> { new(ChatRole.User, "step2") });
+        await _sut.RecordOutputAsync("engineer_step_2", "body2");
+        await _sut.RecordOutputAsync("agentic_step_observation_1", "obs1");
+        await _sut.RecordOutputAsync("engineer_step_failure_1", "fail1");
+        await _sut.RecordPromptAsync("engineer_step_1", new List<ChatMessage> { new(ChatRole.User, "step1") });
+        await _sut.RecordOutputAsync("engineer_step_1", "body1");
+        await _sut.FinalizeRunAsync();
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+
+        var step1Index = transcript.IndexOf("### engineer_step_1", StringComparison.Ordinal);
+        var obs1Index = transcript.IndexOf("### agentic_step_observation_1", StringComparison.Ordinal);
+        var fail1Index = transcript.IndexOf("### engineer_step_failure_1", StringComparison.Ordinal);
+        var step2Index = transcript.IndexOf("### engineer_step_2", StringComparison.Ordinal);
+        Assert.True(step1Index >= 0);
+        Assert.True(obs1Index > step1Index);
+        Assert.True(fail1Index > obs1Index);
+        Assert.True(step2Index > fail1Index);
+    }
+
+    [Fact]
     public async Task StartRunAsync_CaptureDisabled_DoesNotWriteMeta()
     {
         // Arrange

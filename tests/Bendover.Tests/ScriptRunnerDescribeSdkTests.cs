@@ -15,6 +15,14 @@ public class ScriptRunnerDescribeSdkTests
     }
 
     [Fact]
+    public void SdkSurfaceDescriber_BuildMarkdown_ContainsDeleteSurface()
+    {
+        var markdown = SdkSurfaceDescriber.BuildMarkdown();
+        Assert.Contains("Void Delete(String path)", markdown, StringComparison.Ordinal);
+        Assert.Contains("Void DeleteFile(String path)", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BuildSdk_GeneratesToolsMarkdownUnderBendoverAgents()
     {
         var repoRoot = FindRepoRoot();

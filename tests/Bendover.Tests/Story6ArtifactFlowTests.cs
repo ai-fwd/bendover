@@ -40,7 +40,7 @@ public class Story6ArtifactFlowTests
             architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
             engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"artifact run\");") }));
+                .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.File.Write(\"a.txt\", \"artifact\");") }));
             reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "ok") }));
 
@@ -50,7 +50,22 @@ public class Story6ArtifactFlowTests
 
             containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
                 .Returns(Task.CompletedTask);
-            agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            containerServiceMock.Setup(x => x.ResetWorkspaceAsync(It.IsAny<string>(), It.IsAny<bool>()))
+                .ReturnsAsync(new SandboxExecutionResult(0, "reset", string.Empty, "reset"));
+            containerServiceMock.Setup(x => x.ApplyPatchAsync(It.IsAny<string>(), It.IsAny<bool>()))
+                .ReturnsAsync(new SandboxExecutionResult(0, "apply", string.Empty, "apply"));
+            agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+                .ReturnsAsync(new AgenticTurnObservation(
+                    ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                    DiffExecution: new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"),
+                    ChangedFilesExecution: new SandboxExecutionResult(0, "a.txt", string.Empty, "a.txt"),
+                    BuildExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
+                    ChangedFiles: new[] { "a.txt" },
+                    HasChanges: true,
+                    BuildPassed: false,
+                    ActionKind: "mutation_write",
+                    IsVerificationAction: false,
+                    IsMutationAction: true))
                 .ReturnsAsync(new AgenticTurnObservation(
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"),
@@ -58,7 +73,11 @@ public class Story6ArtifactFlowTests
                     BuildExecution: new SandboxExecutionResult(0, "sandbox build output", string.Empty, "sandbox build output"),
                     ChangedFiles: new[] { "a.txt" },
                     HasChanges: true,
-                    BuildPassed: true));
+                    BuildPassed: true,
+                    ActionKind: "verification_build",
+                    ActionCommand: "dotnet build Bendover.sln",
+                    IsVerificationAction: true,
+                    IsMutationAction: false));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))
@@ -75,7 +94,7 @@ public class Story6ArtifactFlowTests
 
             var runContextAccessor = new PromptOptRunContextAccessor
             {
-                Current = new PromptOptRunContext(outDir, Capture: true, RunId: "run-1", BundleId: "bundle-1")
+                Current = new PromptOptRunContext(outDir, Capture: true, RunId: "run-1", BundleId: "bundle-1", ApplySandboxPatchToSource: false)
             };
 
             var runRecorder = new PromptOptRunRecorder(

@@ -74,16 +74,14 @@ public class DockerContainerService : IContainerService
         if (!string.IsNullOrWhiteSpace(settings.BaseCommit))
         {
             // Restore tracked files to the run's base commit before executing any turns.
-            var resetResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git reset --hard {settings.BaseCommit}");
+            var resetResult = await ResetWorkspaceAsync(settings.BaseCommit, cleanWorkspace: true);
             if (resetResult.ExitCode != 0)
             {
                 throw new InvalidOperationException($"Failed to reset workspace to base commit.\n{resetResult.CombinedOutput}");
             }
         }
-
-        if (settings.CleanWorkspace || !string.IsNullOrWhiteSpace(settings.BaseCommit))
+        else if (settings.CleanWorkspace)
         {
-            // Remove untracked files while preserving ignored local config (for example `.env`).
             var cleanResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git clean -fd");
             if (cleanResult.ExitCode != 0)
             {
@@ -110,6 +108,94 @@ public class DockerContainerService : IContainerService
         }
 
         return await ExecuteCommandAsync($"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {ScriptBodyPath}");
+    }
+
+    public async Task<SandboxExecutionResult> ResetWorkspaceAsync(string baseCommit, bool cleanWorkspace = true)
+    {
+        EnsureContainerStarted();
+
+        if (string.IsNullOrWhiteSpace(baseCommit))
+        {
+            return new SandboxExecutionResult(
+                ExitCode: 1,
+                Stdout: string.Empty,
+                Stderr: "baseCommit cannot be empty.",
+                CombinedOutput: "stage=reset\nbaseCommit cannot be empty.");
+        }
+
+        var escapedCommit = EscapeForSingleQuotedShell(baseCommit.Trim());
+        var resetResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git reset --hard '{escapedCommit}'");
+        if (resetResult.ExitCode != 0)
+        {
+            return WithStage(resetResult, "reset");
+        }
+
+        if (!cleanWorkspace)
+        {
+            return WithStage(resetResult, "reset");
+        }
+
+        var cleanResult = await ExecuteCommandAsync($"cd {WorkspacePath} && git clean -fd");
+        if (cleanResult.ExitCode != 0)
+        {
+            return new SandboxExecutionResult(
+                ExitCode: cleanResult.ExitCode,
+                Stdout: $"{resetResult.Stdout}{cleanResult.Stdout}",
+                Stderr: $"{resetResult.Stderr}{cleanResult.Stderr}",
+                CombinedOutput:
+                    "stage=clean\n" +
+                    $"reset_output:\n{resetResult.CombinedOutput}\n\n" +
+                    $"clean_output:\n{cleanResult.CombinedOutput}");
+        }
+
+        return new SandboxExecutionResult(
+            ExitCode: 0,
+            Stdout: $"{resetResult.Stdout}{cleanResult.Stdout}",
+            Stderr: $"{resetResult.Stderr}{cleanResult.Stderr}",
+            CombinedOutput:
+                "stage=reset_and_clean\n" +
+                $"reset_output:\n{resetResult.CombinedOutput}\n\n" +
+                $"clean_output:\n{cleanResult.CombinedOutput}");
+    }
+
+    public async Task<SandboxExecutionResult> ApplyPatchAsync(string patchContent, bool checkOnly = false)
+    {
+        EnsureContainerStarted();
+
+        if (string.IsNullOrWhiteSpace(patchContent))
+        {
+            return new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty);
+        }
+
+        var patchFile = $"/tmp/bendover_patch_{Guid.NewGuid():N}.patch";
+        try
+        {
+            var encodedPatch = Convert.ToBase64String(Encoding.UTF8.GetBytes(patchContent));
+            var writeResult = await ExecuteCommandAsync($"printf '%s' '{encodedPatch}' | base64 -d > '{patchFile}'");
+            if (writeResult.ExitCode != 0)
+            {
+                return WithStage(writeResult, "write_patch");
+            }
+
+            var command = checkOnly
+                ? $"cd {WorkspacePath} && git apply --check '{patchFile}'"
+                : $"cd {WorkspacePath} && git apply --whitespace=nowarn '{patchFile}'";
+            var applyResult = await ExecuteCommandAsync(command);
+            return applyResult.ExitCode == 0
+                ? applyResult
+                : WithStage(applyResult, checkOnly ? "apply_check" : "apply");
+        }
+        finally
+        {
+            try
+            {
+                await ExecuteCommandAsync($"rm -f '{patchFile}'");
+            }
+            catch
+            {
+                // Best effort cleanup for temp patch file.
+            }
+        }
     }
 
     public async Task StopContainerAsync()
@@ -147,5 +233,19 @@ public class DockerContainerService : IContainerService
         {
             throw new InvalidOperationException("Container not started");
         }
+    }
+
+    private static SandboxExecutionResult WithStage(SandboxExecutionResult result, string stage)
+    {
+        return new SandboxExecutionResult(
+            result.ExitCode,
+            result.Stdout,
+            result.Stderr,
+            $"stage={stage}\n{result.CombinedOutput}");
+    }
+
+    private static string EscapeForSingleQuotedShell(string value)
+    {
+        return value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
     }
 }

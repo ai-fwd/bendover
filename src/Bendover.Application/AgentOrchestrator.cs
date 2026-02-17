@@ -9,7 +9,7 @@ namespace Bendover.Application;
 
 public class AgentOrchestrator : IAgentOrchestrator
 {
-    private const int MaxAgenticTurns = 4;
+    private const int MaxActionSteps = 24;
     private const int TranscriptPreviewLimit = 320;
 
     private readonly IAgentPromptService _agentPromptService;
@@ -158,30 +158,53 @@ public class AgentOrchestrator : IAgentOrchestrator
             // var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
             var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate(agentsPath);
 
-            // 3. Execution with retries
+            // 3. Step-wise execution loop
             await NotifyAsync("Executing in Container...");
             await _containerService.StartContainerAsync(new SandboxExecutionSettings(
                 Directory.GetCurrentDirectory(),
                 BaseCommit: baseCommit));
             try
             {
-                string? failureDigest = null;
+                var acceptedPatch = string.Empty;
+                string? lastFailureDigest = null;
                 var completed = false;
                 var turnSettings = new AgenticTurnSettings();
 
-                for (var attemptIndex = 0; attemptIndex < MaxAgenticTurns; attemptIndex++)
+                for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
                 {
-                    var isRetry = attemptIndex > 0;
-                    await NotifyAsync(isRetry
-                        ? $"Engineer retry {attemptIndex} of {MaxAgenticTurns - 1}..."
-                        : "Engineer Generating Code...");
+                    var stepNumber = stepIndex + 1;
+                    await NotifyAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
+
+                    var resetResult = await _containerService.ResetWorkspaceAsync(baseCommit, cleanWorkspace: true);
+                    if (resetResult.ExitCode != 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Failed to reset workspace for step {stepNumber}.\n{resetResult.CombinedOutput}");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(acceptedPatch))
+                    {
+                        var replayCheckResult = await _containerService.ApplyPatchAsync(acceptedPatch, checkOnly: true);
+                        if (replayCheckResult.ExitCode != 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"Failed to replay accepted patch (check) for step {stepNumber}.\n{replayCheckResult.CombinedOutput}");
+                        }
+
+                        var replayApplyResult = await _containerService.ApplyPatchAsync(acceptedPatch, checkOnly: false);
+                        if (replayApplyResult.ExitCode != 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"Failed to replay accepted patch (apply) for step {stepNumber}.\n{replayApplyResult.CombinedOutput}");
+                        }
+                    }
 
                     var engineerMessages = BuildEngineerMessages(
                         engineerPromptTemplate,
                         practicesContext,
                         plan ?? string.Empty,
-                        failureDigest);
-                    var engineerPhase = BuildAttemptPhase("engineer", attemptIndex);
+                        lastFailureDigest);
+                    var engineerPhase = BuildStepPhase("engineer_step", stepNumber);
                     await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
                     await EmitTranscriptPromptAsync(
                         context.StreamTranscript,
@@ -201,7 +224,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                     //     new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
                     //     new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
                     // };
-                    // var reviewerPhase = BuildAttemptPhase("reviewer", attemptIndex);
+                    // var reviewerPhase = BuildStepPhase("reviewer_step", stepNumber);
                     // await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
                     // var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
                     // var critique = critiqueResponse.Message.Text;
@@ -210,44 +233,81 @@ public class AgentOrchestrator : IAgentOrchestrator
                     try
                     {
                         var turnObservation = await _agenticTurnService.ExecuteAgenticTurnAsync(actorCode, turnSettings);
-                        var observationPhase = BuildAttemptPhase("agentic_turn_observation", attemptIndex);
+                        var observationPhase = BuildStepPhase("agentic_step_observation", stepNumber);
                         var serializedObservation = JsonSerializer.Serialize(turnObservation);
                         await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
                         await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
 
-                        if (turnObservation.ScriptExecution.ExitCode == 0
-                            && turnObservation.HasChanges
-                            && turnObservation.BuildPassed)
+                        if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
+                            lastFailureDigest = BuildTurnFailureDigest(
+                                turnObservation,
+                                new[] { "script_exit_non_zero" });
+                            await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                            continue;
+                        }
+
+                        if (turnObservation.IsMutationAction)
+                        {
+                            if (turnObservation.ChangedFiles.Length == 0
+                                || !turnObservation.HasChanges
+                                || string.IsNullOrWhiteSpace(turnObservation.DiffExecution.CombinedOutput))
+                            {
+                                lastFailureDigest = BuildTurnFailureDigest(
+                                    turnObservation,
+                                    new[] { "mutation_empty_diff" });
+                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                                continue;
+                            }
+
+                            acceptedPatch = turnObservation.DiffExecution.CombinedOutput;
+                            lastFailureDigest = null;
+                            continue;
+                        }
+
+                        if (turnObservation.IsVerificationAction)
+                        {
+                            if (string.IsNullOrWhiteSpace(acceptedPatch))
+                            {
+                                lastFailureDigest = BuildTurnFailureDigest(
+                                    turnObservation,
+                                    new[] { "verification_requires_accepted_patch" });
+                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                                continue;
+                            }
+
+                            if (!turnObservation.BuildPassed)
+                            {
+                                lastFailureDigest = BuildTurnFailureDigest(
+                                    turnObservation,
+                                    new[] { "verification_failed" });
+                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                                continue;
+                            }
+
+                            lastFailureDigest = null;
                             completed = true;
                             break;
                         }
 
-                        failureDigest = BuildTurnFailureDigest(turnObservation);
-                        var failurePhase = BuildAttemptPhase("engineer_failure_digest", attemptIndex);
-                        await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
-                        await EmitTranscriptFailureAsync(context.StreamTranscript, failurePhase, failureDigest);
+                        lastFailureDigest = BuildTurnFailureDigest(
+                            turnObservation,
+                            new[] { "unknown_action" });
+                        await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
                     }
                     catch (Exception ex)
                     {
-                        failureDigest = BuildFailureDigest(
+                        lastFailureDigest = BuildFailureDigest(
                             exitCode: 1,
                             exception: ex,
                             combinedOutput: ex.ToString());
-                        var failurePhase = BuildAttemptPhase("engineer_failure_digest", attemptIndex);
-                        await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
-                        await EmitTranscriptFailureAsync(context.StreamTranscript, failurePhase, failureDigest);
-                    }
-
-                    if (attemptIndex == MaxAgenticTurns - 1)
-                    {
-                        throw new InvalidOperationException($"Engineer failed after {MaxAgenticTurns} turns.\n{failureDigest}");
+                        await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
                     }
                 }
 
                 if (!completed)
                 {
-                    throw new InvalidOperationException($"Engineer did not complete successfully.\n{failureDigest}");
+                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{lastFailureDigest}");
                 }
 
                 var gitDiffContent = await PersistSandboxArtifactsAsync();
@@ -283,12 +343,19 @@ public class AgentOrchestrator : IAgentOrchestrator
         if (!string.IsNullOrWhiteSpace(failureDigest))
         {
             messages.Add(new ChatMessage(ChatRole.User,
-                "Previous attempt failed. Use this digest to fix the body and retry.\n" +
+                "Previous step failed. Use this digest to fix the body for the next single-step response.\n" +
                 $"Failure digest:\n{failureDigest}\n\n" +
                 "Reminder: return only body statements."));
         }
 
         return messages;
+    }
+
+    private async Task RecordStepFailureAsync(bool streamTranscript, int stepNumber, string failureDigest)
+    {
+        var failurePhase = BuildStepPhase("engineer_step_failure", stepNumber);
+        await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
+        await EmitTranscriptFailureAsync(streamTranscript, failurePhase, failureDigest);
     }
 
     private async Task EmitTranscriptPromptAsync(
@@ -416,39 +483,29 @@ public class AgentOrchestrator : IAgentOrchestrator
         return $"{singleLine[..TranscriptPreviewLimit]}...(truncated)";
     }
 
-    private static string BuildTurnFailureDigest(AgenticTurnObservation observation)
+    private static string BuildTurnFailureDigest(
+        AgenticTurnObservation observation,
+        IReadOnlyCollection<string> failedChecks)
     {
-        var failedGates = new List<string>();
-        if (observation.ScriptExecution.ExitCode != 0)
-        {
-            failedGates.Add("script_exit_non_zero");
-        }
-
-        if (!observation.HasChanges)
-        {
-            failedGates.Add("empty_diff");
-        }
-
-        if (!observation.BuildPassed)
-        {
-            failedGates.Add("build_failed");
-        }
-
         var changedFiles = observation.ChangedFiles.Length == 0
             ? "(none)"
             : string.Join(", ", observation.ChangedFiles);
-        var gateSummary = failedGates.Count == 0
+        var gateSummary = failedChecks.Count == 0
             ? "(none)"
-            : string.Join(", ", failedGates);
+            : string.Join(", ", failedChecks);
         var scriptTail = GetLastLines(observation.ScriptExecution.CombinedOutput, 40);
-        var buildTail = GetLastLines(observation.BuildExecution.CombinedOutput, 40);
+        var diffTail = GetLastLines(observation.DiffExecution.CombinedOutput, 40);
+        var verificationTail = GetLastLines(observation.BuildExecution.CombinedOutput, 40);
 
-        return $"failed_gates={gateSummary}\n" +
+        return $"failed_checks={gateSummary}\n" +
+               $"action_kind={observation.ActionKind}\n" +
+               $"action_command={observation.ActionCommand ?? "(none)"}\n" +
                $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
-               $"build_exit_code={observation.BuildExecution.ExitCode}\n" +
+               $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +
                $"changed_files={changedFiles}\n" +
                $"script_output_tail:\n{scriptTail}\n\n" +
-               $"build_output_tail:\n{buildTail}";
+               $"diff_output_tail:\n{diffTail}\n\n" +
+               $"verification_output_tail:\n{verificationTail}";
     }
 
     private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)
@@ -459,14 +516,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         return $"exit_code={exitCode}\nexception_type={exceptionType}\nexception_message={exceptionMessage}\noutput_tail:\n{tail}";
     }
 
-    private static string BuildAttemptPhase(string basePhase, int attemptIndex)
+    private static string BuildStepPhase(string basePhase, int stepNumber)
     {
-        if (attemptIndex == 0)
-        {
-            return basePhase;
-        }
-
-        return $"{basePhase}_retry_{attemptIndex}";
+        return $"{basePhase}_{stepNumber}";
     }
 
     private static string GetLastLines(string text, int maxLines)
@@ -519,6 +571,38 @@ public class AgentOrchestrator : IAgentOrchestrator
             return;
         }
 
-        await _gitRunner.RunAsync("apply --whitespace=nowarn -", standardInput: gitDiffContent);
+        try
+        {
+            var checkOutput = await _gitRunner.RunAsync(
+                "apply --check --whitespace=nowarn -",
+                standardInput: gitDiffContent);
+            await _runRecorder.RecordArtifactAsync(
+                "host_apply_check.txt",
+                string.IsNullOrWhiteSpace(checkOutput) ? "(no output)" : checkOutput);
+        }
+        catch (Exception ex)
+        {
+            await _runRecorder.RecordArtifactAsync("host_apply_check.txt", ex.ToString());
+            throw new InvalidOperationException(
+                $"Host patch apply failed at check stage.\n{ex.Message}",
+                ex);
+        }
+
+        try
+        {
+            var applyOutput = await _gitRunner.RunAsync(
+                "apply --whitespace=nowarn -",
+                standardInput: gitDiffContent);
+            await _runRecorder.RecordArtifactAsync(
+                "host_apply_result.txt",
+                string.IsNullOrWhiteSpace(applyOutput) ? "(no output)" : applyOutput);
+        }
+        catch (Exception ex)
+        {
+            await _runRecorder.RecordArtifactAsync("host_apply_result.txt", ex.ToString());
+            throw new InvalidOperationException(
+                $"Host patch apply failed at apply stage.\n{ex.Message}",
+                ex);
+        }
     }
 }

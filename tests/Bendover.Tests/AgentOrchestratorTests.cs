@@ -11,14 +11,12 @@ namespace Bendover.Tests;
 
 public class AgentOrchestratorTests
 {
-    private const string ToolsPromptContent = "Generated tools content";
+    private const string AcceptedPatch = "diff --git a/a.txt b/a.txt\n+line";
 
     private readonly Mock<IAgentPromptService> _agentPromptServiceMock;
     private readonly Mock<ILeadAgent> _leadAgentMock;
     private readonly Mock<IChatClientResolver> _clientResolverMock;
-    private readonly Mock<IChatClient> _architectClientMock;
     private readonly Mock<IChatClient> _engineerClientMock;
-    private readonly Mock<IChatClient> _reviewerClientMock;
     private readonly Mock<IContainerService> _containerServiceMock;
     private readonly Mock<IAgenticTurnService> _agenticTurnServiceMock;
     private readonly Mock<IEnvironmentValidator> _environmentValidatorMock;
@@ -33,9 +31,7 @@ public class AgentOrchestratorTests
         _agentPromptServiceMock = new Mock<IAgentPromptService>();
         _leadAgentMock = new Mock<ILeadAgent>();
         _clientResolverMock = new Mock<IChatClientResolver>();
-        _architectClientMock = new Mock<IChatClient>();
         _engineerClientMock = new Mock<IChatClient>();
-        _reviewerClientMock = new Mock<IChatClient>();
         _containerServiceMock = new Mock<IContainerService>();
         _agenticTurnServiceMock = new Mock<IAgenticTurnService>();
         _environmentValidatorMock = new Mock<IEnvironmentValidator>();
@@ -50,14 +46,25 @@ public class AgentOrchestratorTests
             .Returns(Task.CompletedTask);
         _containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
             .Returns(Task.CompletedTask);
+        _containerServiceMock.Setup(x => x.ResetWorkspaceAsync(It.IsAny<string>(), It.IsAny<bool>()))
+            .ReturnsAsync(new SandboxExecutionResult(0, "reset", string.Empty, "reset"));
+        _containerServiceMock.Setup(x => x.ApplyPatchAsync(It.IsAny<string>(), It.IsAny<bool>()))
+            .ReturnsAsync(new SandboxExecutionResult(0, "apply", string.Empty, "apply"));
         _containerServiceMock.Setup(x => x.ExecuteCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync(new SandboxExecutionResult(0, "ok", string.Empty, "ok"));
+            .ReturnsAsync((string cmd) =>
+            {
+                if (string.Equals(cmd, "cd /workspace && git diff", StringComparison.Ordinal))
+                {
+                    return new SandboxExecutionResult(0, AcceptedPatch, string.Empty, AcceptedPatch);
+                }
+
+                return new SandboxExecutionResult(0, "ok", string.Empty, "ok");
+            });
         _containerServiceMock.Setup(x => x.StopContainerAsync())
             .Returns(Task.CompletedTask);
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-        _agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate())
-            .Returns($"Engineer prompt template\n\n{ToolsPromptContent}");
+
+        _agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate(It.IsAny<string?>()))
+            .Returns("Engineer prompt template");
 
         _runRecorderMock.Setup(x => x.StartRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("test_run_id");
@@ -70,119 +77,205 @@ public class AgentOrchestratorTests
         _runRecorderMock.Setup(x => x.FinalizeRunAsync())
             .Returns(Task.CompletedTask);
 
-        var scriptGen = new ScriptGenerator();
-
-        _clientResolverMock.Setup(x => x.GetClient(AgentRole.Architect)).Returns(_architectClientMock.Object);
         _clientResolverMock.Setup(x => x.GetClient(AgentRole.Engineer)).Returns(_engineerClientMock.Object);
-        _clientResolverMock.Setup(x => x.GetClient(AgentRole.Reviewer)).Returns(_reviewerClientMock.Object);
 
         _sut = new AgentOrchestrator(
             _agentPromptServiceMock.Object,
             _clientResolverMock.Object,
             _containerServiceMock.Object,
-            scriptGen,
+            new ScriptGenerator(),
             _agenticTurnServiceMock.Object,
             _environmentValidatorMock.Object,
             new[] { _observerMock.Object },
             _leadAgentMock.Object,
             _runRecorderMock.Object,
             _runContextAccessorMock.Object,
-            _gitRunnerMock.Object
-        );
+            _gitRunnerMock.Object);
     }
 
     [Fact]
-    public async Task RunAsync_ShouldExecuteWorkflowInCorrectOrder()
+    public async Task RunAsync_ShouldResetWorkspaceAndReplayPatchAcrossSteps()
     {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-
-        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Code content") }));
-
-        _reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Critique content") }));
-
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
 
-        // Act
-        await _sut.RunAsync(goal, practices);
+        var events = new List<string>();
+        _containerServiceMock.Setup(x => x.ResetWorkspaceAsync(It.IsAny<string>(), true))
+            .Callback(() => events.Add("reset"))
+            .ReturnsAsync(new SandboxExecutionResult(0, "reset", string.Empty, "reset"));
+        _containerServiceMock.Setup(x => x.ApplyPatchAsync(It.IsAny<string>(), true))
+            .Callback(() => events.Add("replay_check"))
+            .ReturnsAsync(new SandboxExecutionResult(0, "check", string.Empty, "check"));
+        _containerServiceMock.Setup(x => x.ApplyPatchAsync(It.IsAny<string>(), false))
+            .Callback(() => events.Add("replay_apply"))
+            .ReturnsAsync(new SandboxExecutionResult(0, "apply", string.Empty, "apply"));
 
-        // Assert
-        _leadAgentMock.Verify(
-            x => x.AnalyzeTaskAsync(
-                goal,
-                It.Is<IReadOnlyCollection<Practice>>(input => input.Any(p => p.Name == "tdd_spirit"))),
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        Assert.Equal(new[] { "reset", "reset", "replay_check", "replay_apply" }, events);
+        _containerServiceMock.Verify(x => x.ResetWorkspaceAsync("abc123", true), Times.Exactly(2));
+        _containerServiceMock.Verify(x => x.ApplyPatchAsync(AcceptedPatch, true), Times.Once);
+        _containerServiceMock.Verify(x => x.ApplyPatchAsync(AcceptedPatch, false), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldKeepAcceptedPatch_WhenIntermediateStepFails()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateMutationObservation(string.Empty, hasChanges: false, changedFilesOutput: string.Empty))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        var replayPatchArguments = new List<string>();
+        _containerServiceMock.Setup(x => x.ApplyPatchAsync(It.IsAny<string>(), It.IsAny<bool>()))
+            .Callback<string, bool>((patch, _) => replayPatchArguments.Add(patch))
+            .ReturnsAsync(new SandboxExecutionResult(0, "apply", string.Empty, "apply"));
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        Assert.NotEmpty(replayPatchArguments);
+        Assert.All(replayPatchArguments, patch => Assert.Equal(AcceptedPatch, patch));
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync(
+                "engineer_step_failure_2",
+                It.Is<string>(text => text.Contains("mutation_empty_diff", StringComparison.Ordinal))),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldTreatVerificationWithoutAcceptedPatchAsFailure()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: false))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
 
         _runRecorderMock.Verify(
-            x => x.StartRunAsync(goal, "abc123", "bundle-123"),
+            x => x.RecordOutputAsync(
+                "engineer_step_failure_1",
+                It.Is<string>(text => text.Contains("verification_requires_accepted_patch", StringComparison.Ordinal))),
             Times.Once);
-        _containerServiceMock.Verify(
-            x => x.StartContainerAsync(It.Is<SandboxExecutionSettings>(settings =>
-                string.Equals(settings.BaseCommit, "abc123", StringComparison.Ordinal)
-                && string.Equals(settings.SourceRepositoryPath, Directory.GetCurrentDirectory(), StringComparison.Ordinal))),
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldCompleteOnVerification_WhenAcceptedPatchExistsEvenWithoutNewDiff()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: false));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Exactly(2));
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync("engineer_step_failure_2", It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldFailAfterMaxActionSteps_WhenNoStepCompletes()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.Shell.Execute(\"cat README.md\");") }));
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateUnknownObservation());
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
+
+        Assert.Contains("24 action steps", ex.Message, StringComparison.Ordinal);
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Exactly(24));
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldRecordHostApplyCheckFailure_AndThrow()
+    {
+        SetupRunContext(applySandboxPatchToSource: true);
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+        _gitRunnerMock.Setup(x => x.RunAsync("apply --check --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ThrowsAsync(new Exception("check failed"));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
+
+        Assert.Contains("check stage", ex.Message, StringComparison.OrdinalIgnoreCase);
+        _runRecorderMock.Verify(
+            x => x.RecordArtifactAsync("host_apply_check.txt", It.Is<string>(text => text.Contains("check failed", StringComparison.Ordinal))),
             Times.Once);
+    }
 
-        _architectClientMock.Verify(x => x.CompleteAsync(
-           It.IsAny<IList<ChatMessage>>(),
-           It.IsAny<ChatOptions>(),
-           It.IsAny<CancellationToken>()), Times.Never);
-        // _architectClientMock.Verify(x => x.CompleteAsync(
-        //    It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Architect") && m.Text.Contains("tdd_spirit"))),
-        //    It.IsAny<ChatOptions>(),
-        //    It.IsAny<CancellationToken>()), Times.Once);
+    [Fact]
+    public async Task RunAsync_ShouldRecordHostApplyApplyFailure_AndThrow()
+    {
+        SetupRunContext(applySandboxPatchToSource: true);
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+        _gitRunnerMock.Setup(x => x.RunAsync("apply --check --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("check ok");
+        _gitRunnerMock.Setup(x => x.RunAsync("apply --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ThrowsAsync(new Exception("apply failed"));
 
-        _engineerClientMock.Verify(x => x.CompleteAsync(
-           It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null
-                                                            && m.Text.Contains("Engineer prompt template", StringComparison.Ordinal)
-                                                            && m.Text.Contains("tdd_spirit", StringComparison.Ordinal)
-                                                            && m.Text.Contains(ToolsPromptContent, StringComparison.Ordinal))),
-           It.IsAny<ChatOptions>(),
-           It.IsAny<CancellationToken>()), Times.Once);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
 
-        _reviewerClientMock.Verify(x => x.CompleteAsync(
-           It.IsAny<IList<ChatMessage>>(),
-           It.IsAny<ChatOptions>(),
-           It.IsAny<CancellationToken>()), Times.Never);
-        // _reviewerClientMock.Verify(x => x.CompleteAsync(
-        //    It.Is<IList<ChatMessage>>(msgs => msgs.Any(m => m.Text != null && m.Text.Contains("Reviewer"))),
-        //    It.IsAny<ChatOptions>(),
-        //    It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains("apply stage", ex.Message, StringComparison.OrdinalIgnoreCase);
+        _runRecorderMock.Verify(x => x.RecordArtifactAsync("host_apply_check.txt", "check ok"), Times.Once);
+        _runRecorderMock.Verify(
+            x => x.RecordArtifactAsync("host_apply_result.txt", It.Is<string>(text => text.Contains("apply failed", StringComparison.Ordinal))),
+            Times.Once);
     }
 
     [Fact]
     public async Task RunAsync_ShouldFailFast_WhenBaseCommitCannotBeResolved()
     {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        SetupRunContext();
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ThrowsAsync(new Exception("git failed"));
 
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
 
-        // Assert
         Assert.Contains("Failed to resolve base commit from git HEAD", exception.Message, StringComparison.Ordinal);
         _containerServiceMock.Verify(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()), Times.Never);
     }
@@ -190,374 +283,116 @@ public class AgentOrchestratorTests
     [Fact]
     public async Task RunAsync_ShouldFailFast_WhenLeadReturnsUnknownPractice()
     {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "missing_practice" });
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
+        SetupRunContext();
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync("Build feature", It.IsAny<IReadOnlyCollection<Practice>>(), It.IsAny<string?>()))
+            .ReturnsAsync(new[] { "missing_practice" });
 
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
 
-        // Assert
-        Assert.Contains("missing_practice", exception.Message);
-        _architectClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-        _reviewerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Contains("missing_practice", exception.Message, StringComparison.Ordinal);
+        _engineerClientMock.Verify(
+            x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
     public async Task RunAsync_ShouldFailFast_WhenLeadReturnsNoPractices()
     {
-        // Arrange
-        var goal = "Build a login feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
+        SetupRunContext();
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync("Build feature", It.IsAny<IReadOnlyCollection<Practice>>(), It.IsAny<string?>()))
             .ReturnsAsync(Array.Empty<string>());
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
 
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
 
-        // Assert
-        Assert.Contains("Lead selected no practices", exception.Message);
-        _architectClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-        _engineerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-        _reviewerClientMock.Verify(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldRetryEngineer_WhenExecutionFailsThenSucceed()
-    {
-        // Arrange
-        var goal = "Create feature";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-
-        _engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"bad\"") }))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"good\");") }));
-
-        _reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Looks good") }));
-
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(
-                scriptExitCode: 1,
-                hasChanges: false,
-                buildPassed: false,
-                scriptOutput: "(1,27): error CS1026: ) expected",
-                buildOutput: "Build FAILED"))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        // Act
-        await _sut.RunAsync(goal, practices);
-
-        // Assert
+        Assert.Contains("Lead selected no practices", exception.Message, StringComparison.Ordinal);
         _engineerClientMock.Verify(
             x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
-        _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync("Console.WriteLine(\"good\");", It.IsAny<AgenticTurnSettings>()),
-            Times.Once);
-        _runRecorderMock.Verify(
-            x => x.RecordPromptAsync(
-                "engineer_retry_1",
-                It.Is<List<ChatMessage>>(messages => messages.Any(m => (m.Text ?? string.Empty).Contains("Failure digest", StringComparison.Ordinal))
-                                              && messages.Any(m => (m.Text ?? string.Empty).Contains("script_exit_code=1", StringComparison.Ordinal))
-                                              && messages.Any(m => (m.Text ?? string.Empty).Contains("CS1026", StringComparison.Ordinal)))),
-            Times.Once);
-        _containerServiceMock.Verify(x => x.ExecuteCommandAsync("cat '/workspace/.bendover/agents/tools.md'"), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldRetryEngineer_WhenTurnHasNoChanges()
-    {
-        var goal = "Create feature";
-        var practices = new List<Practice>
-        {
-            new("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"attempt 1\");") }))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"attempt 2\");") }));
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: false, buildPassed: true))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        await _sut.RunAsync(goal, practices);
-
-        _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
-            Times.Exactly(2));
-        _runRecorderMock.Verify(
-            x => x.RecordOutputAsync(
-                "engineer_failure_digest",
-                It.Is<string>(text => text.Contains("empty_diff", StringComparison.Ordinal))),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldRetryEngineer_WhenTurnBuildFails()
-    {
-        var goal = "Create feature";
-        var practices = new List<Practice>
-        {
-            new("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"attempt 1\");") }))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"attempt 2\");") }));
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: false, buildOutput: "Build FAILED"))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        await _sut.RunAsync(goal, practices);
-
-        _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
-            Times.Exactly(2));
-        _runRecorderMock.Verify(
-            x => x.RecordOutputAsync(
-                "engineer_failure_digest",
-                It.Is<string>(text => text.Contains("build_failed", StringComparison.Ordinal))),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldFailAfterMaxTurns_WhenNoTurnPassesAcceptanceGates()
-    {
-        var goal = "Create feature";
-        var practices = new List<Practice>
-        {
-            new("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"attempt\");") }));
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: false, buildPassed: true));
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123"));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync(goal, practices));
-
-        Assert.Contains("failed after 4 turns", ex.Message, StringComparison.Ordinal);
-        _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
-            Times.Exactly(4));
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldStreamCompactTranscript_WhenEnabled()
-    {
-        // Arrange
-        var goal = "Create feature";
-        var practices = new List<Practice>
-        {
-            new Practice("codebase_overview", AgentRole.Architect, "Architecture", "Repo overview.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "codebase_overview" });
-
-        _engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"bad\";") }))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"good\");") }));
-
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 1, hasChanges: false, buildPassed: false, scriptOutput: "error", buildOutput: "build fail"))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext(
-                "/out",
-                Capture: true,
-                RunId: "run-1",
-                BundleId: "bundle-123",
-                StreamTranscript: true));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        // Act
-        await _sut.RunAsync(goal, practices);
-
-        // Assert
-        _observerMock.Verify(
-            x => x.OnProgressAsync(It.Is<string>(msg =>
-                msg.Contains("[transcript][prompt] phase=engineer", StringComparison.Ordinal))),
-            Times.AtLeastOnce);
-        _observerMock.Verify(
-            x => x.OnProgressAsync(It.Is<string>(msg =>
-                msg.Contains("[transcript][output] phase=engineer", StringComparison.Ordinal))),
-            Times.AtLeastOnce);
-        _observerMock.Verify(
-            x => x.OnProgressAsync(It.Is<string>(msg =>
-                msg.Contains("[transcript][failure] phase=engineer_failure_digest", StringComparison.Ordinal))),
-            Times.AtLeastOnce);
-        _observerMock.Verify(
-            x => x.OnProgressAsync(It.Is<string>(msg =>
-                msg.Contains("[transcript][audit] phase=engineer", StringComparison.Ordinal)
-                && msg.Contains("practice=codebase_overview", StringComparison.Ordinal)
-                && msg.Contains("delivered=yes", StringComparison.Ordinal))),
-            Times.AtLeastOnce);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldApplySandboxPatchToSource_WhenEnabled()
-    {
-        // Arrange
-        var goal = "Apply patch";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"ok\");") }));
-        _reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Looks good") }));
-
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+line", string.Empty, "diff --git a/a.txt b/a.txt\n+line"));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "build ok", string.Empty, "build ok"));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet test"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "test ok", string.Empty, "test ok"));
-
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123", ApplySandboxPatchToSource: true));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-        _gitRunnerMock.Setup(x => x.RunAsync("apply --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync(string.Empty);
-
-        // Act
-        await _sut.RunAsync(goal, practices);
-
-        // Assert
-        _gitRunnerMock.Verify(
-            x => x.RunAsync(
-                "apply --whitespace=nowarn -",
-                It.IsAny<string?>(),
-                It.Is<string>(stdin => stdin.Contains("diff --git a/a.txt b/a.txt", StringComparison.Ordinal))),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task RunAsync_ShouldNotApplySandboxPatchToSource_WhenDisabled()
-    {
-        // Arrange
-        var goal = "No patch apply";
-        var practices = new List<Practice>
-        {
-            new Practice("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
-        };
-
-        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>()))
-            .ReturnsAsync(new[] { "tdd_spirit" });
-        _architectClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Plan content") }));
-        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Console.WriteLine(\"ok\");") }));
-        _reviewerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "Looks good") }));
-
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateObservation(scriptExitCode: 0, hasChanges: true, buildPassed: true));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+line", string.Empty, "diff --git a/a.txt b/a.txt\n+line"));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "build ok", string.Empty, "build ok"));
-        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet test"))
-            .ReturnsAsync(new SandboxExecutionResult(0, "test ok", string.Empty, "test ok"));
-
-        _runContextAccessorMock.Setup(x => x.Current)
-            .Returns(new PromptOptRunContext("/out", Capture: true, RunId: "run-1", BundleId: "bundle-123", ApplySandboxPatchToSource: false));
-        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
-            .ReturnsAsync("abc123");
-
-        // Act
-        await _sut.RunAsync(goal, practices);
-
-        // Assert
-        _gitRunnerMock.Verify(
-            x => x.RunAsync("apply --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()),
             Times.Never);
     }
 
-    private static AgenticTurnObservation CreateObservation(
-        int scriptExitCode,
-        bool hasChanges,
-        bool buildPassed,
-        string scriptOutput = "ok",
-        string diffOutput = "diff --git a/a.txt b/a.txt\n+line",
-        string changedFilesOutput = "a.txt",
-        string buildOutput = "build ok")
+    private void SetupRunContext(bool applySandboxPatchToSource = false)
     {
-        var normalizedDiffOutput = hasChanges ? diffOutput : string.Empty;
-        var normalizedChangedFilesOutput = hasChanges ? changedFilesOutput : string.Empty;
-        var buildExitCode = buildPassed ? 0 : 1;
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(
+                OutDir: "/out",
+                Capture: true,
+                RunId: "run-1",
+                BundleId: "bundle-123",
+                ApplySandboxPatchToSource: applySandboxPatchToSource));
+    }
 
+    private void SetupLeadSelection(string goal)
+    {
+        _leadAgentMock.Setup(x => x.AnalyzeTaskAsync(goal, It.IsAny<IReadOnlyCollection<Practice>>(), It.IsAny<string?>()))
+            .ReturnsAsync(new[] { "tdd_spirit" });
+    }
+
+    private void SetupEngineerSteps()
+    {
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.File.Write(\"a.txt\", \"x\");") }));
+    }
+
+    private static List<Practice> CreatePractices()
+    {
+        return new List<Practice>
+        {
+            new("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
+        };
+    }
+
+    private static AgenticTurnObservation CreateMutationObservation(
+        string diffOutput,
+        bool hasChanges = true,
+        string changedFilesOutput = "a.txt")
+    {
         return new AgenticTurnObservation(
-            ScriptExecution: new SandboxExecutionResult(scriptExitCode, scriptOutput, string.Empty, scriptOutput),
-            DiffExecution: new SandboxExecutionResult(0, normalizedDiffOutput, string.Empty, normalizedDiffOutput),
-            ChangedFilesExecution: new SandboxExecutionResult(0, normalizedChangedFilesOutput, string.Empty, normalizedChangedFilesOutput),
-            BuildExecution: new SandboxExecutionResult(buildExitCode, buildOutput, string.Empty, buildOutput),
-            ChangedFiles: normalizedChangedFilesOutput
+            ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+            DiffExecution: new SandboxExecutionResult(0, diffOutput, string.Empty, diffOutput),
+            ChangedFilesExecution: new SandboxExecutionResult(0, changedFilesOutput, string.Empty, changedFilesOutput),
+            BuildExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
+            ChangedFiles: changedFilesOutput
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             HasChanges: hasChanges,
-            BuildPassed: buildPassed);
+            BuildPassed: false,
+            ActionKind: "mutation_write",
+            IsMutationAction: true,
+            IsVerificationAction: false);
+    }
+
+    private static AgenticTurnObservation CreateVerificationObservation(bool buildPassed, bool hasChanges)
+    {
+        var buildExitCode = buildPassed ? 0 : 1;
+        return new AgenticTurnObservation(
+            ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+            DiffExecution: new SandboxExecutionResult(0, hasChanges ? AcceptedPatch : string.Empty, string.Empty, hasChanges ? AcceptedPatch : string.Empty),
+            ChangedFilesExecution: new SandboxExecutionResult(0, hasChanges ? "a.txt" : string.Empty, string.Empty, hasChanges ? "a.txt" : string.Empty),
+            BuildExecution: new SandboxExecutionResult(buildExitCode, buildPassed ? "verification ok" : "verification failed", string.Empty, buildPassed ? "verification ok" : "verification failed"),
+            ChangedFiles: hasChanges ? new[] { "a.txt" } : Array.Empty<string>(),
+            HasChanges: hasChanges,
+            BuildPassed: buildPassed,
+            ActionKind: "verification_build",
+            ActionCommand: "dotnet build Bendover.sln",
+            IsMutationAction: false,
+            IsVerificationAction: true);
+    }
+
+    private static AgenticTurnObservation CreateUnknownObservation()
+    {
+        return new AgenticTurnObservation(
+            ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+            DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+            ChangedFilesExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+            BuildExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
+            ChangedFiles: Array.Empty<string>(),
+            HasChanges: false,
+            BuildPassed: false,
+            ActionKind: "unknown",
+            IsMutationAction: false,
+            IsVerificationAction: false);
     }
 }
