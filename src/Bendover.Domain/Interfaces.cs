@@ -8,6 +8,8 @@ public interface IContainerService
     Task StartContainerAsync(SandboxExecutionSettings settings);
     Task<SandboxExecutionResult> ExecuteScriptBodyAsync(string bodyContent);
     Task<SandboxExecutionResult> ExecuteCommandAsync(string command);
+    Task<SandboxExecutionResult> ResetWorkspaceAsync(string baseCommit, bool cleanWorkspace = true);
+    Task<SandboxExecutionResult> ApplyPatchAsync(string patchContent, bool checkOnly = false);
     Task StopContainerAsync();
 }
 
@@ -32,6 +34,7 @@ public interface IFileSystem
     void Write(string path, string content);
     string Read(string path);
     bool Exists(string path);
+    void Delete(string path);
 }
 
 public interface IGit
