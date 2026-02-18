@@ -310,6 +310,8 @@ public class DockerContainerService : IContainerService
                 "mutation_delete" => AgenticStepActionKind.MutationDelete,
                 "verification_build" => AgenticStepActionKind.VerificationBuild,
                 "verification_test" => AgenticStepActionKind.VerificationTest,
+                "discovery_shell" => AgenticStepActionKind.DiscoveryShell,
+                "complete" => AgenticStepActionKind.Complete,
                 _ => AgenticStepActionKind.Unknown
             };
 

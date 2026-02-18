@@ -21,7 +21,9 @@ public enum AgenticStepActionKind
     MutationWrite,
     MutationDelete,
     VerificationBuild,
-    VerificationTest
+    VerificationTest,
+    DiscoveryShell,
+    Complete
 }
 
 public sealed record AgenticStepAction(
@@ -34,6 +36,9 @@ public sealed record AgenticStepAction(
     public bool IsVerificationAction =>
         Kind is AgenticStepActionKind.VerificationBuild or AgenticStepActionKind.VerificationTest;
 
+    public bool IsCompletionAction =>
+        Kind == AgenticStepActionKind.Complete;
+
     public string KindToken =>
         Kind switch
         {
@@ -41,6 +46,8 @@ public sealed record AgenticStepAction(
             AgenticStepActionKind.MutationDelete => "mutation_delete",
             AgenticStepActionKind.VerificationBuild => "verification_build",
             AgenticStepActionKind.VerificationTest => "verification_test",
+            AgenticStepActionKind.DiscoveryShell => "discovery_shell",
+            AgenticStepActionKind.Complete => "complete",
             _ => "unknown"
         };
 }

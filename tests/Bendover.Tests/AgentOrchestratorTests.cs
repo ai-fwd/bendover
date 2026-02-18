@@ -101,7 +101,7 @@ public class AgentOrchestratorTests
         SetupEngineerSteps();
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
-            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
 
@@ -133,7 +133,7 @@ public class AgentOrchestratorTests
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
             .ReturnsAsync(CreateMutationObservation(string.Empty, hasChanges: false, changedFilesOutput: string.Empty))
-            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
 
@@ -154,7 +154,7 @@ public class AgentOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_ShouldTreatVerificationWithoutAcceptedPatchAsFailure()
+    public async Task RunAsync_ShouldAllowVerificationWithoutAcceptedPatch_AndContinue()
     {
         SetupRunContext();
         SetupLeadSelection("Build feature");
@@ -162,7 +162,76 @@ public class AgentOrchestratorTests
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
             .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: false))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
-            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync("engineer_step_failure_1", It.IsAny<string>()),
+            Times.Never);
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldCompleteOnDone_WhenAcceptedPatchExistsEvenWithoutNewDiff()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: false))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: false));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Exactly(3));
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync("engineer_step_failure_3", It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldAllowDiscoveryStep_WithoutRecordingFailure()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateDiscoveryObservation())
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync("engineer_step_failure_1", It.IsAny<string>()),
+            Times.Never);
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldTreatCompletionWithoutAcceptedPatchAsFailure()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: false))
+            .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
 
@@ -171,7 +240,7 @@ public class AgentOrchestratorTests
         _runRecorderMock.Verify(
             x => x.RecordOutputAsync(
                 "engineer_step_failure_1",
-                It.Is<string>(text => text.Contains("verification_requires_accepted_patch", StringComparison.Ordinal))),
+                It.Is<string>(text => text.Contains("completion_requires_accepted_patch", StringComparison.Ordinal))),
             Times.Once);
         _agenticTurnServiceMock.Verify(
             x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
@@ -179,25 +248,28 @@ public class AgentOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_ShouldCompleteOnVerification_WhenAcceptedPatchExistsEvenWithoutNewDiff()
+    public async Task RunAsync_ShouldTreatCompletionBuildFailureAsFailure()
     {
         SetupRunContext();
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
-            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: false));
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: false, hasChanges: true))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
 
         await _sut.RunAsync("Build feature", CreatePractices());
 
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync(
+                "engineer_step_failure_2",
+                It.Is<string>(text => text.Contains("completion_build_failed", StringComparison.Ordinal))),
+            Times.Once);
         _agenticTurnServiceMock.Verify(
             x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
-            Times.Exactly(2));
-        _runRecorderMock.Verify(
-            x => x.RecordOutputAsync("engineer_step_failure_2", It.IsAny<string>()),
-            Times.Never);
+            Times.Exactly(3));
     }
 
     [Fact]
@@ -228,7 +300,7 @@ public class AgentOrchestratorTests
         SetupEngineerSteps();
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
-            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
         _gitRunnerMock.Setup(x => x.RunAsync("apply --check --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -250,7 +322,7 @@ public class AgentOrchestratorTests
         SetupEngineerSteps();
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
-            .ReturnsAsync(CreateVerificationObservation(buildPassed: true, hasChanges: true));
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
         _gitRunnerMock.Setup(x => x.RunAsync("apply --check --whitespace=nowarn -", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -374,6 +446,33 @@ public class AgentOrchestratorTests
             HasChanges: hasChanges,
             BuildPassed: buildPassed,
             Action: new AgenticStepAction(AgenticStepActionKind.VerificationBuild, "dotnet build Bendover.sln"));
+    }
+
+    private static AgenticTurnObservation CreateCompleteObservation(bool buildPassed, bool hasChanges)
+    {
+        var buildExitCode = buildPassed ? 0 : 1;
+        return new AgenticTurnObservation(
+            ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+            DiffExecution: new SandboxExecutionResult(0, hasChanges ? AcceptedPatch : string.Empty, string.Empty, hasChanges ? AcceptedPatch : string.Empty),
+            ChangedFilesExecution: new SandboxExecutionResult(0, hasChanges ? "a.txt" : string.Empty, string.Empty, hasChanges ? "a.txt" : string.Empty),
+            BuildExecution: new SandboxExecutionResult(buildExitCode, buildPassed ? "build ok" : "build failed", string.Empty, buildPassed ? "build ok" : "build failed"),
+            ChangedFiles: hasChanges ? new[] { "a.txt" } : Array.Empty<string>(),
+            HasChanges: hasChanges,
+            BuildPassed: buildPassed,
+            Action: new AgenticStepAction(AgenticStepActionKind.Complete, "sdk.Signal.Done"));
+    }
+
+    private static AgenticTurnObservation CreateDiscoveryObservation()
+    {
+        return new AgenticTurnObservation(
+            ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+            DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+            ChangedFilesExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+            BuildExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
+            ChangedFiles: Array.Empty<string>(),
+            HasChanges: false,
+            BuildPassed: false,
+            Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, "ls -la"));
     }
 
     private static AgenticTurnObservation CreateUnknownObservation()

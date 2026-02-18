@@ -21,12 +21,13 @@ public interface IAgentOrchestrator
 public interface IBendoverSDK
 {
     // The Actor codes against this contract.
-    // In the real implementation (SDK project), this will expose File, Git, Shell capabilities.
+    // In the real implementation (SDK project), this will expose File, Git, Shell, Signal capabilities.
     // For the Domain, we define the contracts that the Actor *assumes* exist.
     
     IFileSystem File { get; }
     IGit Git { get; }
     IShell Shell { get; }
+    ISignal Signal { get; }
 }
 
 public interface IFileSystem
@@ -47,4 +48,9 @@ public interface IGit
 public interface IShell
 {
     string Execute(string command);
+}
+
+public interface ISignal
+{
+    void Done();
 }

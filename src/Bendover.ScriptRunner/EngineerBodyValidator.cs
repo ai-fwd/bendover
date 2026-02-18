@@ -134,9 +134,14 @@ internal static class EngineerBodyValidator
             violations.Add("contains multiple verification actions; exactly one verification action is allowed per step");
         }
 
+        if (actionableStepCount > 1)
+        {
+            violations.Add("contains multiple actionable steps; exactly one action is allowed per step");
+        }
+
         if (actionableStepCount == 0)
         {
-            violations.Add("must include exactly one actionable step (one mutation or one verification action)");
+            violations.Add("must include exactly one actionable step: sdk.File.Write(...), sdk.File.Delete(...), sdk.Shell.Execute(\"dotnet build ...\"), sdk.Shell.Execute(\"dotnet test ...\"), sdk.Shell.Execute(\"<read-only command>\"), sdk.Done(), or sdk.Signal.Done()");
         }
 
         var loopNodes = root
@@ -191,6 +196,25 @@ internal static class EngineerBodyValidator
                 Violation: null);
         }
 
+        if (expressionText.Equals("sdk.Signal.Done", StringComparison.OrdinalIgnoreCase)
+            || expressionText.Equals("sdk.Done", StringComparison.OrdinalIgnoreCase))
+        {
+            if (invocation.ArgumentList.Arguments.Count != 0)
+            {
+                return new InvocationInfo(
+                    IsMutation: false,
+                    IsVerification: false,
+                    Action: null,
+                    Violation: "sdk.Done()/sdk.Signal.Done() does not accept arguments");
+            }
+
+            return new InvocationInfo(
+                IsMutation: false,
+                IsVerification: false,
+                Action: new AgenticStepAction(AgenticStepActionKind.Complete, expressionText.Equals("sdk.Done", StringComparison.OrdinalIgnoreCase) ? "sdk.Done" : "sdk.Signal.Done"),
+                Violation: null);
+        }
+
         if (expressionText.StartsWith("sdk.Git.", StringComparison.OrdinalIgnoreCase))
         {
             return new InvocationInfo(
@@ -233,7 +257,11 @@ internal static class EngineerBodyValidator
                 Violation: null);
         }
 
-        return new InvocationInfo(IsMutation: false, IsVerification: false, Action: null, Violation: null);
+        return new InvocationInfo(
+            IsMutation: false,
+            IsVerification: false,
+            Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, command),
+            Violation: null);
     }
 
     private static bool TryGetShellCommand(InvocationExpressionSyntax invocation, out string command)

@@ -8,14 +8,13 @@ public class ScriptRunnerValidationTests
     private static bool _scriptRunnerBuilt;
 
     [Fact]
-    public async Task ScriptBody_WithSingleWriteAndReadOnlySteps_ShouldSucceed()
+    public async Task ScriptBody_WithSingleWriteAndFileInspection_ShouldSucceed()
     {
         var repoRoot = FindRepoRoot();
         var targetFileName = $"tmp-script-runner-write-{Guid.NewGuid():N}.txt";
         var targetPath = Path.Combine(repoRoot, targetFileName);
         var body = $"""
 var target = "{targetFileName}";
-var listing = sdk.Shell.Execute("ls");
 var exists = sdk.File.Exists(target);
 sdk.File.Write(target, "ok");
 """;
@@ -123,6 +122,70 @@ sdk.Run("dotnet build --help");
         var result = await RunScriptAsync(body);
 
         Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithDiscoveryOnlyShellStep_ShouldSucceed()
+    {
+        var body = """
+sdk.Shell.Execute("ls -la");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithDoneSignalStep_ShouldSucceed()
+    {
+        var body = """
+sdk.Signal.Done();
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithDoneShortcutStep_ShouldSucceed()
+    {
+        var body = """
+sdk.Done();
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithDiscoveryAndDone_ShouldBeRejected()
+    {
+        var body = """
+sdk.Shell.Execute("ls -la");
+sdk.Signal.Done();
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("multiple actionable steps", result.CombinedOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithWriteAndDone_ShouldBeRejected()
+    {
+        var body = """
+sdk.File.Write("a.txt", "a");
+sdk.Signal.Done();
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("multiple actionable steps", result.CombinedOutput, StringComparison.Ordinal);
     }
 
     private static async Task<ProcessResult> RunScriptAsync(string body)

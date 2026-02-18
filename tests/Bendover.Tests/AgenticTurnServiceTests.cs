@@ -125,4 +125,65 @@ public class AgenticTurnServiceTests
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Once);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Never);
     }
+
+    [Fact]
+    public async Task ExecuteAgenticTurnAsync_ShouldSkipVerificationCommand_ForDiscoveryAction()
+    {
+        var settings = new AgenticTurnSettings();
+        var containerServiceMock = new Mock<IContainerService>(MockBehavior.Strict);
+        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new ScriptExecutionResult(
+                Execution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, "ls -la")));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
+
+        var sut = new AgenticTurnService(containerServiceMock.Object);
+
+        var observation = await sut.ExecuteAgenticTurnAsync("sdk.Shell.Execute(\"ls -la\");", settings);
+
+        Assert.Equal("discovery_shell", observation.Action.KindToken);
+        Assert.False(observation.Action.IsMutationAction);
+        Assert.False(observation.Action.IsVerificationAction);
+        Assert.False(observation.Action.IsCompletionAction);
+        Assert.False(observation.BuildPassed);
+        Assert.Equal(-1, observation.BuildExecution.ExitCode);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Never);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAgenticTurnAsync_ShouldRunBuild_ForCompleteAction()
+    {
+        var settings = new AgenticTurnSettings(
+            DiffCommand: "diff-cmd",
+            ChangedFilesCommand: "changed-cmd",
+            BuildCommand: "build-cmd");
+        var containerServiceMock = new Mock<IContainerService>(MockBehavior.Strict);
+        containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
+            .ReturnsAsync(new ScriptExecutionResult(
+                Execution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                Action: new AgenticStepAction(AgenticStepActionKind.Complete, "sdk.Signal.Done")));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "a.txt", string.Empty, "a.txt"));
+        containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.BuildCommand))
+            .ReturnsAsync(new SandboxExecutionResult(0, "build ok", string.Empty, "build ok"));
+
+        var sut = new AgenticTurnService(containerServiceMock.Object);
+
+        var observation = await sut.ExecuteAgenticTurnAsync("sdk.Signal.Done();", settings);
+
+        Assert.Equal("complete", observation.Action.KindToken);
+        Assert.True(observation.Action.IsCompletionAction);
+        Assert.False(observation.Action.IsMutationAction);
+        Assert.False(observation.Action.IsVerificationAction);
+        Assert.True(observation.BuildPassed);
+        Assert.Equal(0, observation.BuildExecution.ExitCode);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Once);
+        containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Never);
+    }
 }
