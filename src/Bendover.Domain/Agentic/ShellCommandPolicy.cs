@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using Bendover.Domain.Entities;
 
@@ -5,7 +6,6 @@ namespace Bendover.Domain.Agentic;
 
 public static class ShellCommandPolicy
 {
-    private static readonly Regex SegmentSplitRegex = new(@"\|\||&&|\||;", RegexOptions.Compiled);
     private static readonly Regex VerificationCommandRegex = new(
         @"^\s*(?:cd\s+\S+\s*&&\s*)?dotnet\s+(build|test)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -21,6 +21,7 @@ public static class ShellCommandPolicy
         "head ",
         "tail ",
         "wc ",
+        "sort ",
         "pwd",
         "git status",
         "git diff",
@@ -111,11 +112,7 @@ public static class ShellCommandPolicy
             return false;
         }
 
-        var segments = SegmentSplitRegex
-            .Split(command)
-            .Select(segment => segment.Trim())
-            .Where(segment => !string.IsNullOrWhiteSpace(segment))
-            .ToArray();
+        var segments = SplitShellSegments(command);
 
         if (segments.Length == 0)
         {
@@ -130,7 +127,7 @@ public static class ShellCommandPolicy
             }
 
             var allowed = ReadOnlyShellPrefixes
-                .Any(prefix => segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                .Any(prefix => MatchesReadOnlyPrefix(segment, prefix));
             if (!allowed)
             {
                 return false;
@@ -162,5 +159,115 @@ public static class ShellCommandPolicy
 
         violationReason = $"shell command '{command}' is not in the read/verification allowlist";
         return false;
+    }
+
+    private static bool MatchesReadOnlyPrefix(string segment, string prefix)
+    {
+        if (segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Prefixes ending with a space represent command-token prefixes like "rg ".
+        // Accept exact token forms too (for example "rg" without arguments).
+        if (prefix.EndsWith(' ')
+            && segment.Equals(prefix.TrimEnd(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string[] SplitShellSegments(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return Array.Empty<string>();
+        }
+
+        var segments = new List<string>();
+        var builder = new StringBuilder();
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var escaping = false;
+
+        void Flush()
+        {
+            var segment = builder.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(segment))
+            {
+                segments.Add(segment);
+            }
+
+            builder.Clear();
+        }
+
+        for (var index = 0; index < command.Length; index++)
+        {
+            var ch = command[index];
+
+            if (escaping)
+            {
+                builder.Append(ch);
+                escaping = false;
+                continue;
+            }
+
+            if (ch == '\\' && !inSingleQuote)
+            {
+                builder.Append(ch);
+                escaping = true;
+                continue;
+            }
+
+            if (ch == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                builder.Append(ch);
+                continue;
+            }
+
+            if (ch == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                builder.Append(ch);
+                continue;
+            }
+
+            if (!inSingleQuote && !inDoubleQuote)
+            {
+                if (ch == ';')
+                {
+                    Flush();
+                    continue;
+                }
+
+                if (ch == '|' && index + 1 < command.Length && command[index + 1] == '|')
+                {
+                    Flush();
+                    index++;
+                    continue;
+                }
+
+                if (ch == '&' && index + 1 < command.Length && command[index + 1] == '&')
+                {
+                    Flush();
+                    index++;
+                    continue;
+                }
+
+                if (ch == '|')
+                {
+                    Flush();
+                    continue;
+                }
+            }
+
+            builder.Append(ch);
+        }
+
+        Flush();
+        return segments.ToArray();
     }
 }
