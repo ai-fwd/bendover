@@ -167,6 +167,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 var acceptedPatch = string.Empty;
                 string? lastFailureDigest = null;
+                string? lastObservationDigest = null;
                 var completed = false;
                 var turnSettings = new AgenticTurnSettings();
 
@@ -203,7 +204,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                         engineerPromptTemplate,
                         practicesContext,
                         plan ?? string.Empty,
-                        lastFailureDigest);
+                        lastFailureDigest,
+                        lastObservationDigest);
                     var engineerPhase = BuildStepPhase("engineer_step", stepNumber);
                     await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
                     await EmitTranscriptPromptAsync(
@@ -237,6 +239,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                         var serializedObservation = JsonSerializer.Serialize(turnObservation);
                         await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
                         await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
+                        lastObservationDigest = BuildTurnObservationDigest(turnObservation);
 
                         if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
@@ -351,7 +354,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         string engineerPromptTemplate,
         string practicesContext,
         string plan,
-        string? failureDigest)
+        string? failureDigest,
+        string? observationDigest)
     {
         var messages = new List<ChatMessage>
         {
@@ -367,6 +371,14 @@ public class AgentOrchestrator : IAgentOrchestrator
                 "Previous step failed. Use this digest to fix the body for the next single-step response.\n" +
                 $"Failure digest:\n{failureDigest}\n\n" +
                 "Reminder: return only body statements."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(observationDigest))
+        {
+            messages.Add(new ChatMessage(ChatRole.User,
+                "Previous step observation (latest):\n" +
+                $"{observationDigest}\n\n" +
+                "Use this concrete output to decide the next single step."));
         }
 
         return messages;
@@ -520,6 +532,25 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         return $"failed_checks={gateSummary}\n" +
                $"action_kind={observation.Action.KindToken}\n" +
+               $"action_command={observation.Action.Command ?? "(none)"}\n" +
+               $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
+               $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +
+               $"changed_files={changedFiles}\n" +
+               $"script_output_tail:\n{scriptTail}\n\n" +
+               $"diff_output_tail:\n{diffTail}\n\n" +
+               $"verification_output_tail:\n{verificationTail}";
+    }
+
+    private static string BuildTurnObservationDigest(AgenticTurnObservation observation)
+    {
+        var changedFiles = observation.ChangedFiles.Length == 0
+            ? "(none)"
+            : string.Join(", ", observation.ChangedFiles);
+        var scriptTail = GetLastLines(observation.ScriptExecution.CombinedOutput, 40);
+        var diffTail = GetLastLines(observation.DiffExecution.CombinedOutput, 20);
+        var verificationTail = GetLastLines(observation.BuildExecution.CombinedOutput, 20);
+
+        return $"action_kind={observation.Action.KindToken}\n" +
                $"action_command={observation.Action.Command ?? "(none)"}\n" +
                $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
                $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +

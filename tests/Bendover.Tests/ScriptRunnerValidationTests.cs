@@ -134,6 +134,7 @@ sdk.Shell.Execute("ls -la");
         var result = await RunScriptAsync(body);
 
         Assert.Equal(0, result.ExitCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.Stdout));
     }
 
     [Fact]
