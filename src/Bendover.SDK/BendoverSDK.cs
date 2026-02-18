@@ -127,9 +127,18 @@ public class ShellSystem : IShell
                 $"Shell command failed (exit code {process.ExitCode}): {command}\n{stderr}\n{stdout}");
         }
 
-        return string.IsNullOrWhiteSpace(stderr)
+        var output = string.IsNullOrWhiteSpace(stderr)
             ? stdout
             : $"{stdout}{stderr}";
+
+        // Auto-surface read-only discovery output without requiring Console.WriteLine wrappers.
+        if (!string.IsNullOrEmpty(output)
+            && ShellCommandPolicy.IsReadOnlyCommand(command))
+        {
+            Console.Out.Write(output);
+        }
+
+        return output;
     }
 }
 

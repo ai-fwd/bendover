@@ -204,9 +204,13 @@ public class AgentOrchestratorTests
     {
         SetupRunContext();
         SetupLeadSelection("Build feature");
-        SetupEngineerSteps();
+        var capturedEngineerMessages = new List<IReadOnlyList<ChatMessage>>();
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
+                capturedEngineerMessages.Add(messages.ToList()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.File.Write(\"a.txt\", \"x\");") }));
         _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
-            .ReturnsAsync(CreateDiscoveryObservation())
+            .ReturnsAsync(CreateDiscoveryObservation("Bendover.sln\nREADME.md\n"))
             .ReturnsAsync(CreateMutationObservation(AcceptedPatch))
             .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -220,6 +224,15 @@ public class AgentOrchestratorTests
         _agenticTurnServiceMock.Verify(
             x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
             Times.Exactly(3));
+        Assert.True(capturedEngineerMessages.Count >= 2);
+        var secondStepUserText = string.Join(
+            "\n",
+            capturedEngineerMessages[1]
+                .Where(message => string.Equals(message.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
+                .Select(message => message.Text ?? string.Empty));
+        Assert.Contains("Previous step observation (latest)", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("action_kind=discovery_shell", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Bendover.sln", secondStepUserText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -462,10 +475,10 @@ public class AgentOrchestratorTests
             Action: new AgenticStepAction(AgenticStepActionKind.Complete, "sdk.Signal.Done"));
     }
 
-    private static AgenticTurnObservation CreateDiscoveryObservation()
+    private static AgenticTurnObservation CreateDiscoveryObservation(string scriptOutput = "")
     {
         return new AgenticTurnObservation(
-            ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+            ScriptExecution: new SandboxExecutionResult(0, scriptOutput, string.Empty, scriptOutput),
             DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
             ChangedFilesExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
             BuildExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
