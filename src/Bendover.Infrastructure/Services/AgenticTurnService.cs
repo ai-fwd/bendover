@@ -46,6 +46,10 @@ public class AgenticTurnService : IAgenticTurnService
         {
             buildExecution = await _containerService.ExecuteCommandAsync(turnSettings.TestCommand);
         }
+        else if (action.Kind == AgenticStepActionKind.Complete)
+        {
+            buildExecution = await _containerService.ExecuteCommandAsync(turnSettings.BuildCommand);
+        }
         else
         {
             buildExecution = SkippedResult("verification command not requested by this step");
@@ -53,7 +57,7 @@ public class AgenticTurnService : IAgenticTurnService
 
         var changedFiles = ParseChangedFiles(changedFilesExecution.CombinedOutput);
         var hasChanges = !string.IsNullOrWhiteSpace(diffExecution.CombinedOutput);
-        var buildPassed = action.IsVerificationAction && buildExecution.ExitCode == 0;
+        var buildPassed = (action.IsVerificationAction || action.IsCompletionAction) && buildExecution.ExitCode == 0;
 
         return new AgenticTurnObservation(
             ScriptExecution: scriptExecution,

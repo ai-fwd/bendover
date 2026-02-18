@@ -9,6 +9,7 @@ public class BendoverSDK : IBendoverSDK
     public IFileSystem File { get; } = new FileSystem();
     public IGit Git { get; } = new GitSystem();
     public IShell Shell { get; } = new ShellSystem();
+    public ISignal Signal { get; } = new SignalSystem();
 }
 
 public class FileSystem : IFileSystem
@@ -129,5 +130,13 @@ public class ShellSystem : IShell
         return string.IsNullOrWhiteSpace(stderr)
             ? stdout
             : $"{stdout}{stderr}";
+    }
+}
+
+public class SignalSystem : ISignal
+{
+    public void Done()
+    {
+        // Marker-only API used by ScriptRunner validation/metadata classification.
     }
 }

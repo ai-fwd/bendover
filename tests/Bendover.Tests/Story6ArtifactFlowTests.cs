@@ -72,7 +72,7 @@ public class Story6ArtifactFlowTests
                     ChangedFiles: new[] { "a.txt" },
                     HasChanges: true,
                     BuildPassed: true,
-                    Action: new AgenticStepAction(AgenticStepActionKind.VerificationBuild, "dotnet build Bendover.sln")));
+                    Action: new AgenticStepAction(AgenticStepActionKind.Complete, "sdk.Signal.Done")));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && dotnet build Bendover.sln"))

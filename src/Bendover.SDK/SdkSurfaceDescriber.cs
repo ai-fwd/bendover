@@ -87,6 +87,7 @@ public static class SdkSurfaceDescriber
             "File" => "_Use file tools for read/write/exists checks in the repository workspace._",
             "Git" => "_Use git tools for repository operations._",
             "Shell" => "_Use shell tools for command execution and command output capture._",
+            "Signal" => "_Use lifecycle signal tools to declare explicit completion intent._",
             _ => "_Use this SDK surface as documented below._"
         };
     }

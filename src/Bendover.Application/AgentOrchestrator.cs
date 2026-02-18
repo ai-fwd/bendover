@@ -267,15 +267,6 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                         if (turnObservation.Action.IsVerificationAction)
                         {
-                            if (string.IsNullOrWhiteSpace(acceptedPatch))
-                            {
-                                lastFailureDigest = BuildTurnFailureDigest(
-                                    turnObservation,
-                                    new[] { "verification_requires_accepted_patch" });
-                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
-                                continue;
-                            }
-
                             if (!turnObservation.BuildPassed)
                             {
                                 lastFailureDigest = BuildTurnFailureDigest(
@@ -286,8 +277,38 @@ public class AgentOrchestrator : IAgentOrchestrator
                             }
 
                             lastFailureDigest = null;
+                            continue;
+                        }
+
+                        if (turnObservation.Action.IsCompletionAction)
+                        {
+                            if (string.IsNullOrWhiteSpace(acceptedPatch))
+                            {
+                                lastFailureDigest = BuildTurnFailureDigest(
+                                    turnObservation,
+                                    new[] { "completion_requires_accepted_patch" });
+                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                                continue;
+                            }
+
+                            if (!turnObservation.BuildPassed)
+                            {
+                                lastFailureDigest = BuildTurnFailureDigest(
+                                    turnObservation,
+                                    new[] { "completion_build_failed" });
+                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                                continue;
+                            }
+
+                            lastFailureDigest = null;
                             completed = true;
                             break;
+                        }
+
+                        if (turnObservation.Action.Kind == AgenticStepActionKind.DiscoveryShell)
+                        {
+                            lastFailureDigest = null;
+                            continue;
                         }
 
                         lastFailureDigest = BuildTurnFailureDigest(

@@ -11,14 +11,27 @@ public class ScriptRunnerProtocolTests
     [Fact]
     public async Task ScriptRunner_WritesMutationActionMetadata_ToResultFile()
     {
-        var body = """
-sdk.File.Write("a.txt", "x");
+        var targetFile = $"tmp-script-runner-protocol-{Guid.NewGuid():N}.txt";
+        var repoRoot = FindRepoRoot();
+        var targetPath = Path.Combine(repoRoot, targetFile);
+        var body = $"""
+sdk.File.Write("{targetFile}", "x");
 """;
 
-        var (_, action) = await RunScriptWithResultAsync(body);
+        try
+        {
+            var (_, action) = await RunScriptWithResultAsync(body);
 
-        Assert.Equal("mutation_write", action.kind);
-        Assert.Equal("sdk.File.Write", action.command);
+            Assert.Equal("mutation_write", action.kind);
+            Assert.Equal("sdk.File.Write", action.command);
+        }
+        finally
+        {
+            if (File.Exists(targetPath))
+            {
+                File.Delete(targetPath);
+            }
+        }
     }
 
     [Fact]
@@ -32,6 +45,45 @@ sdk.Run("dotnet build --help");
 
         Assert.Equal("verification_build", action.kind);
         Assert.Equal("dotnet build --help", action.command);
+    }
+
+    [Fact]
+    public async Task ScriptRunner_WritesDiscoveryMetadata_ToResultFile()
+    {
+        var body = """
+sdk.Shell.Execute("ls -la");
+""";
+
+        var (_, action) = await RunScriptWithResultAsync(body);
+
+        Assert.Equal("discovery_shell", action.kind);
+        Assert.Equal("ls -la", action.command);
+    }
+
+    [Fact]
+    public async Task ScriptRunner_WritesCompleteMetadata_ToResultFile()
+    {
+        var body = """
+sdk.Signal.Done();
+""";
+
+        var (_, action) = await RunScriptWithResultAsync(body);
+
+        Assert.Equal("complete", action.kind);
+        Assert.Equal("sdk.Signal.Done", action.command);
+    }
+
+    [Fact]
+    public async Task ScriptRunner_WritesCompleteMetadata_ForDoneShortcut_ToResultFile()
+    {
+        var body = """
+sdk.Done();
+""";
+
+        var (_, action) = await RunScriptWithResultAsync(body);
+
+        Assert.Equal("complete", action.kind);
+        Assert.Equal("sdk.Done", action.command);
     }
 
     [Fact]
