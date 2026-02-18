@@ -130,20 +130,47 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         lines.Add(string.Empty);
 
         var phaseNames = OrderPhases(_prompts.Keys.Concat(_outputs.Keys));
-        foreach (var phase in phaseNames)
+        for (var phaseIndex = 0; phaseIndex < phaseNames.Count; phaseIndex++)
         {
+            var phase = phaseNames[phaseIndex];
             lines.Add($"### {phase}");
             lines.Add(string.Empty);
 
             if (_prompts.TryGetValue(phase, out var messages))
             {
-                for (var i = 0; i < messages.Count; i++)
+                var previousPromptPhase = FindPreviousPromptPhase(phaseNames, phaseIndex, _prompts);
+                var previousMessages = previousPromptPhase == null
+                    ? null
+                    : _prompts[previousPromptPhase];
+                var promptDelta = BuildPromptDelta(messages, previousMessages);
+
+                if (promptDelta.Messages.Count == 0)
                 {
-                    var message = messages[i];
-                    lines.Add($"#### Prompt Message {i + 1}");
-                    lines.Add($"role: {message.Role.Value}");
+                    if (previousPromptPhase != null)
+                    {
+                        lines.Add($"#### Prompt Delta (vs {previousPromptPhase})");
+                        lines.Add(string.Empty);
+                    }
+
+                    lines.Add("(no new prompt content)");
                     lines.Add(string.Empty);
-                    AppendCodeBlock(lines, message.Text ?? string.Empty);
+                }
+                else
+                {
+                    foreach (var deltaMessage in promptDelta.Messages)
+                    {
+                        var suffixLabel = deltaMessage.IsSuffixDelta ? " (appended)" : string.Empty;
+                        lines.Add($"#### Prompt Message {deltaMessage.MessageNumber}{suffixLabel}");
+                        lines.Add($"role: {deltaMessage.Role}");
+                        lines.Add(string.Empty);
+                        AppendCodeBlock(lines, deltaMessage.Content);
+                        lines.Add(string.Empty);
+                    }
+                }
+
+                if (promptDelta.RemovedMessageCount > 0)
+                {
+                    lines.Add($"(removed prompt messages since previous phase: {promptDelta.RemovedMessageCount})");
                     lines.Add(string.Empty);
                 }
             }
@@ -158,6 +185,84 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         }
 
         return string.Join('\n', lines);
+    }
+
+    private static string? FindPreviousPromptPhase(
+        IReadOnlyList<string> orderedPhases,
+        int currentPhaseIndex,
+        IReadOnlyDictionary<string, List<ChatMessage>> prompts)
+    {
+        for (var i = currentPhaseIndex - 1; i >= 0; i--)
+        {
+            var candidate = orderedPhases[i];
+            if (prompts.ContainsKey(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static PromptDelta BuildPromptDelta(
+        IReadOnlyList<ChatMessage> currentMessages,
+        IReadOnlyList<ChatMessage>? previousMessages)
+    {
+        if (previousMessages == null)
+        {
+            return new PromptDelta(
+                currentMessages.Select((message, i) =>
+                    new PromptDeltaMessage(
+                        MessageNumber: i + 1,
+                        Role: message.Role.Value,
+                        Content: message.Text ?? string.Empty,
+                        IsSuffixDelta: false)).ToList(),
+                RemovedMessageCount: 0);
+        }
+
+        var deltas = new List<PromptDeltaMessage>();
+        for (var i = 0; i < currentMessages.Count; i++)
+        {
+            var current = currentMessages[i];
+            var currentText = current.Text ?? string.Empty;
+            var currentRole = current.Role.Value;
+
+            if (i >= previousMessages.Count)
+            {
+                deltas.Add(new PromptDeltaMessage(i + 1, currentRole, currentText, IsSuffixDelta: false));
+                continue;
+            }
+
+            var previous = previousMessages[i];
+            var previousText = previous.Text ?? string.Empty;
+            var previousRole = previous.Role.Value;
+
+            if (!string.Equals(currentRole, previousRole, StringComparison.OrdinalIgnoreCase))
+            {
+                deltas.Add(new PromptDeltaMessage(i + 1, currentRole, currentText, IsSuffixDelta: false));
+                continue;
+            }
+
+            if (string.Equals(currentText, previousText, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (currentText.StartsWith(previousText, StringComparison.Ordinal) && previousText.Length > 0)
+            {
+                var suffix = currentText[previousText.Length..];
+                deltas.Add(new PromptDeltaMessage(i + 1, currentRole, suffix, IsSuffixDelta: true));
+                continue;
+            }
+
+            deltas.Add(new PromptDeltaMessage(i + 1, currentRole, currentText, IsSuffixDelta: false));
+        }
+
+        var removedMessageCount = previousMessages.Count > currentMessages.Count
+            ? previousMessages.Count - currentMessages.Count
+            : 0;
+
+        return new PromptDelta(deltas, removedMessageCount);
     }
 
     private void AppendPracticeAudit(List<string> lines)
@@ -483,6 +588,9 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         lines.Add(text ?? string.Empty);
         lines.Add("~~~");
     }
+
+    private sealed record PromptDelta(List<PromptDeltaMessage> Messages, int RemovedMessageCount);
+    private sealed record PromptDeltaMessage(int MessageNumber, string Role, string Content, bool IsSuffixDelta);
 
     private async Task WriteJsonAsync(string filename, object data)
     {

@@ -155,6 +155,51 @@ public class PromptOptRunRecorderTests
     }
 
     [Fact]
+    public async Task FinalizeRunAsync_UsesPromptDeltaForRepeatedEngineerStepPrompts()
+    {
+        var outDir = "/runs/out-prompt-delta";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+
+        var step1Messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, "SYSTEM_PROMPT"),
+            new(ChatRole.User, "Plan: Test Goal")
+        };
+        await _sut.RecordPromptAsync("engineer_step_1", step1Messages);
+        await _sut.RecordOutputAsync("engineer_step_1", "step1 output");
+        await _sut.RecordOutputAsync("agentic_step_observation_1", "obs1");
+        await _sut.RecordOutputAsync("engineer_step_failure_1", "failure1");
+
+        var step2Messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, "SYSTEM_PROMPT"),
+            new(ChatRole.User, "Plan: Test Goal"),
+            new(ChatRole.User, "Failure digest")
+        };
+        await _sut.RecordPromptAsync("engineer_step_2", step2Messages);
+        await _sut.RecordOutputAsync("engineer_step_2", "step2 output");
+        await _sut.RecordOutputAsync("agentic_step_observation_2", "obs2");
+        await _sut.RecordOutputAsync("engineer_step_failure_2", "failure2");
+
+        await _sut.FinalizeRunAsync();
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+        var step2Start = transcript.IndexOf("### engineer_step_2", StringComparison.Ordinal);
+        var step2End = transcript.IndexOf("### agentic_step_observation_2", StringComparison.Ordinal);
+        Assert.True(step2Start >= 0);
+        Assert.True(step2End > step2Start);
+
+        var step2Section = transcript.Substring(step2Start, step2End - step2Start);
+        Assert.Contains("#### Prompt Message 3", step2Section);
+        Assert.Contains("Failure digest", step2Section);
+        Assert.DoesNotContain("SYSTEM_PROMPT", step2Section);
+        Assert.DoesNotContain("Plan: Test Goal", step2Section);
+    }
+
+    [Fact]
     public async Task StartRunAsync_CaptureDisabled_DoesNotWriteMeta()
     {
         // Arrange
