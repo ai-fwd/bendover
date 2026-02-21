@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Bendover.Application.Interfaces;
 using Bendover.Domain;
@@ -11,6 +12,8 @@ public class AgentOrchestrator : IAgentOrchestrator
 {
     private const int MaxActionSteps = 24;
     private const int TranscriptPreviewLimit = 320;
+    private const int PromptHistoryDepth = 5;
+    private const int HistoryPreviewLimit = 140;
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
@@ -23,6 +26,11 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IGitRunner _gitRunner;
 
     private readonly IEnumerable<IAgentObserver> _observers;
+
+    private sealed record EngineerStepHistoryEntry(
+        int StepNumber,
+        string ObservationSummary,
+        string? FailureSummary);
 
     public AgentOrchestrator(
         IAgentPromptService agentPromptService,
@@ -175,8 +183,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 BaseCommit: baseCommit));
             try
             {
-                string? lastFailureDigest = null;
-                string? lastObservationDigest = null;
+                string? lastFailureDigestForRunResult = null;
+                var stepHistory = new List<EngineerStepHistoryEntry>();
                 var completed = false;
                 var completionStep = 0;
                 string? completionActionKind = null;
@@ -193,8 +201,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                         engineerPromptTemplate,
                         practicesContext,
                         plan ?? string.Empty,
-                        lastFailureDigest,
-                        lastObservationDigest);
+                        stepHistory);
                     var engineerPhase = BuildStepPhase("engineer_step", stepNumber);
                     await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
                     await EmitTranscriptPromptAsync(
@@ -228,7 +235,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                         var serializedObservation = JsonSerializer.Serialize(turnObservation);
                         await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
                         await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
-                        lastObservationDigest = BuildTurnObservationDigest(turnObservation);
+                        var observationSummary = BuildCompactObservationSummary(turnObservation);
                         lastScriptExitCode = turnObservation.ScriptExecution.ExitCode;
                         lastChangedFilesCount = turnObservation.ChangedFiles.Length;
                         await NotifyStepAsync(new AgentStepEvent(
@@ -240,31 +247,43 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                         if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
-                            lastFailureDigest = BuildTurnFailureDigest(
+                            lastFailureDigestForRunResult = BuildTurnFailureDigest(
                                 turnObservation,
                                 new[] { "script_exit_non_zero" });
-                            await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                            AppendStepHistory(
+                                stepHistory,
+                                stepNumber,
+                                observationSummary,
+                                BuildCompactFailureSummaryFromObservation(turnObservation, "script_exit_non_zero"));
+                            await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
                             continue;
                         }
 
+                        AppendStepHistory(stepHistory, stepNumber, observationSummary, failureSummary: null);
+
                         if (turnObservation.Action.IsCompletionAction)
                         {
-                            lastFailureDigest = null;
+                            lastFailureDigestForRunResult = null;
                             completed = true;
                             completionStep = stepNumber;
                             completionActionKind = turnObservation.Action.KindToken;
                             break;
                         }
 
-                        lastFailureDigest = null;
+                        lastFailureDigestForRunResult = null;
                     }
                     catch (Exception ex)
                     {
-                        lastFailureDigest = BuildFailureDigest(
+                        lastFailureDigestForRunResult = BuildFailureDigest(
                             exitCode: 1,
                             exception: ex,
                             combinedOutput: ex.ToString());
-                        await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                        AppendStepHistory(
+                            stepHistory,
+                            stepNumber,
+                            BuildCompactExceptionObservationSummary(ex),
+                            BuildCompactFailureSummaryFromException(ex));
+                        await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
                     }
                 }
 
@@ -289,8 +308,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                         changedFilesCount: lastChangedFilesCount,
                         gitDiffBytes: failedDiffContent.Length,
                         lastScriptExitCode: lastScriptExitCode,
-                        lastFailureDigest: lastFailureDigest);
-                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{lastFailureDigest}");
+                        lastFailureDigest: lastFailureDigestForRunResult);
+                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{lastFailureDigestForRunResult}");
                 }
 
                 var gitDiffContent = await PersistSandboxArtifactsAsync();
@@ -302,7 +321,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                     changedFilesCount: lastChangedFilesCount,
                     gitDiffBytes: gitDiffContent.Length,
                     lastScriptExitCode: lastScriptExitCode,
-                    lastFailureDigest: lastFailureDigest);
+                    lastFailureDigest: lastFailureDigestForRunResult);
                 await ApplySandboxPatchToSourceAsync(context, gitDiffContent);
             }
             finally
@@ -322,8 +341,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         string engineerPromptTemplate,
         string practicesContext,
         string plan,
-        string? failureDigest,
-        string? observationDigest)
+        IReadOnlyList<EngineerStepHistoryEntry> history)
     {
         var messages = new List<ChatMessage>
         {
@@ -333,20 +351,20 @@ public class AgentOrchestrator : IAgentOrchestrator
             new ChatMessage(ChatRole.User, $"Plan: {plan}")
         };
 
-        if (!string.IsNullOrWhiteSpace(failureDigest))
+        if (history.Count > 0)
         {
-            messages.Add(new ChatMessage(ChatRole.User,
-                "Previous step failed. Use this digest to fix the body for the next single-step response.\n" +
-                $"Failure digest:\n{failureDigest}\n\n" +
-                "Reminder: return only body statements."));
-        }
+            var historyBuilder = new StringBuilder();
+            historyBuilder.AppendLine($"Recent step history (oldest to newest, last {PromptHistoryDepth}):");
+            foreach (var entry in history)
+            {
+                historyBuilder.AppendLine($"Step {entry.StepNumber} observation: {entry.ObservationSummary}");
+                if (!string.IsNullOrWhiteSpace(entry.FailureSummary))
+                {
+                    historyBuilder.AppendLine($"Step {entry.StepNumber} failure: {entry.FailureSummary}");
+                }
+            }
 
-        if (!string.IsNullOrWhiteSpace(observationDigest))
-        {
-            messages.Add(new ChatMessage(ChatRole.User,
-                "Previous step observation (latest):\n" +
-                $"{observationDigest}\n\n" +
-                "Use this concrete output to decide the next single step."));
+            messages.Add(new ChatMessage(ChatRole.User, historyBuilder.ToString().TrimEnd()));
         }
 
         return messages;
@@ -463,7 +481,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         return delivered;
     }
 
-    private static string ToCompactSingleLine(string? text)
+    private static string ToCompactSingleLine(string? text, int maxLength = TranscriptPreviewLimit)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -476,12 +494,70 @@ public class AgentOrchestrator : IAgentOrchestrator
             .Replace("\n", "\\n", StringComparison.Ordinal)
             .Trim();
 
-        if (singleLine.Length <= TranscriptPreviewLimit)
+        if (singleLine.Length <= maxLength)
         {
             return singleLine;
         }
 
-        return $"{singleLine[..TranscriptPreviewLimit]}...(truncated)";
+        return $"{singleLine[..maxLength]}...(truncated)";
+    }
+
+    private static void AppendStepHistory(
+        List<EngineerStepHistoryEntry> stepHistory,
+        int stepNumber,
+        string observationSummary,
+        string? failureSummary)
+    {
+        stepHistory.Add(new EngineerStepHistoryEntry(stepNumber, observationSummary, failureSummary));
+        var overflow = stepHistory.Count - PromptHistoryDepth;
+        if (overflow > 0)
+        {
+            stepHistory.RemoveRange(0, overflow);
+        }
+    }
+
+    private static string BuildCompactObservationSummary(AgenticTurnObservation observation)
+    {
+        return $"action_kind={observation.Action.KindToken}; " +
+               $"action_command={ToCompactSingleLine(observation.Action.Command, HistoryPreviewLimit)}; " +
+               $"tool_call={ToCompactSingleLine(observation.ToolCall, HistoryPreviewLimit)}; " +
+               $"step_plan={ToCompactSingleLine(observation.StepPlan, HistoryPreviewLimit)}; " +
+               $"script_exit={observation.ScriptExecution.ExitCode}; " +
+               $"verification_exit={observation.BuildExecution.ExitCode}; " +
+               $"changed_files_count={observation.ChangedFiles.Length}; " +
+               $"has_changes={observation.HasChanges}; " +
+               $"build_passed={observation.BuildPassed}; " +
+               $"output_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
+    }
+
+    private static string BuildCompactExceptionObservationSummary(Exception exception)
+    {
+        return $"action_kind=unknown; " +
+               $"action_command=(none); " +
+               $"tool_call=(none); " +
+               $"step_plan=(none); " +
+               $"script_exit=1; " +
+               $"verification_exit=n/a; " +
+               $"changed_files_count=0; " +
+               $"has_changes=false; " +
+               $"build_passed=false; " +
+               $"output_preview={ToCompactSingleLine(exception.ToString(), HistoryPreviewLimit)}";
+    }
+
+    private static string BuildCompactFailureSummaryFromObservation(AgenticTurnObservation observation, string failureType)
+    {
+        return $"failure_type={failureType}; " +
+               $"action_kind={observation.Action.KindToken}; " +
+               $"script_exit={observation.ScriptExecution.ExitCode}; " +
+               $"error_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
+    }
+
+    private static string BuildCompactFailureSummaryFromException(Exception exception)
+    {
+        return $"failure_type=exception; " +
+               $"exception_type={exception.GetType().FullName ?? "n/a"}; " +
+               $"exception_message={ToCompactSingleLine(exception.Message, HistoryPreviewLimit)}; " +
+               $"error_preview={ToCompactSingleLine(exception.ToString(), HistoryPreviewLimit)}";
     }
 
     private static string BuildTurnFailureDigest(
@@ -500,25 +576,6 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         return $"failed_checks={gateSummary}\n" +
                $"action_kind={observation.Action.KindToken}\n" +
-               $"action_command={observation.Action.Command ?? "(none)"}\n" +
-               $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
-               $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +
-               $"changed_files={changedFiles}\n" +
-               $"script_output_tail:\n{scriptTail}\n\n" +
-               $"diff_output_tail:\n{diffTail}\n\n" +
-               $"verification_output_tail:\n{verificationTail}";
-    }
-
-    private static string BuildTurnObservationDigest(AgenticTurnObservation observation)
-    {
-        var changedFiles = observation.ChangedFiles.Length == 0
-            ? "(none)"
-            : string.Join(", ", observation.ChangedFiles);
-        var scriptTail = GetLastLines(observation.ScriptExecution.CombinedOutput, 40);
-        var diffTail = GetLastLines(observation.DiffExecution.CombinedOutput, 20);
-        var verificationTail = GetLastLines(observation.BuildExecution.CombinedOutput, 20);
-
-        return $"action_kind={observation.Action.KindToken}\n" +
                $"action_command={observation.Action.Command ?? "(none)"}\n" +
                $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
                $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +
