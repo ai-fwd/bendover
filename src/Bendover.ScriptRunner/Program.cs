@@ -12,7 +12,13 @@ internal static class Program
         var parsed = RunnerArguments.TryParse(args);
         if (parsed.Error is not null)
         {
-            await TryWriteResultFileAsync(parsed.ResultFilePath, new AgenticStepAction(AgenticStepActionKind.Unknown));
+            await TryWriteResultFileAsync(
+                parsed.ResultFilePath,
+                new EngineerBodyAnalysis(
+                    ValidationError: null,
+                    Action: new AgenticStepAction(AgenticStepActionKind.Unknown),
+                    StepPlan: null,
+                    ToolCall: null));
 
             Console.Error.WriteLine(parsed.Error);
             PrintUsage();
@@ -21,7 +27,7 @@ internal static class Program
 
         var bodyContent = await ResolveBodyContentAsync(parsed.BodyFilePath, parsed.BodyText);
         var analysis = EngineerBodyValidator.Analyze(bodyContent);
-        await TryWriteResultFileAsync(parsed.ResultFilePath, analysis.Action);
+        await TryWriteResultFileAsync(parsed.ResultFilePath, analysis);
 
         if (analysis.ValidationError is not null)
         {
@@ -78,7 +84,7 @@ internal static class Program
         Console.Error.WriteLine("  Bendover.ScriptRunner.dll --body-file <path> --result-file <path>");
     }
 
-    private static async Task WriteResultFileAsync(string path, AgenticStepAction action)
+    private static async Task WriteResultFileAsync(string path, EngineerBodyAnalysis analysis)
     {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath);
@@ -88,13 +94,15 @@ internal static class Program
         }
 
         var payload = new ScriptRunnerActionResult(
-            kind: action.KindToken,
-            command: action.Command);
+            kind: analysis.Action.KindToken,
+            command: analysis.Action.Command,
+            step_plan: analysis.StepPlan,
+            tool_call: analysis.ToolCall);
         var json = JsonSerializer.Serialize(payload);
         await File.WriteAllTextAsync(fullPath, json);
     }
 
-    private static async Task TryWriteResultFileAsync(string? path, AgenticStepAction action)
+    private static async Task TryWriteResultFileAsync(string? path, EngineerBodyAnalysis analysis)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -103,7 +111,7 @@ internal static class Program
 
         try
         {
-            await WriteResultFileAsync(path, action);
+            await WriteResultFileAsync(path, analysis);
         }
         catch (Exception ex)
         {
@@ -189,5 +197,9 @@ internal static class Program
         }
     }
 
-    private readonly record struct ScriptRunnerActionResult(string kind, string? command);
+    private readonly record struct ScriptRunnerActionResult(
+        string kind,
+        string? command,
+        string? step_plan,
+        string? tool_call);
 }

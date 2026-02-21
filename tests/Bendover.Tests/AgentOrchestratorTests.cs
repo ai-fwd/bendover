@@ -40,7 +40,7 @@ public class AgentOrchestratorTests
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
         _gitRunnerMock = new Mock<IGitRunner>();
 
-        _observerMock.Setup(x => x.OnProgressAsync(It.IsAny<string>()))
+        _observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>()))
             .Returns(Task.CompletedTask);
         _environmentValidatorMock.Setup(x => x.ValidateAsync())
             .Returns(Task.CompletedTask);
@@ -212,6 +212,41 @@ public class AgentOrchestratorTests
         Assert.Contains("Previous step observation (latest)", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("action_kind=discovery_shell", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("Bendover.sln", secondStepUserText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldEmitStructuredStepEvents_WithPlanAndToolMetadata()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        SetupEngineerSteps();
+        var events = new List<AgentEvent>();
+        _observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>()))
+            .Callback<AgentEvent>(evt => events.Add(evt))
+            .Returns(Task.CompletedTask);
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(new AgenticTurnObservation(
+                ScriptExecution: new SandboxExecutionResult(0, "Bendover.sln\nREADME.md\n", string.Empty, "Bendover.sln\nREADME.md\n"),
+                DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+                ChangedFilesExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+                BuildExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
+                ChangedFiles: Array.Empty<string>(),
+                HasChanges: false,
+                BuildPassed: false,
+                Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, "ls -la"),
+                StepPlan: "Need to list files to find readme",
+                ToolCall: "sdk.Shell.Execute(\"ls -la\")"))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        var firstStepEvent = Assert.IsType<AgentStepEvent>(events.First(evt => evt is AgentStepEvent));
+        Assert.Equal(1, firstStepEvent.StepNumber);
+        Assert.Equal("Need to list files to find readme", firstStepEvent.Plan);
+        Assert.Equal("sdk.Shell.Execute(\"ls -la\")", firstStepEvent.Tool);
+        Assert.Contains("action=discovery_shell", firstStepEvent.Observation, StringComparison.Ordinal);
     }
 
     [Fact]

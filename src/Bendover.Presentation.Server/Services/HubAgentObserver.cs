@@ -13,8 +13,16 @@ public class HubAgentObserver : IAgentObserver
         _hubContext = hubContext;
     }
 
-    public async Task OnProgressAsync(string message)
+    public async Task OnEventAsync(AgentEvent evt)
     {
-        await _hubContext.Clients.All.SendAsync("ReceiveProgress", message);
+        switch (evt)
+        {
+            case AgentProgressEvent progress:
+                await _hubContext.Clients.All.SendAsync("ReceiveProgress", progress.Message);
+                break;
+            case AgentStepEvent step:
+                await _hubContext.Clients.All.SendAsync("ReceiveStep", step);
+                break;
+        }
     }
 }

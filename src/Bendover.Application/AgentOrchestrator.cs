@@ -49,12 +49,22 @@ public class AgentOrchestrator : IAgentOrchestrator
         _gitRunner = gitRunner;
     }
 
-    private async Task NotifyAsync(string message)
+    private async Task EmitEventAsync(AgentEvent evt)
     {
         foreach (var observer in _observers)
         {
-            await observer.OnProgressAsync(message);
+            await observer.OnEventAsync(evt);
         }
+    }
+
+    private Task NotifyProgressAsync(string message)
+    {
+        return EmitEventAsync(new AgentProgressEvent(message));
+    }
+
+    private Task NotifyStepAsync(AgentStepEvent stepEvent)
+    {
+        return EmitEventAsync(stepEvent);
     }
 
     public async Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices, string? agentsPath = null)
@@ -95,11 +105,11 @@ public class AgentOrchestrator : IAgentOrchestrator
         try
         {
             // 0. Environment Verification
-            await NotifyAsync("Verifying Environment...");
+            await NotifyProgressAsync("Verifying Environment...");
             await _environmentValidator.ValidateAsync();
 
             // 1a. Lead Phase (Practice Selection)
-            await NotifyAsync("Lead Agent Analyzing Request...");
+            await NotifyProgressAsync("Lead Agent Analyzing Request...");
             var selectedPracticeNames = (await _leadAgent.AnalyzeTaskAsync(initialGoal, allPractices, agentsPath)).ToArray();
             var unknownSelectedPractices = selectedPracticeNames
                 .Where(name => !availablePracticeNames.Contains(name))
@@ -159,7 +169,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate(agentsPath);
 
             // 3. Step-wise execution loop
-            await NotifyAsync("Executing in Container...");
+            await NotifyProgressAsync("Executing in Container...");
             await _containerService.StartContainerAsync(new SandboxExecutionSettings(
                 Directory.GetCurrentDirectory(),
                 BaseCommit: baseCommit));
@@ -177,7 +187,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
                 {
                     var stepNumber = stepIndex + 1;
-                    await NotifyAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
+                    await NotifyProgressAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
 
                     var engineerMessages = BuildEngineerMessages(
                         engineerPromptTemplate,
@@ -221,6 +231,12 @@ public class AgentOrchestrator : IAgentOrchestrator
                         lastObservationDigest = BuildTurnObservationDigest(turnObservation);
                         lastScriptExitCode = turnObservation.ScriptExecution.ExitCode;
                         lastChangedFilesCount = turnObservation.ChangedFiles.Length;
+                        await NotifyStepAsync(new AgentStepEvent(
+                            StepNumber: stepNumber,
+                            Plan: turnObservation.StepPlan,
+                            Tool: BuildStepTool(turnObservation),
+                            Observation: BuildStepObservationSummary(turnObservation),
+                            IsCompletion: turnObservation.Action.IsCompletionAction));
 
                         if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
@@ -294,7 +310,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 await _containerService.StopContainerAsync();
             }
 
-            await NotifyAsync("Finished.");
+            await NotifyProgressAsync("Finished.");
         }
         finally
         {
@@ -370,7 +386,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             ? "(none)"
             : string.Join(", ", deliveredPractices.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
 
-        await NotifyAsync($"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}");
+        await NotifyProgressAsync($"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}");
 
         foreach (var practice in selectedPractices
                      .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -378,7 +394,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                      .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
         {
             var delivered = deliveredPractices.Contains(practice) ? "yes" : "no";
-            await NotifyAsync($"[transcript][audit] phase={phase} practice={practice} delivered={delivered}");
+            await NotifyProgressAsync($"[transcript][audit] phase={phase} practice={practice} delivered={delivered}");
         }
     }
 
@@ -390,7 +406,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
 
         var preview = ToCompactSingleLine(output);
-        await NotifyAsync($"[transcript][output] phase={phase} chars={output.Length} preview={preview}");
+        await NotifyProgressAsync($"[transcript][output] phase={phase} chars={output.Length} preview={preview}");
     }
 
     private async Task EmitTranscriptFailureAsync(bool enabled, string phase, string failureDigest)
@@ -400,7 +416,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             return;
         }
 
-        await NotifyAsync($"[transcript][failure] phase={phase}\n{failureDigest}");
+        await NotifyProgressAsync($"[transcript][failure] phase={phase}\n{failureDigest}");
     }
 
     private static HashSet<string> ExtractPracticesFromSystemPrompt(string systemPrompt)
@@ -510,6 +526,36 @@ public class AgentOrchestrator : IAgentOrchestrator
                $"script_output_tail:\n{scriptTail}\n\n" +
                $"diff_output_tail:\n{diffTail}\n\n" +
                $"verification_output_tail:\n{verificationTail}";
+    }
+
+    private static string BuildStepTool(AgenticTurnObservation observation)
+    {
+        if (!string.IsNullOrWhiteSpace(observation.ToolCall))
+        {
+            return observation.ToolCall!;
+        }
+
+        return observation.Action.Kind switch
+        {
+            AgenticStepActionKind.MutationWrite => "sdk.File.Write(...)",
+            AgenticStepActionKind.MutationDelete => "sdk.File.Delete(...)",
+            AgenticStepActionKind.VerificationBuild or AgenticStepActionKind.VerificationTest or AgenticStepActionKind.DiscoveryShell
+                => string.IsNullOrWhiteSpace(observation.Action.Command)
+                    ? "sdk.Shell.Execute(...)"
+                    : $"sdk.Shell.Execute(\"{observation.Action.Command}\")",
+            AgenticStepActionKind.Complete => "sdk.Signal.Done()",
+            _ => observation.Action.Command ?? "(unknown)"
+        };
+    }
+
+    private static string BuildStepObservationSummary(AgenticTurnObservation observation)
+    {
+        return $"action={observation.Action.KindToken}; " +
+               $"script_exit={observation.ScriptExecution.ExitCode}; " +
+               $"verification_exit={observation.BuildExecution.ExitCode}; " +
+               $"changed_files={observation.ChangedFiles.Length}; " +
+               $"has_changes={observation.HasChanges}; " +
+               $"build_passed={observation.BuildPassed}";
     }
 
     private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)

@@ -15,7 +15,9 @@ public class AgenticTurnServiceTests
         containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
             .ReturnsAsync(new ScriptExecutionResult(
                 Execution: new SandboxExecutionResult(1, string.Empty, "script error", "script error"),
-                Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write")));
+                Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write"),
+                StepPlan: "Need to update a.txt",
+                ToolCall: "sdk.File.Write(\"a.txt\", \"x\")"));
 
         var sut = new AgenticTurnService(containerServiceMock.Object);
 
@@ -28,6 +30,8 @@ public class AgenticTurnServiceTests
         Assert.True(observation.Action.IsMutationAction);
         Assert.False(observation.Action.IsVerificationAction);
         Assert.Equal("mutation_write", observation.Action.KindToken);
+        Assert.Equal("Need to update a.txt", observation.StepPlan);
+        Assert.Equal("sdk.File.Write(\"a.txt\", \"x\")", observation.ToolCall);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(It.IsAny<string>()), Times.Never);
     }
 
@@ -134,7 +138,9 @@ public class AgenticTurnServiceTests
         containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
             .ReturnsAsync(new ScriptExecutionResult(
                 Execution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
-                Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, "ls -la")));
+                Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, "ls -la"),
+                StepPlan: "Need to inspect files",
+                ToolCall: "sdk.Shell.Execute(\"ls -la\")"));
         containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
             .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
         containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.ChangedFilesCommand))
@@ -150,6 +156,8 @@ public class AgenticTurnServiceTests
         Assert.False(observation.Action.IsCompletionAction);
         Assert.False(observation.BuildPassed);
         Assert.Equal(-1, observation.BuildExecution.ExitCode);
+        Assert.Equal("Need to inspect files", observation.StepPlan);
+        Assert.Equal("sdk.Shell.Execute(\"ls -la\")", observation.ToolCall);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.BuildCommand), Times.Never);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.TestCommand), Times.Never);
     }

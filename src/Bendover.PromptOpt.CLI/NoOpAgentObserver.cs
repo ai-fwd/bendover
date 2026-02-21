@@ -5,7 +5,7 @@ namespace Bendover.PromptOpt.CLI;
 
 public class NoOpAgentObserver : IAgentObserver
 {
-    public Task OnProgressAsync(string message)
+    public Task OnEventAsync(AgentEvent evt)
     {
         return Task.CompletedTask;
     }

@@ -34,7 +34,7 @@ public class Story6ArtifactFlowTests
             var gitRunnerMock = new Mock<IGitRunner>();
 
             environmentValidatorMock.Setup(x => x.ValidateAsync()).Returns(Task.CompletedTask);
-            observerMock.Setup(x => x.OnProgressAsync(It.IsAny<string>())).Returns(Task.CompletedTask);
+            observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>())).Returns(Task.CompletedTask);
             leadAgentMock.Setup(x => x.AnalyzeTaskAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<Practice>>()))
                 .ReturnsAsync(new[] { "tdd_spirit" });
 
@@ -162,7 +162,7 @@ public class Story6ArtifactFlowTests
             var gitRunnerMock = new Mock<IGitRunner>();
 
             environmentValidatorMock.Setup(x => x.ValidateAsync()).Returns(Task.CompletedTask);
-            observerMock.Setup(x => x.OnProgressAsync(It.IsAny<string>())).Returns(Task.CompletedTask);
+            observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>())).Returns(Task.CompletedTask);
             leadAgentMock.Setup(x => x.AnalyzeTaskAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<Practice>>()))
                 .ReturnsAsync(new[] { "tdd_spirit" });
             engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))

@@ -107,7 +107,9 @@ public class DockerContainerService : IContainerService
         {
             return new ScriptExecutionResult(
                 Execution: writeBodyResult,
-                Action: new AgenticStepAction(AgenticStepActionKind.Unknown));
+                Action: new AgenticStepAction(AgenticStepActionKind.Unknown),
+                StepPlan: null,
+                ToolCall: null);
         }
 
         var scriptResultPath = $"{WorkspacePath}/script_result.json";
@@ -123,13 +125,17 @@ public class DockerContainerService : IContainerService
         var executeResult = await ExecuteCommandAsync(
             $"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {ScriptBodyPath} --result-file {scriptResultPath}");
 
-        var (action, warning) = await TryReadScriptActionAsync(scriptResultPath);
+        var (action, stepPlan, toolCall, warning) = await TryReadScriptActionAsync(scriptResultPath);
         if (!string.IsNullOrWhiteSpace(warning))
         {
             executeResult = AppendCombinedOutput(executeResult, warning);
         }
 
-        return new ScriptExecutionResult(executeResult, action);
+        return new ScriptExecutionResult(
+            Execution: executeResult,
+            Action: action,
+            StepPlan: stepPlan,
+            ToolCall: toolCall);
     }
 
     public async Task<SandboxExecutionResult> ResetWorkspaceAsync(string baseCommit, bool cleanWorkspace = true)
@@ -271,7 +277,7 @@ public class DockerContainerService : IContainerService
         return value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
     }
 
-    private async Task<(AgenticStepAction Action, string? Warning)> TryReadScriptActionAsync(string scriptResultPath)
+    private async Task<(AgenticStepAction Action, string? StepPlan, string? ToolCall, string? Warning)> TryReadScriptActionAsync(string scriptResultPath)
     {
         SandboxExecutionResult readResult;
         try
@@ -282,6 +288,8 @@ public class DockerContainerService : IContainerService
         {
             return (
                 new AgenticStepAction(AgenticStepActionKind.Unknown),
+                null,
+                null,
                 $"script action metadata missing: {ex.Message}");
         }
 
@@ -289,6 +297,8 @@ public class DockerContainerService : IContainerService
         {
             return (
                 new AgenticStepAction(AgenticStepActionKind.Unknown),
+                null,
+                null,
                 $"script action metadata unavailable.\n{readResult.CombinedOutput}");
         }
 
@@ -301,6 +311,8 @@ public class DockerContainerService : IContainerService
             {
                 return (
                     new AgenticStepAction(AgenticStepActionKind.Unknown),
+                    null,
+                    null,
                     $"script action metadata invalid.\n{readResult.CombinedOutput}");
             }
 
@@ -318,12 +330,18 @@ public class DockerContainerService : IContainerService
             var warning = kind == AgenticStepActionKind.Unknown
                 ? $"script action metadata kind '{dto.kind}' not recognized."
                 : null;
-            return (new AgenticStepAction(kind, dto.command), warning);
+            return (
+                new AgenticStepAction(kind, dto.command),
+                string.IsNullOrWhiteSpace(dto.step_plan) ? null : dto.step_plan.Trim(),
+                string.IsNullOrWhiteSpace(dto.tool_call) ? null : dto.tool_call.Trim(),
+                warning);
         }
         catch (Exception ex)
         {
             return (
                 new AgenticStepAction(AgenticStepActionKind.Unknown),
+                null,
+                null,
                 $"script action metadata parse failed: {ex.Message}\n{readResult.CombinedOutput}");
         }
     }
@@ -341,5 +359,9 @@ public class DockerContainerService : IContainerService
             $"{result.CombinedOutput}{suffix}");
     }
 
-    private sealed record ScriptRunnerActionDto(string kind, string? command);
+    private sealed record ScriptRunnerActionDto(
+        string kind,
+        string? command,
+        string? step_plan,
+        string? tool_call);
 }

@@ -31,7 +31,9 @@ public class AgenticTurnService : IAgenticTurnService
                 ChangedFiles: Array.Empty<string>(),
                 HasChanges: false,
                 BuildPassed: false,
-                Action: action);
+                Action: action,
+                StepPlan: scriptResult.StepPlan,
+                ToolCall: scriptResult.ToolCall);
         }
 
         var diffExecution = await _containerService.ExecuteCommandAsync(turnSettings.DiffCommand);
@@ -67,7 +69,9 @@ public class AgenticTurnService : IAgenticTurnService
             ChangedFiles: changedFiles,
             HasChanges: hasChanges,
             BuildPassed: buildPassed,
-            Action: action);
+            Action: action,
+            StepPlan: scriptResult.StepPlan,
+            ToolCall: scriptResult.ToolCall);
     }
 
     private static string[] ParseChangedFiles(string output)
