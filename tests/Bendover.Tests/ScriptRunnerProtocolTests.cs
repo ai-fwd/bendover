@@ -61,6 +61,20 @@ sdk.Shell.Execute("ls -la");
     }
 
     [Fact]
+    public async Task ScriptRunner_WritesStepPlanAndToolCallMetadata_ToResultFile()
+    {
+        var body = """
+var __stepPlan = "Need to list files to find README.md";
+sdk.Shell.Execute("ls -la");
+""";
+
+        var (_, action) = await RunScriptWithResultAsync(body);
+
+        Assert.Equal("Need to list files to find README.md", action.step_plan);
+        Assert.Equal("sdk.Shell.Execute(\"ls -la\")", action.tool_call);
+    }
+
+    [Fact]
     public async Task ScriptRunner_WritesCompleteMetadata_ToResultFile()
     {
         var body = """
@@ -256,5 +270,9 @@ sdk.File.Write("b.txt", "y");
     }
 
     private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
-    private sealed record ScriptRunnerActionResult(string kind, string? command);
+    private sealed record ScriptRunnerActionResult(
+        string kind,
+        string? command,
+        string? step_plan,
+        string? tool_call);
 }

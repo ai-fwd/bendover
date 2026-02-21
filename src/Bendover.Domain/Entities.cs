@@ -54,7 +54,9 @@ public sealed record AgenticStepAction(
 
 public sealed record ScriptExecutionResult(
     SandboxExecutionResult Execution,
-    AgenticStepAction Action
+    AgenticStepAction Action,
+    string? StepPlan = null,
+    string? ToolCall = null
 );
 
 public sealed record AgenticTurnSettings(
@@ -72,7 +74,9 @@ public sealed record AgenticTurnObservation(
     string[] ChangedFiles,
     bool HasChanges,
     bool BuildPassed,
-    AgenticStepAction Action
+    AgenticStepAction Action,
+    string? StepPlan = null,
+    string? ToolCall = null
 );
 
 public enum AgentState

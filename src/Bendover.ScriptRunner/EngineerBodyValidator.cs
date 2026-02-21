@@ -20,7 +20,9 @@ internal static class EngineerBodyValidator
             violations.Add("body is empty");
             return new EngineerBodyAnalysis(
                 ValidationError: BuildErrorMessage(violations),
-                Action: new AgenticStepAction(AgenticStepActionKind.Unknown));
+                Action: new AgenticStepAction(AgenticStepActionKind.Unknown),
+                StepPlan: null,
+                ToolCall: null);
         }
 
         if (MarkdownFenceRegex.IsMatch(bodyContent))
@@ -57,11 +59,14 @@ internal static class EngineerBodyValidator
             violations.Add("must include at least one global statement");
         }
 
-        var action = ValidateSingleActionProtocol(root, violations);
+        var stepPlan = TryExtractStepPlan(root);
+        var protocol = ValidateSingleActionProtocol(root, violations);
 
         return new EngineerBodyAnalysis(
             ValidationError: violations.Count == 0 ? null : BuildErrorMessage(violations),
-            Action: action);
+            Action: protocol.Action,
+            StepPlan: stepPlan,
+            ToolCall: protocol.ToolCall);
     }
 
     public static string? Validate(string bodyContent)
@@ -80,12 +85,13 @@ internal static class EngineerBodyValidator
         return member is GlobalStatementSyntax or FieldDeclarationSyntax;
     }
 
-    private static AgenticStepAction ValidateSingleActionProtocol(CompilationUnitSyntax root, List<string> violations)
+    private static ProtocolAnalysis ValidateSingleActionProtocol(CompilationUnitSyntax root, List<string> violations)
     {
         var actionableStepCount = 0;
         var mutationStepCount = 0;
         var verificationStepCount = 0;
         AgenticStepAction? firstAction = null;
+        string? firstToolCall = null;
 
         var invocationInfos = root
             .DescendantNodes()
@@ -106,6 +112,7 @@ internal static class EngineerBodyValidator
             }
 
             firstAction ??= invocationInfo.Action;
+            firstToolCall ??= invocationInfo.ToolCall;
             actionableStepCount++;
 
             if (invocationInfo.IsMutation)
@@ -167,7 +174,9 @@ internal static class EngineerBodyValidator
             }
         }
 
-        return firstAction ?? new AgenticStepAction(AgenticStepActionKind.Unknown);
+        return new ProtocolAnalysis(
+            Action: firstAction ?? new AgenticStepAction(AgenticStepActionKind.Unknown),
+            ToolCall: firstToolCall);
     }
 
     private static InvocationInfo ClassifyInvocation(InvocationExpressionSyntax invocation)
@@ -183,7 +192,8 @@ internal static class EngineerBodyValidator
                 IsMutation: true,
                 IsVerification: false,
                 Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write"),
-                Violation: null);
+                Violation: null,
+                ToolCall: RenderToolCall(invocation));
         }
 
         if (expressionText.Equals("sdk.File.Delete", StringComparison.OrdinalIgnoreCase)
@@ -193,7 +203,8 @@ internal static class EngineerBodyValidator
                 IsMutation: true,
                 IsVerification: false,
                 Action: new AgenticStepAction(AgenticStepActionKind.MutationDelete, "sdk.File.Delete"),
-                Violation: null);
+                Violation: null,
+                ToolCall: RenderToolCall(invocation));
         }
 
         if (expressionText.Equals("sdk.Signal.Done", StringComparison.OrdinalIgnoreCase)
@@ -205,14 +216,16 @@ internal static class EngineerBodyValidator
                     IsMutation: false,
                     IsVerification: false,
                     Action: null,
-                    Violation: "sdk.Done()/sdk.Signal.Done() does not accept arguments");
+                    Violation: "sdk.Done()/sdk.Signal.Done() does not accept arguments",
+                    ToolCall: null);
             }
 
             return new InvocationInfo(
                 IsMutation: false,
                 IsVerification: false,
                 Action: new AgenticStepAction(AgenticStepActionKind.Complete, expressionText.Equals("sdk.Done", StringComparison.OrdinalIgnoreCase) ? "sdk.Done" : "sdk.Signal.Done"),
-                Violation: null);
+                Violation: null,
+                ToolCall: RenderToolCall(invocation));
         }
 
         if (expressionText.StartsWith("sdk.Git.", StringComparison.OrdinalIgnoreCase))
@@ -221,13 +234,14 @@ internal static class EngineerBodyValidator
                 IsMutation: false,
                 IsVerification: false,
                 Action: null,
-                Violation: "sdk.Git operations are not allowed in single-step mode; use sdk.File.Write or sdk.File.Delete");
+                Violation: "sdk.Git operations are not allowed in single-step mode; use sdk.File.Write or sdk.File.Delete",
+                ToolCall: null);
         }
 
         if (!expressionText.Equals("sdk.Shell.Execute", StringComparison.OrdinalIgnoreCase)
             && !expressionText.Equals("sdk.Run", StringComparison.OrdinalIgnoreCase))
         {
-            return new InvocationInfo(IsMutation: false, IsVerification: false, Action: null, Violation: null);
+            return new InvocationInfo(IsMutation: false, IsVerification: false, Action: null, Violation: null, ToolCall: null);
         }
 
         if (!TryGetShellCommand(invocation, out var command))
@@ -236,7 +250,8 @@ internal static class EngineerBodyValidator
                 IsMutation: false,
                 IsVerification: false,
                 Action: null,
-                Violation: "shell command must use a single string-literal argument");
+                Violation: "shell command must use a single string-literal argument",
+                ToolCall: null);
         }
 
         if (!ShellCommandPolicy.TryValidateAllowedForEngineer(command, out var violation))
@@ -245,7 +260,8 @@ internal static class EngineerBodyValidator
                 IsMutation: false,
                 IsVerification: false,
                 Action: null,
-                Violation: violation);
+                Violation: violation,
+                ToolCall: null);
         }
 
         if (ShellCommandPolicy.TryGetVerificationKind(command, out var verificationKind))
@@ -254,14 +270,78 @@ internal static class EngineerBodyValidator
                 IsMutation: false,
                 IsVerification: true,
                 Action: new AgenticStepAction(verificationKind, command),
-                Violation: null);
+                Violation: null,
+                ToolCall: RenderToolCall(invocation));
         }
 
         return new InvocationInfo(
             IsMutation: false,
             IsVerification: false,
             Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, command),
-            Violation: null);
+            Violation: null,
+            ToolCall: RenderToolCall(invocation));
+    }
+
+    private static string? TryExtractStepPlan(CompilationUnitSyntax root)
+    {
+        foreach (var member in root.Members)
+        {
+            if (member is FieldDeclarationSyntax fieldDeclaration
+                && TryExtractStepPlanFromDeclaration(fieldDeclaration.Declaration, out var fieldPlan))
+            {
+                return fieldPlan;
+            }
+
+            if (member is not GlobalStatementSyntax globalStatement
+                || globalStatement.Statement is not LocalDeclarationStatementSyntax localDeclaration
+                || localDeclaration.Declaration is null)
+            {
+                continue;
+            }
+
+            if (TryExtractStepPlanFromDeclaration(localDeclaration.Declaration, out var localPlan))
+            {
+                return localPlan;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryExtractStepPlanFromDeclaration(
+        VariableDeclarationSyntax declaration,
+        out string? stepPlan)
+    {
+        stepPlan = null;
+        foreach (var variable in declaration.Variables)
+        {
+            if (!string.Equals(variable.Identifier.ValueText, "__stepPlan", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (variable.Initializer?.Value is not LiteralExpressionSyntax literal
+                || !literal.IsKind(SyntaxKind.StringLiteralExpression))
+            {
+                continue;
+            }
+
+            var value = literal.Token.ValueText.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            stepPlan = value;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string RenderToolCall(InvocationExpressionSyntax invocation)
+    {
+        return invocation.NormalizeWhitespace().ToString();
     }
 
     private static bool TryGetShellCommand(InvocationExpressionSyntax invocation, out string command)
@@ -286,10 +366,17 @@ internal static class EngineerBodyValidator
         bool IsMutation,
         bool IsVerification,
         AgenticStepAction? Action,
-        string? Violation);
+        string? Violation,
+        string? ToolCall);
+
+    private readonly record struct ProtocolAnalysis(
+        AgenticStepAction Action,
+        string? ToolCall);
 }
 
 internal readonly record struct EngineerBodyAnalysis(
     string? ValidationError,
-    AgenticStepAction Action
+    AgenticStepAction Action,
+    string? StepPlan,
+    string? ToolCall
 );

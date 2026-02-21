@@ -1,3 +1,4 @@
+using Bendover.Domain.Interfaces;
 using Microsoft.AspNetCore.SignalR.Client;
 using Spectre.Console;
 
@@ -22,6 +23,14 @@ public class RemoteAgentRunner : IAgentRunner
             {
                 completionSource.TrySetResult();
             }
+        });
+
+        connection.On<AgentStepEvent>("ReceiveStep", (step) =>
+        {
+            AnsiConsole.MarkupLine($"[bold]Remote Step #{step.StepNumber}[/]");
+            AnsiConsole.MarkupLine($"[#ff8800]Plan:[/] {Markup.Escape(string.IsNullOrWhiteSpace(step.Plan) ? "(not provided)" : step.Plan)}");
+            AnsiConsole.MarkupLine($"[yellow]Tool:[/] {Markup.Escape(string.IsNullOrWhiteSpace(step.Tool) ? "(unknown)" : step.Tool)}");
+            AnsiConsole.MarkupLine($"[green]Observation:[/] {Markup.Escape(string.IsNullOrWhiteSpace(step.Observation) ? "(none)" : step.Observation)}");
         });
 
         connection.On<string>("ReceiveCritique", (message) =>

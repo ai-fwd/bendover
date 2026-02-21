@@ -162,6 +162,19 @@ sdk.Done();
     }
 
     [Fact]
+    public async Task ScriptBody_WithOptionalStepPlanMetadataAndSingleAction_ShouldSucceed()
+    {
+        var body = """
+var __stepPlan = "Need to inspect repository layout first";
+sdk.Shell.Execute("ls -la");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
     public async Task ScriptBody_WithDiscoveryAndDone_ShouldBeRejected()
     {
         var body = """
