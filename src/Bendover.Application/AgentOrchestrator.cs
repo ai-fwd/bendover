@@ -165,40 +165,19 @@ public class AgentOrchestrator : IAgentOrchestrator
                 BaseCommit: baseCommit));
             try
             {
-                var acceptedPatch = string.Empty;
                 string? lastFailureDigest = null;
                 string? lastObservationDigest = null;
                 var completed = false;
+                var completionStep = 0;
+                string? completionActionKind = null;
+                var lastScriptExitCode = (int?)null;
+                var lastChangedFilesCount = 0;
                 var turnSettings = new AgenticTurnSettings();
 
                 for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
                 {
                     var stepNumber = stepIndex + 1;
                     await NotifyAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
-
-                    var resetResult = await _containerService.ResetWorkspaceAsync(baseCommit, cleanWorkspace: true);
-                    if (resetResult.ExitCode != 0)
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to reset workspace for step {stepNumber}.\n{resetResult.CombinedOutput}");
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(acceptedPatch))
-                    {
-                        var replayCheckResult = await _containerService.ApplyPatchAsync(acceptedPatch, checkOnly: true);
-                        if (replayCheckResult.ExitCode != 0)
-                        {
-                            throw new InvalidOperationException(
-                                $"Failed to replay accepted patch (check) for step {stepNumber}.\n{replayCheckResult.CombinedOutput}");
-                        }
-
-                        var replayApplyResult = await _containerService.ApplyPatchAsync(acceptedPatch, checkOnly: false);
-                        if (replayApplyResult.ExitCode != 0)
-                        {
-                            throw new InvalidOperationException(
-                                $"Failed to replay accepted patch (apply) for step {stepNumber}.\n{replayApplyResult.CombinedOutput}");
-                        }
-                    }
 
                     var engineerMessages = BuildEngineerMessages(
                         engineerPromptTemplate,
@@ -240,6 +219,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                         await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
                         await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
                         lastObservationDigest = BuildTurnObservationDigest(turnObservation);
+                        lastScriptExitCode = turnObservation.ScriptExecution.ExitCode;
+                        lastChangedFilesCount = turnObservation.ChangedFiles.Length;
 
                         if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
@@ -250,74 +231,16 @@ public class AgentOrchestrator : IAgentOrchestrator
                             continue;
                         }
 
-                        if (turnObservation.Action.IsMutationAction)
-                        {
-                            if (turnObservation.ChangedFiles.Length == 0
-                                || !turnObservation.HasChanges
-                                || string.IsNullOrWhiteSpace(turnObservation.DiffExecution.CombinedOutput))
-                            {
-                                lastFailureDigest = BuildTurnFailureDigest(
-                                    turnObservation,
-                                    new[] { "mutation_empty_diff" });
-                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
-                                continue;
-                            }
-
-                            acceptedPatch = turnObservation.DiffExecution.CombinedOutput;
-                            lastFailureDigest = null;
-                            continue;
-                        }
-
-                        if (turnObservation.Action.IsVerificationAction)
-                        {
-                            if (!turnObservation.BuildPassed)
-                            {
-                                lastFailureDigest = BuildTurnFailureDigest(
-                                    turnObservation,
-                                    new[] { "verification_failed" });
-                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
-                                continue;
-                            }
-
-                            lastFailureDigest = null;
-                            continue;
-                        }
-
                         if (turnObservation.Action.IsCompletionAction)
                         {
-                            if (string.IsNullOrWhiteSpace(acceptedPatch))
-                            {
-                                lastFailureDigest = BuildTurnFailureDigest(
-                                    turnObservation,
-                                    new[] { "completion_requires_accepted_patch" });
-                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
-                                continue;
-                            }
-
-                            if (!turnObservation.BuildPassed)
-                            {
-                                lastFailureDigest = BuildTurnFailureDigest(
-                                    turnObservation,
-                                    new[] { "completion_build_failed" });
-                                await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
-                                continue;
-                            }
-
                             lastFailureDigest = null;
                             completed = true;
+                            completionStep = stepNumber;
+                            completionActionKind = turnObservation.Action.KindToken;
                             break;
                         }
 
-                        if (turnObservation.Action.Kind == AgenticStepActionKind.DiscoveryShell)
-                        {
-                            lastFailureDigest = null;
-                            continue;
-                        }
-
-                        lastFailureDigest = BuildTurnFailureDigest(
-                            turnObservation,
-                            new[] { "unknown_action" });
-                        await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigest);
+                        lastFailureDigest = null;
                     }
                     catch (Exception ex)
                     {
@@ -331,10 +254,39 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                 if (!completed)
                 {
+                    var failedDiffContent = string.Empty;
+                    try
+                    {
+                        var failedDiffResult = await _containerService.ExecuteCommandAsync("cd /workspace && git diff");
+                        failedDiffContent = failedDiffResult.CombinedOutput;
+                    }
+                    catch
+                    {
+                        // Keep failure-path recording best-effort and do not mask the original max-turn failure.
+                    }
+
+                    await RecordRunResultAsync(
+                        status: "failed_max_turns",
+                        completionStep: null,
+                        completionActionKind: null,
+                        hasCodeChanges: !string.IsNullOrWhiteSpace(failedDiffContent),
+                        changedFilesCount: lastChangedFilesCount,
+                        gitDiffBytes: failedDiffContent.Length,
+                        lastScriptExitCode: lastScriptExitCode,
+                        lastFailureDigest: lastFailureDigest);
                     throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{lastFailureDigest}");
                 }
 
                 var gitDiffContent = await PersistSandboxArtifactsAsync();
+                await RecordRunResultAsync(
+                    status: "completed",
+                    completionStep: completionStep,
+                    completionActionKind: completionActionKind,
+                    hasCodeChanges: !string.IsNullOrWhiteSpace(gitDiffContent),
+                    changedFilesCount: lastChangedFilesCount,
+                    gitDiffBytes: gitDiffContent.Length,
+                    lastScriptExitCode: lastScriptExitCode,
+                    lastFailureDigest: lastFailureDigest);
                 await ApplySandboxPatchToSourceAsync(context, gitDiffContent);
             }
             finally
@@ -571,6 +523,33 @@ public class AgentOrchestrator : IAgentOrchestrator
     private static string BuildStepPhase(string basePhase, int stepNumber)
     {
         return $"{basePhase}_{stepNumber}";
+    }
+
+    private async Task RecordRunResultAsync(
+        string status,
+        int? completionStep,
+        string? completionActionKind,
+        bool hasCodeChanges,
+        int changedFilesCount,
+        int gitDiffBytes,
+        int? lastScriptExitCode,
+        string? lastFailureDigest)
+    {
+        var runResult = new
+        {
+            status,
+            completion_step = completionStep,
+            completion_action_kind = completionActionKind,
+            has_code_changes = hasCodeChanges,
+            changed_files_count = changedFilesCount,
+            git_diff_bytes = gitDiffBytes,
+            last_script_exit_code = lastScriptExitCode,
+            last_failure_digest = lastFailureDigest
+        };
+
+        await _runRecorder.RecordArtifactAsync(
+            "run_result.json",
+            JsonSerializer.Serialize(runResult));
     }
 
     private static string GetLastLines(string text, int maxLines)
