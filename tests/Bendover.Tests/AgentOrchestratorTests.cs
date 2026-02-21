@@ -158,7 +158,7 @@ public class AgentOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_ShouldFeedFailureDigestToNextPrompt()
+    public async Task RunAsync_ShouldIncludePriorFailureAndObservationInNextPromptHistory()
     {
         SetupRunContext();
         SetupLeadSelection("Build feature");
@@ -176,17 +176,17 @@ public class AgentOrchestratorTests
         await _sut.RunAsync("Build feature", CreatePractices());
 
         Assert.True(capturedEngineerMessages.Count >= 2);
-        var secondStepUserText = string.Join(
-            "\n",
-            capturedEngineerMessages[1]
-                .Where(message => string.Equals(message.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
-                .Select(message => message.Text ?? string.Empty));
-        Assert.Contains("Previous step failed", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("script_exit_non_zero", secondStepUserText, StringComparison.Ordinal);
+        var secondStepUserText = ExtractUserText(capturedEngineerMessages[1]);
+        Assert.Contains("Recent step history (oldest to newest, last 5):", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Step 1 observation:", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Step 1 failure:", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("failure_type=script_exit_non_zero", secondStepUserText, StringComparison.Ordinal);
+        Assert.DoesNotContain("script_output_tail:", secondStepUserText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Previous step failed", secondStepUserText, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task RunAsync_ShouldFeedObservationDigestToNextPrompt()
+    public async Task RunAsync_ShouldIncludePriorObservationInNextPromptHistory()
     {
         SetupRunContext();
         SetupLeadSelection("Build feature");
@@ -204,14 +204,81 @@ public class AgentOrchestratorTests
         await _sut.RunAsync("Build feature", CreatePractices());
 
         Assert.True(capturedEngineerMessages.Count >= 2);
-        var secondStepUserText = string.Join(
-            "\n",
-            capturedEngineerMessages[1]
-                .Where(message => string.Equals(message.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
-                .Select(message => message.Text ?? string.Empty));
-        Assert.Contains("Previous step observation (latest)", secondStepUserText, StringComparison.Ordinal);
+        var secondStepUserText = ExtractUserText(capturedEngineerMessages[1]);
+        Assert.Contains("Recent step history (oldest to newest, last 5):", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Step 1 observation:", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("action_kind=discovery_shell", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("Bendover.sln", secondStepUserText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Previous step observation (latest)", secondStepUserText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldIncludeLastFiveHistoryEntries_WhenMoreThanFiveStepsExecuted()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        var capturedEngineerMessages = new List<IReadOnlyList<ChatMessage>>();
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
+                capturedEngineerMessages.Add(messages.ToList()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.Shell.Execute(\"ls -la\");") }));
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateDiscoveryObservation("step1"))
+            .ReturnsAsync(CreateDiscoveryObservation("step2"))
+            .ReturnsAsync(CreateDiscoveryObservation("step3"))
+            .ReturnsAsync(CreateDiscoveryObservation("step4"))
+            .ReturnsAsync(CreateDiscoveryObservation("step5"))
+            .ReturnsAsync(CreateDiscoveryObservation("step6"))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        Assert.True(capturedEngineerMessages.Count >= 7);
+        var stepSevenPrompt = ExtractUserText(capturedEngineerMessages[6]);
+        Assert.Contains("Step 2 observation:", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 3 observation:", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 4 observation:", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 5 observation:", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 6 observation:", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("Step 1 observation:", stepSevenPrompt, StringComparison.Ordinal);
+
+        var idx2 = stepSevenPrompt.IndexOf("Step 2 observation:", StringComparison.Ordinal);
+        var idx3 = stepSevenPrompt.IndexOf("Step 3 observation:", StringComparison.Ordinal);
+        var idx4 = stepSevenPrompt.IndexOf("Step 4 observation:", StringComparison.Ordinal);
+        var idx5 = stepSevenPrompt.IndexOf("Step 5 observation:", StringComparison.Ordinal);
+        var idx6 = stepSevenPrompt.IndexOf("Step 6 observation:", StringComparison.Ordinal);
+        Assert.True(idx2 < idx3 && idx3 < idx4 && idx4 < idx5 && idx5 < idx6);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldRenderHistoryOldestToNewest()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        var capturedEngineerMessages = new List<IReadOnlyList<ChatMessage>>();
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
+                capturedEngineerMessages.Add(messages.ToList()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.Shell.Execute(\"ls -la\");") }));
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateDiscoveryObservation("first"))
+            .ReturnsAsync(CreateDiscoveryObservation("second"))
+            .ReturnsAsync(CreateDiscoveryObservation("third"))
+            .ReturnsAsync(CreateCompleteObservation(buildPassed: true, hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        Assert.True(capturedEngineerMessages.Count >= 4);
+        var stepFourPrompt = ExtractUserText(capturedEngineerMessages[3]);
+        var idx1 = stepFourPrompt.IndexOf("Step 1 observation:", StringComparison.Ordinal);
+        var idx2 = stepFourPrompt.IndexOf("Step 2 observation:", StringComparison.Ordinal);
+        var idx3 = stepFourPrompt.IndexOf("Step 3 observation:", StringComparison.Ordinal);
+        Assert.True(idx1 >= 0 && idx2 >= 0 && idx3 >= 0);
+        Assert.True(idx1 < idx2 && idx2 < idx3);
     }
 
     [Fact]
@@ -485,5 +552,14 @@ public class AgentOrchestratorTests
             HasChanges: false,
             BuildPassed: false,
             Action: new AgenticStepAction(AgenticStepActionKind.Unknown));
+    }
+
+    private static string ExtractUserText(IReadOnlyList<ChatMessage> messages)
+    {
+        return string.Join(
+            "\n",
+            messages
+                .Where(message => string.Equals(message.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
+                .Select(message => message.Text ?? string.Empty));
     }
 }
