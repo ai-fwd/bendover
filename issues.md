@@ -5,6 +5,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] Rename to Policies
 - [ ] Need to create better policies based on issues below
 - [ ] Need refactoring policies 
+- [ ] Need to create a policy for the agentic boundary (host vs agent)
 
 ## Domain
 - [ ] Code smell on interfaces
@@ -15,8 +16,10 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] AgentOrchestrator doesn't iterate based on reviewer feedback
 - [x] AgentOrchestrator practice selection needs to be more robust
 - [ ] AgentOrchestrator doesn't pass any context so evaluation runs are meaningless
-- [ ] AgentOrchestrator is currently running as 1 shot with retries vs. multi-turn
-- [ ] AgentOrchestrator is focused on script run vs. goal accomplished
+- [x] AgentOrchestrator is currently running as 1 shot with retries vs. multi-turn
+- [x] AgentOrchestrator is focused on script run vs. goal accomplished
+- [ ] Need to improve PracticeService because the LM is not picking correctly
+- [x] Passing a rolling history of N previous messages. hard code for now.
 
 
 ## Infrastructure
@@ -47,6 +50,10 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] Support multi-line input via Shift+Enter
 - [x] Needs to support Codex auth flow
 - [ ] Changed to .env file but readme is showing support for different agent configs via appsettings.json & configuration.GetSection(AgentOptions.SectionName) still exists. I don't see tests.
+- [x] Improve output to include the plan, tool, observation
+- [ ] script_output_tail should be included in the observations
+- [ ] Remove all the [transcript][prompt] outputs now that we've got plan, tool, obs
+- [ ] Clean up the visual using panels
 
 ## Presentation.Server
 - [ ] Falling behind the CLI -- will require large changes in design
@@ -63,6 +70,8 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 
 ## ScriptRunner
 - [ ] Respect the author of the patch, Bendover should get credit.
+- [ ] Need to change how stepPlan is surfaced and parsed -- not loving it
+- [ ] 
 
 ## SDK
 - [x] Need to provide this context to the agent otherwise it has no visibility
