@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using Bendover.Domain.Agentic;
 using Bendover.Domain.Entities;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -11,6 +10,18 @@ internal static class EngineerBodyValidator
 {
     private static readonly Regex MarkdownFenceRegex = new(@"(^|\r?\n)\s*```", RegexOptions.Compiled);
 
+    private static readonly Dictionary<string, ActionSignature> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sdk.WriteFile"] = new ActionSignature("write_file", "sdk.WriteFile", ExpectsNoArgs: false, IsDone: false),
+        ["sdk.DeleteFile"] = new ActionSignature("delete_file", "sdk.DeleteFile", ExpectsNoArgs: false, IsDone: false),
+        ["sdk.ReadFile"] = new ActionSignature("read_file", "sdk.ReadFile", ExpectsNoArgs: false, IsDone: false),
+        ["sdk.LocateFile"] = new ActionSignature("locate_file", "sdk.LocateFile", ExpectsNoArgs: false, IsDone: false),
+        ["sdk.InspectFile"] = new ActionSignature("inspect_file", "sdk.InspectFile", ExpectsNoArgs: false, IsDone: false),
+        ["sdk.Build"] = new ActionSignature("build", "sdk.Build", ExpectsNoArgs: true, IsDone: false),
+        ["sdk.Test"] = new ActionSignature("test", "sdk.Test", ExpectsNoArgs: true, IsDone: false),
+        ["sdk.Done"] = new ActionSignature("done", "sdk.Done", ExpectsNoArgs: true, IsDone: true)
+    };
+
     public static EngineerBodyAnalysis Analyze(string bodyContent)
     {
         var violations = new List<string>();
@@ -20,7 +31,7 @@ internal static class EngineerBodyValidator
             violations.Add("body is empty");
             return new EngineerBodyAnalysis(
                 ValidationError: BuildErrorMessage(violations),
-                Action: new AgenticStepAction(AgenticStepActionKind.Unknown),
+                Action: new AgenticStepAction("unknown"),
                 StepPlan: null,
                 ToolCall: null);
         }
@@ -87,199 +98,125 @@ internal static class EngineerBodyValidator
 
     private static ProtocolAnalysis ValidateSingleActionProtocol(CompilationUnitSyntax root, List<string> violations)
     {
-        var actionableStepCount = 0;
-        var mutationStepCount = 0;
-        var verificationStepCount = 0;
-        AgenticStepAction? firstAction = null;
-        string? firstToolCall = null;
+        var actionable = new List<InvocationInfo>();
 
-        var invocationInfos = root
-            .DescendantNodes()
-            .OfType<InvocationExpressionSyntax>()
-            .Select(ClassifyInvocation)
-            .ToList();
-
-        foreach (var invocationInfo in invocationInfos)
+        foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
-            if (!string.IsNullOrWhiteSpace(invocationInfo.Violation))
+            var info = ClassifyInvocation(invocation);
+            if (!string.IsNullOrWhiteSpace(info.Violation))
             {
-                violations.Add(invocationInfo.Violation!);
+                violations.Add(info.Violation!);
             }
 
-            if (invocationInfo.Action is null)
+            if (info.Action is not null)
             {
-                continue;
-            }
-
-            firstAction ??= invocationInfo.Action;
-            firstToolCall ??= invocationInfo.ToolCall;
-            actionableStepCount++;
-
-            if (invocationInfo.IsMutation)
-            {
-                mutationStepCount++;
-            }
-
-            if (invocationInfo.IsVerification)
-            {
-                verificationStepCount++;
+                actionable.Add(info);
             }
         }
 
-        if (mutationStepCount > 1)
+        if (actionable.Count == 0)
         {
-            violations.Add("contains multiple mutation actions; exactly one mutation action is allowed per step");
+            violations.Add("must include exactly one actionable step: sdk.WriteFile(...), sdk.DeleteFile(...), sdk.ReadFile(...), sdk.LocateFile(...), sdk.InspectFile(...), sdk.Build(), sdk.Test(), or sdk.Done()");
+            return new ProtocolAnalysis(
+                Action: new AgenticStepAction("unknown"),
+                ToolCall: null);
         }
 
-        if (mutationStepCount > 0 && verificationStepCount > 0)
-        {
-            violations.Add("mixes mutation and verification in one step");
-        }
+        var first = actionable[0];
 
-        if (verificationStepCount > 1)
-        {
-            violations.Add("contains multiple verification actions; exactly one verification action is allowed per step");
-        }
-
-        if (actionableStepCount > 1)
+        if (actionable.Count > 1)
         {
             violations.Add("contains multiple actionable steps; exactly one action is allowed per step");
         }
 
-        if (actionableStepCount == 0)
+        if (ContainsNestedSdkInvocation(first.Invocation))
         {
-            violations.Add("must include exactly one actionable step: sdk.File.Write(...), sdk.File.Delete(...), sdk.Shell.Execute(\"dotnet build ...\"), sdk.Shell.Execute(\"dotnet test ...\"), sdk.Shell.Execute(\"<read-only command>\"), sdk.Done(), or sdk.Signal.Done()");
-        }
-
-        var loopNodes = root
-            .DescendantNodes()
-            .Where(node => node is ForStatementSyntax
-                           or ForEachStatementSyntax
-                           or WhileStatementSyntax
-                           or DoStatementSyntax)
-            .ToArray();
-
-        foreach (var loopNode in loopNodes)
-        {
-            var loopHasMutation = loopNode
-                .DescendantNodes()
-                .OfType<InvocationExpressionSyntax>()
-                .Select(ClassifyInvocation)
-                .Any(info => info.IsMutation);
-
-            if (loopHasMutation)
-            {
-                violations.Add("contains mutation actions inside loops");
-                break;
-            }
+            violations.Add("contains nested sdk calls; each step must execute exactly one atomic sdk action");
         }
 
         return new ProtocolAnalysis(
-            Action: firstAction ?? new AgenticStepAction(AgenticStepActionKind.Unknown),
-            ToolCall: firstToolCall);
+            Action: first.Action!,
+            ToolCall: first.ToolCall);
+    }
+
+    private static bool ContainsNestedSdkInvocation(InvocationExpressionSyntax rootInvocation)
+    {
+        foreach (var invocation in rootInvocation.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (ReferenceEquals(invocation, rootInvocation))
+            {
+                continue;
+            }
+
+            var expressionText = NormalizeInvocationExpression(invocation.Expression);
+            if (expressionText.StartsWith("sdk.", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static InvocationInfo ClassifyInvocation(InvocationExpressionSyntax invocation)
     {
-        var expressionText = invocation.Expression
-            .ToString()
-            .Replace(" ", string.Empty, StringComparison.Ordinal);
+        var expressionText = NormalizeInvocationExpression(invocation.Expression);
 
-        if (expressionText.Equals("sdk.File.Write", StringComparison.OrdinalIgnoreCase)
-            || expressionText.Equals("sdk.WriteFile", StringComparison.OrdinalIgnoreCase))
+        if (expressionText.StartsWith("sdk.File.", StringComparison.OrdinalIgnoreCase)
+            || expressionText.StartsWith("sdk.Shell.", StringComparison.OrdinalIgnoreCase)
+            || expressionText.StartsWith("sdk.Git.", StringComparison.OrdinalIgnoreCase)
+            || expressionText.Equals("sdk.Run", StringComparison.OrdinalIgnoreCase)
+            || expressionText.StartsWith("sdk.Signal.", StringComparison.OrdinalIgnoreCase))
         {
             return new InvocationInfo(
-                IsMutation: true,
-                IsVerification: false,
-                Action: new AgenticStepAction(AgenticStepActionKind.MutationWrite, "sdk.File.Write"),
-                Violation: null,
-                ToolCall: RenderToolCall(invocation));
-        }
-
-        if (expressionText.Equals("sdk.File.Delete", StringComparison.OrdinalIgnoreCase)
-            || expressionText.Equals("sdk.DeleteFile", StringComparison.OrdinalIgnoreCase))
-        {
-            return new InvocationInfo(
-                IsMutation: true,
-                IsVerification: false,
-                Action: new AgenticStepAction(AgenticStepActionKind.MutationDelete, "sdk.File.Delete"),
-                Violation: null,
-                ToolCall: RenderToolCall(invocation));
-        }
-
-        if (expressionText.Equals("sdk.Signal.Done", StringComparison.OrdinalIgnoreCase)
-            || expressionText.Equals("sdk.Done", StringComparison.OrdinalIgnoreCase))
-        {
-            if (invocation.ArgumentList.Arguments.Count != 0)
-            {
-                return new InvocationInfo(
-                    IsMutation: false,
-                    IsVerification: false,
-                    Action: null,
-                    Violation: "sdk.Done()/sdk.Signal.Done() does not accept arguments",
-                    ToolCall: null);
-            }
-
-            return new InvocationInfo(
-                IsMutation: false,
-                IsVerification: false,
-                Action: new AgenticStepAction(AgenticStepActionKind.Complete, expressionText.Equals("sdk.Done", StringComparison.OrdinalIgnoreCase) ? "sdk.Done" : "sdk.Signal.Done"),
-                Violation: null,
-                ToolCall: RenderToolCall(invocation));
-        }
-
-        if (expressionText.StartsWith("sdk.Git.", StringComparison.OrdinalIgnoreCase))
-        {
-            return new InvocationInfo(
-                IsMutation: false,
-                IsVerification: false,
+                Invocation: invocation,
                 Action: null,
-                Violation: "sdk.Git operations are not allowed in single-step mode; use sdk.File.Write or sdk.File.Delete",
+                Violation: "legacy sdk surface is not supported; use direct sdk methods (WriteFile, DeleteFile, ReadFile, LocateFile, InspectFile, Build, Test, Done)",
                 ToolCall: null);
         }
 
-        if (!expressionText.Equals("sdk.Shell.Execute", StringComparison.OrdinalIgnoreCase)
-            && !expressionText.Equals("sdk.Run", StringComparison.OrdinalIgnoreCase))
-        {
-            return new InvocationInfo(IsMutation: false, IsVerification: false, Action: null, Violation: null, ToolCall: null);
-        }
-
-        if (!TryGetShellCommand(invocation, out var command))
+        if (!expressionText.StartsWith("sdk.", StringComparison.OrdinalIgnoreCase))
         {
             return new InvocationInfo(
-                IsMutation: false,
-                IsVerification: false,
+                Invocation: invocation,
                 Action: null,
-                Violation: "shell command must use a single string-literal argument",
-                ToolCall: null);
-        }
-
-        if (!ShellCommandPolicy.TryValidateAllowedForEngineer(command, out var violation))
-        {
-            return new InvocationInfo(
-                IsMutation: false,
-                IsVerification: false,
-                Action: null,
-                Violation: violation,
-                ToolCall: null);
-        }
-
-        if (ShellCommandPolicy.TryGetVerificationKind(command, out var verificationKind))
-        {
-            return new InvocationInfo(
-                IsMutation: false,
-                IsVerification: true,
-                Action: new AgenticStepAction(verificationKind, command),
                 Violation: null,
-                ToolCall: RenderToolCall(invocation));
+                ToolCall: null);
+        }
+
+        if (!SupportedActions.TryGetValue(expressionText, out var signature))
+        {
+            return new InvocationInfo(
+                Invocation: invocation,
+                Action: null,
+                Violation: $"unknown sdk action '{expressionText}'; use sdk.WriteFile/DeleteFile/ReadFile/LocateFile/InspectFile/Build/Test/Done",
+                ToolCall: null);
+        }
+
+        if (signature.ExpectsNoArgs && invocation.ArgumentList.Arguments.Count != 0)
+        {
+            return new InvocationInfo(
+                Invocation: invocation,
+                Action: null,
+                Violation: $"{signature.CanonicalCall}() does not accept arguments",
+                ToolCall: null);
         }
 
         return new InvocationInfo(
-            IsMutation: false,
-            IsVerification: false,
-            Action: new AgenticStepAction(AgenticStepActionKind.DiscoveryShell, command),
+            Invocation: invocation,
+            Action: new AgenticStepAction(
+                ActionName: signature.ActionName,
+                IsDone: signature.IsDone,
+                Command: signature.CanonicalCall),
             Violation: null,
             ToolCall: RenderToolCall(invocation));
+    }
+
+    private static string NormalizeInvocationExpression(ExpressionSyntax expression)
+    {
+        return expression
+            .ToString()
+            .Replace(" ", string.Empty, StringComparison.Ordinal);
     }
 
     private static string? TryExtractStepPlan(CompilationUnitSyntax root)
@@ -344,27 +281,14 @@ internal static class EngineerBodyValidator
         return invocation.NormalizeWhitespace().ToString();
     }
 
-    private static bool TryGetShellCommand(InvocationExpressionSyntax invocation, out string command)
-    {
-        command = string.Empty;
-        if (invocation.ArgumentList.Arguments.Count != 1)
-        {
-            return false;
-        }
-
-        var firstArg = invocation.ArgumentList.Arguments[0].Expression as LiteralExpressionSyntax;
-        if (firstArg is null || !firstArg.IsKind(SyntaxKind.StringLiteralExpression))
-        {
-            return false;
-        }
-
-        command = firstArg.Token.ValueText;
-        return !string.IsNullOrWhiteSpace(command);
-    }
+    private readonly record struct ActionSignature(
+        string ActionName,
+        string CanonicalCall,
+        bool ExpectsNoArgs,
+        bool IsDone);
 
     private readonly record struct InvocationInfo(
-        bool IsMutation,
-        bool IsVerification,
+        InvocationExpressionSyntax Invocation,
         AgenticStepAction? Action,
         string? Violation,
         string? ToolCall);

@@ -107,7 +107,7 @@ public class DockerContainerService : IContainerService
         {
             return new ScriptExecutionResult(
                 Execution: writeBodyResult,
-                Action: new AgenticStepAction(AgenticStepActionKind.Unknown),
+                Action: new AgenticStepAction("unknown"),
                 StepPlan: null,
                 ToolCall: null);
         }
@@ -287,7 +287,7 @@ public class DockerContainerService : IContainerService
         catch (Exception ex)
         {
             return (
-                new AgenticStepAction(AgenticStepActionKind.Unknown),
+                new AgenticStepAction("unknown"),
                 null,
                 null,
                 $"script action metadata missing: {ex.Message}");
@@ -296,7 +296,7 @@ public class DockerContainerService : IContainerService
         if (readResult.ExitCode != 0 || string.IsNullOrWhiteSpace(readResult.CombinedOutput))
         {
             return (
-                new AgenticStepAction(AgenticStepActionKind.Unknown),
+                new AgenticStepAction("unknown"),
                 null,
                 null,
                 $"script action metadata unavailable.\n{readResult.CombinedOutput}");
@@ -307,31 +307,21 @@ public class DockerContainerService : IContainerService
             var dto = JsonSerializer.Deserialize<ScriptRunnerActionDto>(
                 readResult.CombinedOutput,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (dto is null || string.IsNullOrWhiteSpace(dto.kind))
+            if (dto is null || string.IsNullOrWhiteSpace(dto.action_name))
             {
                 return (
-                    new AgenticStepAction(AgenticStepActionKind.Unknown),
+                    new AgenticStepAction("unknown"),
                     null,
                     null,
                     $"script action metadata invalid.\n{readResult.CombinedOutput}");
             }
 
-            var kind = dto.kind.Trim().ToLowerInvariant() switch
-            {
-                "mutation_write" => AgenticStepActionKind.MutationWrite,
-                "mutation_delete" => AgenticStepActionKind.MutationDelete,
-                "verification_build" => AgenticStepActionKind.VerificationBuild,
-                "verification_test" => AgenticStepActionKind.VerificationTest,
-                "discovery_shell" => AgenticStepActionKind.DiscoveryShell,
-                "complete" => AgenticStepActionKind.Complete,
-                _ => AgenticStepActionKind.Unknown
-            };
-
-            var warning = kind == AgenticStepActionKind.Unknown
-                ? $"script action metadata kind '{dto.kind}' not recognized."
+            var normalizedActionName = dto.action_name.Trim().ToLowerInvariant();
+            var warning = string.Equals(normalizedActionName, "unknown", StringComparison.Ordinal)
+                ? "script action metadata action_name 'unknown' was returned."
                 : null;
             return (
-                new AgenticStepAction(kind, dto.command),
+                new AgenticStepAction(normalizedActionName, dto.is_done, dto.command),
                 string.IsNullOrWhiteSpace(dto.step_plan) ? null : dto.step_plan.Trim(),
                 string.IsNullOrWhiteSpace(dto.tool_call) ? null : dto.tool_call.Trim(),
                 warning);
@@ -339,7 +329,7 @@ public class DockerContainerService : IContainerService
         catch (Exception ex)
         {
             return (
-                new AgenticStepAction(AgenticStepActionKind.Unknown),
+                new AgenticStepAction("unknown"),
                 null,
                 null,
                 $"script action metadata parse failed: {ex.Message}\n{readResult.CombinedOutput}");
@@ -360,7 +350,8 @@ public class DockerContainerService : IContainerService
     }
 
     private sealed record ScriptRunnerActionDto(
-        string kind,
+        string action_name,
+        bool is_done,
         string? command,
         string? step_plan,
         string? tool_call);

@@ -16,7 +16,7 @@ internal static class Program
                 parsed.ResultFilePath,
                 new EngineerBodyAnalysis(
                     ValidationError: null,
-                    Action: new AgenticStepAction(AgenticStepActionKind.Unknown),
+                    Action: new AgenticStepAction("unknown"),
                     StepPlan: null,
                     ToolCall: null));
 
@@ -40,7 +40,6 @@ internal static class Program
             var scriptOptions = ScriptOptions.Default
                 .AddReferences(typeof(ScriptGlobals).Assembly)
                 .AddReferences(typeof(Bendover.SDK.BendoverSDK).Assembly)
-                .AddReferences(typeof(Bendover.Domain.Interfaces.IBendoverSDK).Assembly)
                 .AddImports(
                     "System",
                     "System.IO",
@@ -94,7 +93,8 @@ internal static class Program
         }
 
         var payload = new ScriptRunnerActionResult(
-            kind: analysis.Action.KindToken,
+            action_name: analysis.Action.ActionName,
+            is_done: analysis.Action.IsDone,
             command: analysis.Action.Command,
             step_plan: analysis.StepPlan,
             tool_call: analysis.ToolCall);
@@ -198,7 +198,8 @@ internal static class Program
     }
 
     private readonly record struct ScriptRunnerActionResult(
-        string kind,
+        string action_name,
+        bool is_done,
         string? command,
         string? step_plan,
         string? tool_call);

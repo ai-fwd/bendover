@@ -83,8 +83,8 @@ public class ContainerIntegrationTest : IAsyncLifetime
 #r ""{DomainPath}/Bendover.Domain.dll"" 
 using Bendover.SDK;
 
-var fileSystem = new BendoverSDK().File;
-fileSystem.Write(""/tmp/bootstrapped.txt"", ""Hello from Bendover!"");
+var sdk = new BendoverSDK();
+sdk.WriteFile(""tmp/bootstrapped.txt"", ""Hello from Bendover!"");
 ";
         var scriptPath = "/tmp/bootstrap.csx";
         
