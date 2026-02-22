@@ -15,10 +15,13 @@ public class ScriptRunnerDescribeSdkTests
     }
 
     [Fact]
-    public void SdkSurfaceDescriber_BuildMarkdown_ContainsDeleteSurface()
+    public void SdkSurfaceDescriber_BuildMarkdown_ContainsSubstituteGuidance()
     {
         var markdown = SdkSurfaceDescriber.BuildMarkdown();
-        Assert.Contains("Void Delete(String path)", markdown, StringComparison.Ordinal);
+        Assert.Contains("Void WriteFile(String path, String content)", markdown, StringComparison.Ordinal);
+        Assert.Contains("String ReadFile(String path)", markdown, StringComparison.Ordinal);
+        Assert.Contains("Use this instead of: `find`", markdown, StringComparison.Ordinal);
+        Assert.Contains("Use this instead of: `rg, grep, sed`", markdown, StringComparison.Ordinal);
         Assert.Contains("Void DeleteFile(String path)", markdown, StringComparison.Ordinal);
     }
 

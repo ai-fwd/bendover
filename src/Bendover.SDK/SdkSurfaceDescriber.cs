@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using System.Xml.Linq;
 
 namespace Bendover.SDK;
 
@@ -9,16 +10,14 @@ public static class SdkSurfaceDescriber
 
     public static string BuildMarkdown()
     {
-        var facadeType = typeof(SdkFacade);
-        var facadeProperties = facadeType
-            .GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-            .OrderBy(p => p.Name, StringComparer.Ordinal)
-            .ToArray();
-        var facadeMethods = facadeType
+        var sdkType = typeof(BendoverSDK);
+        var methods = sdkType
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(m => !m.IsSpecialName)
             .OrderBy(m => m.Name, StringComparer.Ordinal)
             .ToArray();
+
+        var docsByMethod = LoadToolDocsByMethodName(sdkType.Assembly, sdkType.FullName!);
 
         var builder = new StringBuilder();
         builder.AppendLine(ContractHeading);
@@ -31,65 +30,101 @@ public static class SdkSurfaceDescriber
 
         builder.AppendLine("## Entry Point");
         builder.AppendLine("- Global variable: `sdk`");
-        builder.AppendLine($"- Type: `{FormatTypeName(facadeType)}`");
+        builder.AppendLine($"- Type: `{FormatTypeName(sdkType)}`");
         builder.AppendLine();
 
-        builder.AppendLine("## Direct sdk Members");
-        if (facadeMethods.Length == 0 && facadeProperties.Length == 0)
+        builder.AppendLine("## sdk Methods");
+        foreach (var method in methods)
         {
-            builder.AppendLine("- (none)");
-        }
-        else
-        {
-            foreach (var property in facadeProperties)
+            if (!docsByMethod.TryGetValue(method.Name, out var doc))
             {
-                builder.AppendLine($"- `{property.Name}`: `{FormatTypeName(property.PropertyType)}`");
+                throw new InvalidOperationException(
+                    $"Missing XML tool documentation for method '{sdkType.FullName}.{method.Name}'.");
             }
 
-            foreach (var method in facadeMethods)
+            EnsureRequiredDocField(method, "summary", doc.Summary);
+            EnsureRequiredDocField(method, "tool_category", doc.ToolCategory);
+            EnsureRequiredDocField(method, "use_instead_of", doc.UseInsteadOf);
+            EnsureRequiredDocField(method, "result_visibility", doc.ResultVisibility);
+
+            builder.AppendLine($"- `{FormatMethodSignature(method)}`");
+            builder.AppendLine($"  - Category: `{doc.ToolCategory}`");
+            builder.AppendLine($"  - Summary: {doc.Summary}");
+            builder.AppendLine($"  - Use this instead of: `{doc.UseInsteadOf}`");
+            builder.AppendLine($"  - Result visibility: {doc.ResultVisibility}");
+            foreach (var paramRule in doc.ParamRules)
             {
-                builder.AppendLine($"- `{FormatMethodSignature(method)}`");
-            }
-        }
-
-        foreach (var property in facadeProperties)
-        {
-            builder.AppendLine();
-            builder.AppendLine($"## sdk.{property.Name} ({FormatTypeName(property.PropertyType)})");
-            builder.AppendLine(GetToolCategoryNote(property.Name));
-
-            var methods = property.PropertyType
-                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => !m.IsSpecialName)
-                .OrderBy(m => m.Name, StringComparer.Ordinal)
-                .ThenBy(m => m.GetParameters().Length)
-                .ToArray();
-
-            if (methods.Length == 0)
-            {
-                builder.AppendLine("- (no public methods)");
-                continue;
-            }
-
-            foreach (var method in methods)
-            {
-                builder.AppendLine($"- `{FormatMethodSignature(method)}`");
+                builder.AppendLine($"  - Param `{paramRule.Name}`: {paramRule.Rule}");
             }
         }
 
         return builder.ToString();
     }
 
-    private static string GetToolCategoryNote(string propertyName)
+    private static void EnsureRequiredDocField(MethodInfo method, string fieldName, string? value)
     {
-        return propertyName switch
+        if (!string.IsNullOrWhiteSpace(value))
         {
-            "File" => "_Use file tools for read/write/exists checks in the repository workspace._",
-            "Git" => "_Use git tools for repository operations._",
-            "Shell" => "_Use shell tools for command execution and command output capture._",
-            "Signal" => "_Use lifecycle signal tools to declare explicit completion intent._",
-            _ => "_Use this SDK surface as documented below._"
-        };
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Method '{method.DeclaringType?.FullName}.{method.Name}' is missing required XML doc tag '{fieldName}'.");
+    }
+
+    private static Dictionary<string, ToolDoc> LoadToolDocsByMethodName(Assembly assembly, string fullTypeName)
+    {
+        var xmlPath = Path.ChangeExtension(assembly.Location, ".xml");
+        if (string.IsNullOrWhiteSpace(xmlPath) || !File.Exists(xmlPath))
+        {
+            throw new InvalidOperationException(
+                $"Could not load SDK XML documentation file '{xmlPath}'. Ensure GenerateDocumentationFile is enabled.");
+        }
+
+        var document = XDocument.Load(xmlPath);
+        var members = document.Descendants("member");
+        var prefix = $"M:{fullTypeName}.";
+
+        var docs = new Dictionary<string, ToolDoc>(StringComparer.OrdinalIgnoreCase);
+        foreach (var member in members)
+        {
+            var nameAttribute = member.Attribute("name")?.Value;
+            if (string.IsNullOrWhiteSpace(nameAttribute)
+                || !nameAttribute.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var methodSegment = nameAttribute.Substring(prefix.Length);
+            var openParenIndex = methodSegment.IndexOf('(');
+            var methodName = openParenIndex >= 0
+                ? methodSegment[..openParenIndex]
+                : methodSegment;
+            if (string.IsNullOrWhiteSpace(methodName))
+            {
+                continue;
+            }
+
+            var summary = Normalize(member.Element("summary")?.Value);
+            var toolCategory = Normalize(member.Element("tool_category")?.Value);
+            var useInsteadOf = Normalize(member.Element("use_instead_of")?.Value);
+            var resultVisibility = Normalize(member.Element("result_visibility")?.Value);
+            var paramRules = member.Elements("param_rule")
+                .Select(x => new ParamRule(
+                    Name: Normalize(x.Attribute("name")?.Value) ?? "(unspecified)",
+                    Rule: Normalize(x.Value) ?? string.Empty))
+                .Where(x => !string.IsNullOrWhiteSpace(x.Rule))
+                .ToArray();
+
+            docs[methodName] = new ToolDoc(
+                Summary: summary,
+                ToolCategory: toolCategory,
+                UseInsteadOf: useInsteadOf,
+                ResultVisibility: resultVisibility,
+                ParamRules: paramRules);
+        }
+
+        return docs;
     }
 
     private static string FormatMethodSignature(MethodInfo method)
@@ -112,4 +147,29 @@ public static class SdkSurfaceDescriber
         var genericArgs = string.Join(", ", type.GetGenericArguments().Select(FormatTypeName));
         return $"{typeName}<{genericArgs}>";
     }
+
+    private static string? Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return string.Join(
+            " ",
+            value
+                .Replace("\r", "\n", StringComparison.Ordinal)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x)));
+    }
+
+    private sealed record ToolDoc(
+        string? Summary,
+        string? ToolCategory,
+        string? UseInsteadOf,
+        string? ResultVisibility,
+        IReadOnlyList<ParamRule> ParamRules);
+
+    private sealed record ParamRule(string Name, string Rule);
 }

@@ -15,42 +15,10 @@ public sealed record SandboxExecutionResult(
     string CombinedOutput
 );
 
-public enum AgenticStepActionKind
-{
-    Unknown,
-    MutationWrite,
-    MutationDelete,
-    VerificationBuild,
-    VerificationTest,
-    DiscoveryShell,
-    Complete
-}
-
 public sealed record AgenticStepAction(
-    AgenticStepActionKind Kind,
-    string? Command = null)
-{
-    public bool IsMutationAction =>
-        Kind is AgenticStepActionKind.MutationWrite or AgenticStepActionKind.MutationDelete;
-
-    public bool IsVerificationAction =>
-        Kind is AgenticStepActionKind.VerificationBuild or AgenticStepActionKind.VerificationTest;
-
-    public bool IsCompletionAction =>
-        Kind == AgenticStepActionKind.Complete;
-
-    public string KindToken =>
-        Kind switch
-        {
-            AgenticStepActionKind.MutationWrite => "mutation_write",
-            AgenticStepActionKind.MutationDelete => "mutation_delete",
-            AgenticStepActionKind.VerificationBuild => "verification_build",
-            AgenticStepActionKind.VerificationTest => "verification_test",
-            AgenticStepActionKind.DiscoveryShell => "discovery_shell",
-            AgenticStepActionKind.Complete => "complete",
-            _ => "unknown"
-        };
-}
+    string ActionName,
+    bool IsDone = false,
+    string? Command = null);
 
 public sealed record ScriptExecutionResult(
     SandboxExecutionResult Execution,
@@ -60,20 +28,13 @@ public sealed record ScriptExecutionResult(
 );
 
 public sealed record AgenticTurnSettings(
-    string DiffCommand = "cd /workspace && git diff",
-    string ChangedFilesCommand = "cd /workspace && git diff --name-only",
-    string BuildCommand = "cd /workspace && dotnet build Bendover.sln",
-    string TestCommand = "cd /workspace && dotnet test"
+    string DiffCommand = "cd /workspace && git diff"
 );
 
 public sealed record AgenticTurnObservation(
     SandboxExecutionResult ScriptExecution,
     SandboxExecutionResult DiffExecution,
-    SandboxExecutionResult ChangedFilesExecution,
-    SandboxExecutionResult BuildExecution,
-    string[] ChangedFiles,
     bool HasChanges,
-    bool BuildPassed,
     AgenticStepAction Action,
     string? StepPlan = null,
     string? ToolCall = null

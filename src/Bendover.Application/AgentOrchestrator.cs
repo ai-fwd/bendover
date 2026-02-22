@@ -187,9 +187,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 var stepHistory = new List<EngineerStepHistoryEntry>();
                 var completed = false;
                 var completionStep = 0;
-                string? completionActionKind = null;
+                string? completionActionName = null;
                 var lastScriptExitCode = (int?)null;
-                var lastChangedFilesCount = 0;
                 var turnSettings = new AgenticTurnSettings();
 
                 for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
@@ -237,13 +236,12 @@ public class AgentOrchestrator : IAgentOrchestrator
                         await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
                         var observationSummary = BuildCompactObservationSummary(turnObservation);
                         lastScriptExitCode = turnObservation.ScriptExecution.ExitCode;
-                        lastChangedFilesCount = turnObservation.ChangedFiles.Length;
                         await NotifyStepAsync(new AgentStepEvent(
                             StepNumber: stepNumber,
                             Plan: turnObservation.StepPlan,
                             Tool: BuildStepTool(turnObservation),
                             Observation: BuildStepObservationSummary(turnObservation),
-                            IsCompletion: turnObservation.Action.IsCompletionAction));
+                            IsCompletion: turnObservation.Action.IsDone));
 
                         if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
@@ -261,12 +259,12 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                         AppendStepHistory(stepHistory, stepNumber, observationSummary, failureSummary: null);
 
-                        if (turnObservation.Action.IsCompletionAction)
+                        if (turnObservation.Action.IsDone)
                         {
                             lastFailureDigestForRunResult = null;
                             completed = true;
                             completionStep = stepNumber;
-                            completionActionKind = turnObservation.Action.KindToken;
+                            completionActionName = turnObservation.Action.ActionName;
                             break;
                         }
 
@@ -289,24 +287,12 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                 if (!completed)
                 {
-                    var failedDiffContent = string.Empty;
-                    try
-                    {
-                        var failedDiffResult = await _containerService.ExecuteCommandAsync("cd /workspace && git diff");
-                        failedDiffContent = failedDiffResult.CombinedOutput;
-                    }
-                    catch
-                    {
-                        // Keep failure-path recording best-effort and do not mask the original max-turn failure.
-                    }
-
                     await RecordRunResultAsync(
                         status: "failed_max_turns",
                         completionStep: null,
-                        completionActionKind: null,
-                        hasCodeChanges: !string.IsNullOrWhiteSpace(failedDiffContent),
-                        changedFilesCount: lastChangedFilesCount,
-                        gitDiffBytes: failedDiffContent.Length,
+                        completionActionName: null,
+                        hasCodeChanges: false,
+                        gitDiffBytes: 0,
                         lastScriptExitCode: lastScriptExitCode,
                         lastFailureDigest: lastFailureDigestForRunResult);
                     throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{lastFailureDigestForRunResult}");
@@ -316,9 +302,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 await RecordRunResultAsync(
                     status: "completed",
                     completionStep: completionStep,
-                    completionActionKind: completionActionKind,
+                    completionActionName: completionActionName,
                     hasCodeChanges: !string.IsNullOrWhiteSpace(gitDiffContent),
-                    changedFilesCount: lastChangedFilesCount,
                     gitDiffBytes: gitDiffContent.Length,
                     lastScriptExitCode: lastScriptExitCode,
                     lastFailureDigest: lastFailureDigestForRunResult);
@@ -518,36 +503,34 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     private static string BuildCompactObservationSummary(AgenticTurnObservation observation)
     {
-        return $"action_kind={observation.Action.KindToken}; " +
+        return $"action_name={observation.Action.ActionName}; " +
                $"action_command={ToCompactSingleLine(observation.Action.Command, HistoryPreviewLimit)}; " +
+               $"is_done={observation.Action.IsDone}; " +
                $"tool_call={ToCompactSingleLine(observation.ToolCall, HistoryPreviewLimit)}; " +
                $"step_plan={ToCompactSingleLine(observation.StepPlan, HistoryPreviewLimit)}; " +
                $"script_exit={observation.ScriptExecution.ExitCode}; " +
-               $"verification_exit={observation.BuildExecution.ExitCode}; " +
-               $"changed_files_count={observation.ChangedFiles.Length}; " +
                $"has_changes={observation.HasChanges}; " +
-               $"build_passed={observation.BuildPassed}; " +
+               $"diff_exit={observation.DiffExecution.ExitCode}; " +
                $"output_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
     }
 
     private static string BuildCompactExceptionObservationSummary(Exception exception)
     {
-        return $"action_kind=unknown; " +
+        return $"action_name=unknown; " +
                $"action_command=(none); " +
+               $"is_done=false; " +
                $"tool_call=(none); " +
                $"step_plan=(none); " +
                $"script_exit=1; " +
-               $"verification_exit=n/a; " +
-               $"changed_files_count=0; " +
                $"has_changes=false; " +
-               $"build_passed=false; " +
+               $"diff_exit=n/a; " +
                $"output_preview={ToCompactSingleLine(exception.ToString(), HistoryPreviewLimit)}";
     }
 
     private static string BuildCompactFailureSummaryFromObservation(AgenticTurnObservation observation, string failureType)
     {
         return $"failure_type={failureType}; " +
-               $"action_kind={observation.Action.KindToken}; " +
+               $"action_name={observation.Action.ActionName}; " +
                $"script_exit={observation.ScriptExecution.ExitCode}; " +
                $"error_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
     }
@@ -564,25 +547,19 @@ public class AgentOrchestrator : IAgentOrchestrator
         AgenticTurnObservation observation,
         IReadOnlyCollection<string> failedChecks)
     {
-        var changedFiles = observation.ChangedFiles.Length == 0
-            ? "(none)"
-            : string.Join(", ", observation.ChangedFiles);
         var gateSummary = failedChecks.Count == 0
             ? "(none)"
             : string.Join(", ", failedChecks);
         var scriptTail = GetLastLines(observation.ScriptExecution.CombinedOutput, 40);
         var diffTail = GetLastLines(observation.DiffExecution.CombinedOutput, 40);
-        var verificationTail = GetLastLines(observation.BuildExecution.CombinedOutput, 40);
 
         return $"failed_checks={gateSummary}\n" +
-               $"action_kind={observation.Action.KindToken}\n" +
+               $"action_name={observation.Action.ActionName}\n" +
                $"action_command={observation.Action.Command ?? "(none)"}\n" +
                $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
-               $"verification_exit_code={observation.BuildExecution.ExitCode}\n" +
-               $"changed_files={changedFiles}\n" +
+               $"diff_exit_code={observation.DiffExecution.ExitCode}\n" +
                $"script_output_tail:\n{scriptTail}\n\n" +
-               $"diff_output_tail:\n{diffTail}\n\n" +
-               $"verification_output_tail:\n{verificationTail}";
+               $"diff_output_tail:\n{diffTail}";
     }
 
     private static string BuildStepTool(AgenticTurnObservation observation)
@@ -592,27 +569,26 @@ public class AgentOrchestrator : IAgentOrchestrator
             return observation.ToolCall!;
         }
 
-        return observation.Action.Kind switch
+        if (string.Equals(observation.Action.Command, "sdk.Done", StringComparison.OrdinalIgnoreCase))
         {
-            AgenticStepActionKind.MutationWrite => "sdk.File.Write(...)",
-            AgenticStepActionKind.MutationDelete => "sdk.File.Delete(...)",
-            AgenticStepActionKind.VerificationBuild or AgenticStepActionKind.VerificationTest or AgenticStepActionKind.DiscoveryShell
-                => string.IsNullOrWhiteSpace(observation.Action.Command)
-                    ? "sdk.Shell.Execute(...)"
-                    : $"sdk.Shell.Execute(\"{observation.Action.Command}\")",
-            AgenticStepActionKind.Complete => "sdk.Signal.Done()",
-            _ => observation.Action.Command ?? "(unknown)"
-        };
+            return "sdk.Done()";
+        }
+
+        if (!string.IsNullOrWhiteSpace(observation.Action.Command))
+        {
+            return $"{observation.Action.Command}(...)";
+        }
+
+        return observation.Action.ActionName;
     }
 
     private static string BuildStepObservationSummary(AgenticTurnObservation observation)
     {
-        return $"action={observation.Action.KindToken}; " +
+        return $"action={observation.Action.ActionName}; " +
                $"script_exit={observation.ScriptExecution.ExitCode}; " +
-               $"verification_exit={observation.BuildExecution.ExitCode}; " +
-               $"changed_files={observation.ChangedFiles.Length}; " +
                $"has_changes={observation.HasChanges}; " +
-               $"build_passed={observation.BuildPassed}";
+               $"diff_exit={observation.DiffExecution.ExitCode}; " +
+               $"is_done={observation.Action.IsDone}";
     }
 
     private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)
@@ -631,9 +607,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     private async Task RecordRunResultAsync(
         string status,
         int? completionStep,
-        string? completionActionKind,
+        string? completionActionName,
         bool hasCodeChanges,
-        int changedFilesCount,
         int gitDiffBytes,
         int? lastScriptExitCode,
         string? lastFailureDigest)
@@ -642,9 +617,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             status,
             completion_step = completionStep,
-            completion_action_kind = completionActionKind,
+            completion_action_name = completionActionName,
             has_code_changes = hasCodeChanges,
-            changed_files_count = changedFilesCount,
             git_diff_bytes = gitDiffBytes,
             last_script_exit_code = lastScriptExitCode,
             last_failure_digest = lastFailureDigest
@@ -671,10 +645,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     private async Task<string> PersistSandboxArtifactsAsync()
     {
-        var gitDiff = await PersistArtifactFromSandboxCommandAsync("cd /workspace && git diff", "git_diff.patch", "git_diff.patch");
-        await PersistArtifactFromSandboxCommandAsync("cd /workspace && dotnet build Bendover.sln", "dotnet_build.txt", "dotnet_build_error.txt");
-        await PersistArtifactFromSandboxCommandAsync("cd /workspace && dotnet test", "dotnet_test.txt", "dotnet_test_error.txt");
-        return gitDiff;
+        return await PersistArtifactFromSandboxCommandAsync("cd /workspace && git diff", "git_diff.patch", "git_diff.patch");
     }
 
     private async Task<string> PersistArtifactFromSandboxCommandAsync(string command, string successArtifactName, string errorArtifactName)

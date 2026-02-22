@@ -9,21 +9,22 @@ public class ScriptRunnerProtocolTests
     private static bool _scriptRunnerBuilt;
 
     [Fact]
-    public async Task ScriptRunner_WritesMutationActionMetadata_ToResultFile()
+    public async Task ScriptRunner_WritesWriteFileMetadata_ToResultFile()
     {
         var targetFile = $"tmp-script-runner-protocol-{Guid.NewGuid():N}.txt";
         var repoRoot = FindRepoRoot();
         var targetPath = Path.Combine(repoRoot, targetFile);
         var body = $"""
-sdk.File.Write("{targetFile}", "x");
+sdk.WriteFile("{targetFile}", "x");
 """;
 
         try
         {
             var (_, action) = await RunScriptWithResultAsync(body);
 
-            Assert.Equal("mutation_write", action.kind);
-            Assert.Equal("sdk.File.Write", action.command);
+            Assert.Equal("write_file", action.action_name);
+            Assert.False(action.is_done);
+            Assert.Equal("sdk.WriteFile", action.command);
         }
         finally
         {
@@ -35,60 +36,24 @@ sdk.File.Write("{targetFile}", "x");
     }
 
     [Fact]
-    public async Task ScriptRunner_WritesVerificationBuildMetadata_ToResultFile()
+    public async Task ScriptRunner_WritesLocateFileMetadata_WithStepPlanAndToolCall()
     {
         var body = """
-sdk.Run("dotnet build --help");
+var __stepPlan = "Locate orchestrator file";
+sdk.LocateFile("AgentOrchestrator.cs");
 """;
 
         var (_, action) = await RunScriptWithResultAsync(body);
 
-        Assert.Equal("verification_build", action.kind);
-        Assert.Equal("dotnet build --help", action.command);
+        Assert.Equal("locate_file", action.action_name);
+        Assert.False(action.is_done);
+        Assert.Equal("sdk.LocateFile", action.command);
+        Assert.Equal("Locate orchestrator file", action.step_plan);
+        Assert.Equal("sdk.LocateFile(\"AgentOrchestrator.cs\")", action.tool_call);
     }
 
     [Fact]
-    public async Task ScriptRunner_WritesDiscoveryMetadata_ToResultFile()
-    {
-        var body = """
-sdk.Shell.Execute("ls -la");
-""";
-
-        var (_, action) = await RunScriptWithResultAsync(body);
-
-        Assert.Equal("discovery_shell", action.kind);
-        Assert.Equal("ls -la", action.command);
-    }
-
-    [Fact]
-    public async Task ScriptRunner_WritesStepPlanAndToolCallMetadata_ToResultFile()
-    {
-        var body = """
-var __stepPlan = "Need to list files to find README.md";
-sdk.Shell.Execute("ls -la");
-""";
-
-        var (_, action) = await RunScriptWithResultAsync(body);
-
-        Assert.Equal("Need to list files to find README.md", action.step_plan);
-        Assert.Equal("sdk.Shell.Execute(\"ls -la\")", action.tool_call);
-    }
-
-    [Fact]
-    public async Task ScriptRunner_WritesCompleteMetadata_ToResultFile()
-    {
-        var body = """
-sdk.Signal.Done();
-""";
-
-        var (_, action) = await RunScriptWithResultAsync(body);
-
-        Assert.Equal("complete", action.kind);
-        Assert.Equal("sdk.Signal.Done", action.command);
-    }
-
-    [Fact]
-    public async Task ScriptRunner_WritesCompleteMetadata_ForDoneShortcut_ToResultFile()
+    public async Task ScriptRunner_WritesDoneMetadata_ToResultFile()
     {
         var body = """
 sdk.Done();
@@ -96,23 +61,23 @@ sdk.Done();
 
         var (_, action) = await RunScriptWithResultAsync(body);
 
-        Assert.Equal("complete", action.kind);
+        Assert.Equal("done", action.action_name);
+        Assert.True(action.is_done);
         Assert.Equal("sdk.Done", action.command);
     }
 
     [Fact]
-    public async Task ScriptRunner_WritesBestEffortMetadata_WhenValidationFails()
+    public async Task ScriptRunner_WritesUnknownMetadata_WhenValidationFails()
     {
         var body = """
-sdk.File.Write("a.txt", "x");
-sdk.File.Write("b.txt", "y");
+sdk.Shell.Execute("ls -la");
 """;
 
         var (result, action) = await RunScriptWithResultAsync(body);
 
         Assert.NotEqual(0, result.ExitCode);
-        Assert.Equal("mutation_write", action.kind);
-        Assert.Equal("sdk.File.Write", action.command);
+        Assert.Equal("unknown", action.action_name);
+        Assert.False(action.is_done);
     }
 
     private static async Task<(ProcessResult Result, ScriptRunnerActionResult action)> RunScriptWithResultAsync(string body)
@@ -270,8 +235,10 @@ sdk.File.Write("b.txt", "y");
     }
 
     private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
+
     private sealed record ScriptRunnerActionResult(
-        string kind,
+        string action_name,
+        bool is_done,
         string? command,
         string? step_plan,
         string? tool_call);

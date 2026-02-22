@@ -6,8 +6,8 @@ public sealed class ScriptGlobals
 {
     public ScriptGlobals()
     {
-        sdk = new SdkFacade(new BendoverSDK());
+        sdk = new BendoverSDK();
     }
 
-    public SdkFacade sdk { get; }
+    public BendoverSDK sdk { get; }
 }

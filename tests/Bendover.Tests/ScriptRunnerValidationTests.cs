@@ -8,15 +8,13 @@ public class ScriptRunnerValidationTests
     private static bool _scriptRunnerBuilt;
 
     [Fact]
-    public async Task ScriptBody_WithSingleWriteAndFileInspection_ShouldSucceed()
+    public async Task ScriptBody_WithSingleWrite_ShouldSucceed()
     {
         var repoRoot = FindRepoRoot();
         var targetFileName = $"tmp-script-runner-write-{Guid.NewGuid():N}.txt";
         var targetPath = Path.Combine(repoRoot, targetFileName);
         var body = $"""
-var target = "{targetFileName}";
-var exists = sdk.File.Exists(target);
-sdk.File.Write(target, "ok");
+sdk.WriteFile("{targetFileName}", "ok");
 """;
 
         try
@@ -34,123 +32,38 @@ sdk.File.Write(target, "ok");
     }
 
     [Fact]
-    public async Task ScriptBody_WithSingleDeleteAndReadOnlySteps_ShouldSucceed()
-    {
-        var repoRoot = FindRepoRoot();
-        var targetFileName = $"tmp-script-runner-delete-{Guid.NewGuid():N}.txt";
-        var targetPath = Path.Combine(repoRoot, targetFileName);
-        await File.WriteAllTextAsync(targetPath, "to delete");
-
-        var body = $"""
-var target = "{targetFileName}";
-var exists = sdk.File.Exists(target);
-var content = exists ? sdk.File.Read(target) : "";
-sdk.File.Delete(target);
-""";
-
-        var result = await RunScriptAsync(body);
-        Assert.Equal(0, result.ExitCode);
-        Assert.False(File.Exists(targetPath));
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithTypeDeclaration_ShouldBeRejected()
+    public async Task ScriptBody_WithReadFileDiscovery_ShouldSucceed()
     {
         var body = """
-public class BadType
-{
-}
-""";
-
-        var result = await RunScriptAsync(body);
-
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains(
-            "Engineer body rejected: contains namespace/type/member declarations",
-            result.CombinedOutput,
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithTwoWrites_ShouldBeRejected()
-    {
-        var body = """
-sdk.File.Write("a.txt", "a");
-sdk.File.Write("b.txt", "b");
-""";
-
-        var result = await RunScriptAsync(body);
-
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains("multiple mutation actions", result.CombinedOutput, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithWriteAndDelete_ShouldBeRejected()
-    {
-        var body = """
-sdk.File.Write("a.txt", "a");
-sdk.File.Delete("a.txt");
-""";
-
-        var result = await RunScriptAsync(body);
-
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains("multiple mutation actions", result.CombinedOutput, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithMutatingShellCommand_ShouldBeRejected()
-    {
-        var body = """
-sdk.Shell.Execute("rm -f a.txt");
-""";
-
-        var result = await RunScriptAsync(body);
-
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains("mutating and not allowed", result.CombinedOutput, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithVerificationOnlyShellStep_ShouldSucceed()
-    {
-        var body = """
-sdk.Run("dotnet build --help");
+sdk.ReadFile("README.md");
 """;
 
         var result = await RunScriptAsync(body);
 
         Assert.Equal(0, result.ExitCode);
+        Assert.Contains("sdk_action_success", result.Stdout, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ScriptBody_WithDiscoveryOnlyShellStep_ShouldSucceed()
+    public async Task ScriptBody_WithLocateAndInspect_ShouldSucceed()
     {
-        var body = """
-sdk.Shell.Execute("ls -la");
+        var locateBody = """
+sdk.LocateFile("AgentOrchestrator.cs");
 """;
 
-        var result = await RunScriptAsync(body);
+        var inspectBody = """
+sdk.InspectFile("NotifyProgressAsync");
+""";
 
-        Assert.Equal(0, result.ExitCode);
-        Assert.False(string.IsNullOrWhiteSpace(result.Stdout));
+        var locateResult = await RunScriptAsync(locateBody);
+        var inspectResult = await RunScriptAsync(inspectBody);
+
+        Assert.Equal(0, locateResult.ExitCode);
+        Assert.Equal(0, inspectResult.ExitCode);
     }
 
     [Fact]
     public async Task ScriptBody_WithDoneSignalStep_ShouldSucceed()
-    {
-        var body = """
-sdk.Signal.Done();
-""";
-
-        var result = await RunScriptAsync(body);
-
-        Assert.Equal(0, result.ExitCode);
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithDoneShortcutStep_ShouldSucceed()
     {
         var body = """
 sdk.Done();
@@ -162,44 +75,43 @@ sdk.Done();
     }
 
     [Fact]
-    public async Task ScriptBody_WithOptionalStepPlanMetadataAndSingleAction_ShouldSucceed()
+    public async Task ScriptBody_WithNestedSdkCalls_ShouldBeRejected()
     {
         var body = """
-var __stepPlan = "Need to inspect repository layout first";
-sdk.Shell.Execute("ls -la");
-""";
-
-        var result = await RunScriptAsync(body);
-
-        Assert.Equal(0, result.ExitCode);
-    }
-
-    [Fact]
-    public async Task ScriptBody_WithDiscoveryAndDone_ShouldBeRejected()
-    {
-        var body = """
-sdk.Shell.Execute("ls -la");
-sdk.Signal.Done();
+sdk.WriteFile("a.txt", sdk.ReadFile("README.md"));
 """;
 
         var result = await RunScriptAsync(body);
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("multiple actionable steps", result.CombinedOutput, StringComparison.Ordinal);
+        Assert.Contains("nested sdk calls", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ScriptBody_WithWriteAndDone_ShouldBeRejected()
+    public async Task ScriptBody_WithLegacyShellApi_ShouldBeRejected()
     {
         var body = """
-sdk.File.Write("a.txt", "a");
-sdk.Signal.Done();
+sdk.Shell.Execute("ls -la");
 """;
 
         var result = await RunScriptAsync(body);
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("multiple actionable steps", result.CombinedOutput, StringComparison.Ordinal);
+        Assert.Contains("legacy sdk surface is not supported", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithMultipleAtomicActions_ShouldBeRejected()
+    {
+        var body = """
+sdk.ReadFile("README.md");
+sdk.LocateFile("AgentOrchestrator.cs");
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("multiple actionable steps", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<ProcessResult> RunScriptAsync(string body)

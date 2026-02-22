@@ -32,16 +32,15 @@ public class CliFullScenarioAcceptanceTests
             result.CliExitCode == 0,
             $"CLI exited with code {result.CliExitCode}\nstdout:\n{result.CliStdout}\nstderr:\n{result.CliStderr}");
         AssertContainsOrThrow(result.OutputPhases, "lead", "Missing lead phase output.");
-        // AssertContainsOrThrow(result.OutputPhases, "architect", "Missing architect phase output.");
-        AssertContainsOrThrow(result.OutputPhases, "engineer", "Missing engineer phase output.");
-        // AssertContainsOrThrow(result.OutputPhases, "reviewer", "Missing reviewer phase output.");
+        AssertContainsPhasePrefixOrThrow(result.OutputPhases, "engineer_step_", "Missing engineer step output phases.");
 
         Assert.True(File.Exists(result.GitDiffPath), $"Expected git diff artifact at {result.GitDiffPath}");
         var gitDiff = File.ReadAllText(result.GitDiffPath);
         Assert.Contains(scenario.TargetFilePath, gitDiff, StringComparison.Ordinal);
         Assert.Contains(scenario.MarkerLine, gitDiff, StringComparison.Ordinal);
 
-        AssertBuildAndTestArtifactsExist(result.RunDirectoryPath);
+        Assert.False(File.Exists(Path.Combine(result.RunDirectoryPath, "dotnet_build.txt")));
+        Assert.False(File.Exists(Path.Combine(result.RunDirectoryPath, "dotnet_test.txt")));
 
         var patchedFilePath = Path.Combine(result.RepoClonePath, scenario.TargetFilePath);
         Assert.True(File.Exists(patchedFilePath), $"Expected patched file at {patchedFilePath}");
@@ -75,14 +74,11 @@ public class CliFullScenarioAcceptanceTests
             result.CliExitCode == 0,
             $"CLI exited with code {result.CliExitCode}\nstdout:\n{result.CliStdout}\nstderr:\n{result.CliStderr}");
         AssertContainsOrThrow(result.OutputPhases, "lead", "Missing lead phase output.");
-        // AssertContainsOrThrow(result.OutputPhases, "architect", "Missing architect phase output.");
-        Assert.Contains("engineer", result.OutputPhases, StringComparer.OrdinalIgnoreCase);
-        // Assert.Contains("reviewer", result.OutputPhases, StringComparer.OrdinalIgnoreCase);
+        AssertContainsPhasePrefixOrThrow(result.OutputPhases, "engineer_step_", "Missing engineer step output phases.");
 
         Assert.True(File.Exists(result.GitDiffPath), $"Expected git diff artifact at {result.GitDiffPath}");
         Assert.False(string.IsNullOrWhiteSpace(File.ReadAllText(result.GitDiffPath)));
 
-        AssertBuildAndTestArtifactsExist(result.RunDirectoryPath);
         Assert.True(result.GitChangedPaths.Length > 0, "Expected repository changes after patch apply.");
     }
 
@@ -117,6 +113,13 @@ public class CliFullScenarioAcceptanceTests
             if (Directory.Exists(sourcePracticesPath))
             {
                 CopyDirectory(sourcePracticesPath, targetPracticesPath);
+            }
+
+            var sourceAgentsPath = Path.Combine(repositoryRoot, ".bendover", "agents");
+            var targetAgentsPath = Path.Combine(repoClonePath, ".bendover", "agents");
+            if (Directory.Exists(sourceAgentsPath))
+            {
+                CopyDirectory(sourceAgentsPath, targetAgentsPath);
             }
 
             await CreateBaselineCommitIfNeededAsync(repoClonePath);
@@ -173,21 +176,6 @@ public class CliFullScenarioAcceptanceTests
         }
     }
 
-    private static void AssertBuildAndTestArtifactsExist(string runDirectoryPath)
-    {
-        var buildSuccessPath = Path.Combine(runDirectoryPath, "dotnet_build.txt");
-        var buildFailurePath = Path.Combine(runDirectoryPath, "dotnet_build_error.txt");
-        Assert.True(
-            File.Exists(buildSuccessPath) || File.Exists(buildFailurePath),
-            $"Expected build artifact at {buildSuccessPath} or {buildFailurePath}");
-
-        var testSuccessPath = Path.Combine(runDirectoryPath, "dotnet_test.txt");
-        var testFailurePath = Path.Combine(runDirectoryPath, "dotnet_test_error.txt");
-        Assert.True(
-            File.Exists(testSuccessPath) || File.Exists(testFailurePath),
-            $"Expected test artifact at {testSuccessPath} or {testFailurePath}");
-    }
-
     private static HashSet<string> ReadOutputPhases(string outputsPath)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(outputsPath));
@@ -200,6 +188,14 @@ public class CliFullScenarioAcceptanceTests
     private static void AssertContainsOrThrow(HashSet<string> values, string expected, string message)
     {
         if (!values.Contains(expected))
+        {
+            throw new Xunit.Sdk.XunitException(message);
+        }
+    }
+
+    private static void AssertContainsPhasePrefixOrThrow(HashSet<string> values, string prefix, string message)
+    {
+        if (!values.Any(value => value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
         {
             throw new Xunit.Sdk.XunitException(message);
         }
@@ -597,6 +593,8 @@ public class CliFullScenarioAcceptanceTests
         private readonly CancellationTokenSource _cts;
         private readonly Task _serveTask;
         private readonly AcceptanceScenario _scenario;
+        private int _requestCount;
+        private int _engineerStepCount;
 
         public OpenAiCompatibleMockServer(AcceptanceScenario scenario)
         {
@@ -706,32 +704,24 @@ public class CliFullScenarioAcceptanceTests
 
         private string BuildAssistantResponse(string requestBody)
         {
-            if (requestBody.Contains("Lead Agent", StringComparison.OrdinalIgnoreCase))
+            _requestCount++;
+
+            if (_requestCount == 1)
             {
-                return "[\"agent_orchestration_flow\",\"clean_interfaces\"]";
+                return "[\"tdd_spirit\",\"interfaces_best_practices\"]";
             }
 
-            if (requestBody.Contains("You are an Architect", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"Plan: append marker '{_scenario.MarkerLine}' to '{_scenario.TargetFilePath}'.";
-            }
-
-            if (requestBody.Contains("You are an Engineer", StringComparison.OrdinalIgnoreCase))
+            if (requestBody.Contains("Selected Practices:", StringComparison.OrdinalIgnoreCase))
             {
                 var escapedPath = EscapeForCSharpString(_scenario.TargetFilePath);
                 var escapedMarker = EscapeForCSharpString(_scenario.MarkerLine);
-                return string.Join(
-                    '\n',
-                    $"sdk.WriteFile(\"{escapedPath}\", sdk.ReadFile(\"{escapedPath}\") + \"\\n\\n{escapedMarker}\\n\");",
-                    $"Console.WriteLine(\"{escapedMarker}\");");
+                _engineerStepCount++;
+                return _engineerStepCount == 1
+                    ? $"sdk.WriteFile(\"{escapedPath}\", \"{escapedMarker}\\n\");"
+                    : "sdk.Done();";
             }
 
-            if (requestBody.Contains("You are a Reviewer", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Looks good.";
-            }
-
-            return "[]";
+            return "sdk.Done();";
         }
 
         private static string BuildChatCompletionPayload(string assistantText)

@@ -26,63 +26,24 @@ public class AgenticTurnService : IAgenticTurnService
             return new AgenticTurnObservation(
                 ScriptExecution: scriptExecution,
                 DiffExecution: SkippedResult("diff skipped because script execution failed"),
-                ChangedFilesExecution: SkippedResult("changed-files skipped because script execution failed"),
-                BuildExecution: SkippedResult("verification skipped because script execution failed"),
-                ChangedFiles: Array.Empty<string>(),
                 HasChanges: false,
-                BuildPassed: false,
                 Action: action,
                 StepPlan: scriptResult.StepPlan,
                 ToolCall: scriptResult.ToolCall);
         }
 
-        var diffExecution = await _containerService.ExecuteCommandAsync(turnSettings.DiffCommand);
-        var changedFilesExecution = await _containerService.ExecuteCommandAsync(turnSettings.ChangedFilesCommand);
-
-        SandboxExecutionResult buildExecution;
-        if (action.Kind == AgenticStepActionKind.VerificationBuild)
-        {
-            buildExecution = await _containerService.ExecuteCommandAsync(turnSettings.BuildCommand);
-        }
-        else if (action.Kind == AgenticStepActionKind.VerificationTest)
-        {
-            buildExecution = await _containerService.ExecuteCommandAsync(turnSettings.TestCommand);
-        }
-        else if (action.Kind == AgenticStepActionKind.Complete)
-        {
-            buildExecution = await _containerService.ExecuteCommandAsync(turnSettings.BuildCommand);
-        }
-        else
-        {
-            buildExecution = SkippedResult("verification command not requested by this step");
-        }
-
-        var changedFiles = ParseChangedFiles(changedFilesExecution.CombinedOutput);
-        var hasChanges = !string.IsNullOrWhiteSpace(diffExecution.CombinedOutput);
-        var buildPassed = (action.IsVerificationAction || action.IsCompletionAction) && buildExecution.ExitCode == 0;
+        var diffExecution = action.IsDone
+            ? await _containerService.ExecuteCommandAsync(turnSettings.DiffCommand)
+            : SkippedResult("diff skipped until sdk.Done() is called");
+        var hasChanges = action.IsDone && !string.IsNullOrWhiteSpace(diffExecution.CombinedOutput);
 
         return new AgenticTurnObservation(
             ScriptExecution: scriptExecution,
             DiffExecution: diffExecution,
-            ChangedFilesExecution: changedFilesExecution,
-            BuildExecution: buildExecution,
-            ChangedFiles: changedFiles,
             HasChanges: hasChanges,
-            BuildPassed: buildPassed,
             Action: action,
             StepPlan: scriptResult.StepPlan,
             ToolCall: scriptResult.ToolCall);
-    }
-
-    private static string[] ParseChangedFiles(string output)
-    {
-        return output
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim())
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
     }
 
     private static SandboxExecutionResult SkippedResult(string reason)
