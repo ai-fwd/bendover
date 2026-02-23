@@ -69,16 +69,18 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
     public Task RecordPromptAsync(string phase, List<ChatMessage> messages)
     {
-        // Store byte-for-byte exact messages
-        // But we need to convert them to a serializable format or just store the list
         _prompts[phase] = new List<ChatMessage>(messages);
         return Task.CompletedTask;
     }
 
-    public Task RecordOutputAsync(string phase, string output)
+    public async Task RecordOutputAsync(string phase, string output)
     {
         _outputs[phase] = output;
-        return Task.CompletedTask;
+
+        if (_captureEnabled && ShouldFlushLiveSnapshot(phase))
+        {
+            await PersistLiveSnapshotAsync();
+        }
     }
 
     public async Task RecordArtifactAsync(string filename, string content)
@@ -94,23 +96,12 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
     public async Task FinalizeRunAsync()
     {
-        if (_runDir == null) return;
-
-        if (_captureEnabled)
+        if (_runDir == null || !_captureEnabled)
         {
-            var serializedPrompts = new
-            {
-                phases = _prompts.ToDictionary(k => k.Key, v => v.Value.Select(m => new { role = m.Role.Value, content = m.Text }))
-            };
-
-            await WriteJsonAsync("prompts.json", serializedPrompts);
-
-            // Write outputs.json
-            await WriteJsonAsync("outputs.json", _outputs);
-            await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "transcript.md"), BuildTranscriptMarkdown());
-
+            return;
         }
 
+        await PersistLiveSnapshotAsync();
     }
 
     private string BuildTranscriptMarkdown()
@@ -419,8 +410,7 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
             || TryParseEngineerFailureAttempt(phase, out _)
             || TryParseEngineerStepPrompt(phase, out _)
             || TryParseEngineerStepObservation(phase, out _)
-            || TryParseEngineerStepFailure(phase, out _)
-            || TryParseLegacyObservationAttempt(phase, out _))
+            || TryParseEngineerStepFailure(phase, out _))
         {
             return 1;
         }
@@ -455,11 +445,6 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
             return failureAttempt;
         }
 
-        if (TryParseLegacyObservationAttempt(phase, out var legacyObservationAttempt))
-        {
-            return legacyObservationAttempt;
-        }
-
         return 0;
     }
 
@@ -471,8 +456,7 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
             return 0;
         }
 
-        if (TryParseEngineerStepObservation(phase, out _)
-            || TryParseLegacyObservationAttempt(phase, out _))
+        if (TryParseEngineerStepObservation(phase, out _))
         {
             return 1;
         }
@@ -544,25 +528,6 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         return false;
     }
 
-    private static bool TryParseLegacyObservationAttempt(string phase, out int attempt)
-    {
-        if (string.Equals(phase, "agentic_turn_observation", StringComparison.OrdinalIgnoreCase))
-        {
-            attempt = 0;
-            return true;
-        }
-
-        const string prefix = "agentic_turn_observation_retry_";
-        if (phase.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            && int.TryParse(phase[prefix.Length..], out attempt))
-        {
-            return true;
-        }
-
-        attempt = -1;
-        return false;
-    }
-
     private static bool TryParseEngineerFailureAttempt(string phase, out int attempt)
     {
         if (string.Equals(phase, "engineer_failure_digest", StringComparison.OrdinalIgnoreCase))
@@ -591,6 +556,37 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
     private sealed record PromptDelta(List<PromptDeltaMessage> Messages, int RemovedMessageCount);
     private sealed record PromptDeltaMessage(int MessageNumber, string Role, string Content, bool IsSuffixDelta);
+
+    private bool ShouldFlushLiveSnapshot(string phase)
+    {
+        if (string.Equals(phase, "lead", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return TryParseEngineerStepObservation(phase, out _)
+            || TryParseEngineerStepFailure(phase, out _);
+    }
+
+    private async Task PersistLiveSnapshotAsync()
+    {
+        if (!_captureEnabled || _runDir == null)
+        {
+            return;
+        }
+
+        await WriteJsonAsync("prompts.json", BuildSerializedPrompts());
+        await WriteJsonAsync("outputs.json", _outputs);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(_runDir, "transcript.md"), BuildTranscriptMarkdown());
+    }
+
+    private object BuildSerializedPrompts()
+    {
+        return new
+        {
+            phases = _prompts.ToDictionary(k => k.Key, v => v.Value.Select(m => new { role = m.Role.Value, content = m.Text }))
+        };
+    }
 
     private async Task WriteJsonAsync(string filename, object data)
     {
