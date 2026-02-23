@@ -187,7 +187,6 @@ public class AgentOrchestrator : IAgentOrchestrator
                 var stepHistory = new List<EngineerStepHistoryEntry>();
                 var completed = false;
                 var completionStep = 0;
-                string? completionActionName = null;
                 var lastScriptExitCode = (int?)null;
                 var turnSettings = new AgenticTurnSettings();
 
@@ -241,7 +240,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                             Plan: turnObservation.StepPlan,
                             Tool: BuildStepTool(turnObservation),
                             Observation: BuildStepObservationSummary(turnObservation),
-                            IsCompletion: turnObservation.Action.IsDone));
+                            IsCompletion: turnObservation.CompletionSignaled));
 
                         if (turnObservation.ScriptExecution.ExitCode != 0)
                         {
@@ -259,12 +258,11 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                         AppendStepHistory(stepHistory, stepNumber, observationSummary, failureSummary: null);
 
-                        if (turnObservation.Action.IsDone)
+                        if (turnObservation.CompletionSignaled)
                         {
                             lastFailureDigestForRunResult = null;
                             completed = true;
                             completionStep = stepNumber;
-                            completionActionName = turnObservation.Action.ActionName;
                             break;
                         }
 
@@ -290,7 +288,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                     await RecordRunResultAsync(
                         status: "failed_max_turns",
                         completionStep: null,
-                        completionActionName: null,
+                        completionSignaled: false,
                         hasCodeChanges: false,
                         gitDiffBytes: 0,
                         lastScriptExitCode: lastScriptExitCode,
@@ -302,7 +300,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 await RecordRunResultAsync(
                     status: "completed",
                     completionStep: completionStep,
-                    completionActionName: completionActionName,
+                    completionSignaled: true,
                     hasCodeChanges: !string.IsNullOrWhiteSpace(gitDiffContent),
                     gitDiffBytes: gitDiffContent.Length,
                     lastScriptExitCode: lastScriptExitCode,
@@ -503,9 +501,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     private static string BuildCompactObservationSummary(AgenticTurnObservation observation)
     {
-        return $"action_name={observation.Action.ActionName}; " +
-               $"action_command={ToCompactSingleLine(observation.Action.Command, HistoryPreviewLimit)}; " +
-               $"is_done={observation.Action.IsDone}; " +
+        return $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}; " +
                $"tool_call={ToCompactSingleLine(observation.ToolCall, HistoryPreviewLimit)}; " +
                $"step_plan={ToCompactSingleLine(observation.StepPlan, HistoryPreviewLimit)}; " +
                $"script_exit={observation.ScriptExecution.ExitCode}; " +
@@ -516,9 +512,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     private static string BuildCompactExceptionObservationSummary(Exception exception)
     {
-        return $"action_name=unknown; " +
-               $"action_command=(none); " +
-               $"is_done=false; " +
+        return $"completion_signaled=false; " +
                $"tool_call=(none); " +
                $"step_plan=(none); " +
                $"script_exit=1; " +
@@ -530,7 +524,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private static string BuildCompactFailureSummaryFromObservation(AgenticTurnObservation observation, string failureType)
     {
         return $"failure_type={failureType}; " +
-               $"action_name={observation.Action.ActionName}; " +
+               $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}; " +
                $"script_exit={observation.ScriptExecution.ExitCode}; " +
                $"error_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
     }
@@ -554,8 +548,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         var diffTail = GetLastLines(observation.DiffExecution.CombinedOutput, 40);
 
         return $"failed_checks={gateSummary}\n" +
-               $"action_name={observation.Action.ActionName}\n" +
-               $"action_command={observation.Action.Command ?? "(none)"}\n" +
+               $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}\n" +
+               $"tool_call={observation.ToolCall ?? "(none)"}\n" +
                $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
                $"diff_exit_code={observation.DiffExecution.ExitCode}\n" +
                $"script_output_tail:\n{scriptTail}\n\n" +
@@ -569,26 +563,21 @@ public class AgentOrchestrator : IAgentOrchestrator
             return observation.ToolCall!;
         }
 
-        if (string.Equals(observation.Action.Command, "sdk.Done", StringComparison.OrdinalIgnoreCase))
+        if (observation.CompletionSignaled)
         {
             return "sdk.Done()";
         }
 
-        if (!string.IsNullOrWhiteSpace(observation.Action.Command))
-        {
-            return $"{observation.Action.Command}(...)";
-        }
-
-        return observation.Action.ActionName;
+        return "(none)";
     }
 
     private static string BuildStepObservationSummary(AgenticTurnObservation observation)
     {
-        return $"action={observation.Action.ActionName}; " +
+        return $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}; " +
                $"script_exit={observation.ScriptExecution.ExitCode}; " +
                $"has_changes={observation.HasChanges}; " +
                $"diff_exit={observation.DiffExecution.ExitCode}; " +
-               $"is_done={observation.Action.IsDone}";
+               $"is_done={ToBoolLiteral(observation.CompletionSignaled)}";
     }
 
     private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)
@@ -604,10 +593,15 @@ public class AgentOrchestrator : IAgentOrchestrator
         return $"{basePhase}_{stepNumber}";
     }
 
+    private static string ToBoolLiteral(bool value)
+    {
+        return value ? "true" : "false";
+    }
+
     private async Task RecordRunResultAsync(
         string status,
         int? completionStep,
-        string? completionActionName,
+        bool completionSignaled,
         bool hasCodeChanges,
         int gitDiffBytes,
         int? lastScriptExitCode,
@@ -617,7 +611,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             status,
             completion_step = completionStep,
-            completion_action_name = completionActionName,
+            completion_signaled = completionSignaled,
             has_code_changes = hasCodeChanges,
             git_diff_bytes = gitDiffBytes,
             last_script_exit_code = lastScriptExitCode,

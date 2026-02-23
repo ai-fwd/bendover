@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -6,6 +7,13 @@ namespace Bendover.SDK;
 
 public sealed class BendoverSDK
 {
+    private readonly ISdkActionEventSink _eventSink;
+
+    public BendoverSDK(ISdkActionEventSink eventSink)
+    {
+        _eventSink = eventSink ?? throw new ArgumentNullException(nameof(eventSink));
+    }
+
     /// <summary>
     /// Writes file content to a workspace-relative path.
     /// </summary>
@@ -16,7 +24,6 @@ public sealed class BendoverSDK
     public void WriteFile(string path, string content)
     {
         ExecuteAction(
-            actionName: "write_file",
             action: () =>
             {
                 var fullPath = ResolveWorkspacePath(path);
@@ -48,7 +55,6 @@ public sealed class BendoverSDK
     public void DeleteFile(string path)
     {
         ExecuteAction(
-            actionName: "delete_file",
             action: () =>
             {
                 var fullPath = ResolveWorkspacePath(path);
@@ -78,7 +84,6 @@ public sealed class BendoverSDK
     public string ReadFile(string path)
     {
         return ExecuteAction(
-            actionName: "read_file",
             action: () =>
             {
                 var fullPath = ResolveWorkspacePath(path);
@@ -102,7 +107,6 @@ public sealed class BendoverSDK
     public LocateFileResult LocateFile(string pattern, LocateFileOptions? options = null)
     {
         return ExecuteAction(
-            actionName: "locate_file",
             action: () => LocateFileInternal(pattern, options),
             returnSelector: result => result);
     }
@@ -117,7 +121,6 @@ public sealed class BendoverSDK
     public InspectFileResult InspectFile(string pattern, InspectFileOptions? options = null)
     {
         return ExecuteAction(
-            actionName: "inspect_file",
             action: () => InspectFileInternal(pattern, options),
             returnSelector: result => result);
     }
@@ -131,8 +134,7 @@ public sealed class BendoverSDK
     public void Build()
     {
         ExecuteAction(
-            actionName: "build",
-            action: () => RunDotNetCommand("build", "build"));
+            action: () => RunDotNetCommand("build", nameof(Build)));
     }
 
     /// <summary>
@@ -144,8 +146,7 @@ public sealed class BendoverSDK
     public void Test()
     {
         ExecuteAction(
-            actionName: "test",
-            action: () => RunDotNetCommand("test", "test"));
+            action: () => RunDotNetCommand("test", nameof(Test)));
     }
 
     /// <summary>
@@ -157,11 +158,10 @@ public sealed class BendoverSDK
     public string[] ListChangedFiles()
     {
         return ExecuteAction(
-            actionName: "list_changed_files",
             action: () =>
             {
                 var process = RunProcess("git", new[] { "diff", "--name-only" });
-                EnsureProcessSucceeded("list_changed_files", process);
+                EnsureProcessSucceeded(process, nameof(ListChangedFiles));
                 return process.CombinedOutput
                     .Replace("\r\n", "\n", StringComparison.Ordinal)
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries)
@@ -183,7 +183,6 @@ public sealed class BendoverSDK
     public string GetDiff(string? path = null)
     {
         return ExecuteAction(
-            actionName: "get_diff",
             action: () =>
             {
                 var args = new List<string> { "diff" };
@@ -195,7 +194,7 @@ public sealed class BendoverSDK
                 }
 
                 var process = RunProcess("git", args);
-                EnsureProcessSucceeded("get_diff", process);
+                EnsureProcessSucceeded(process, nameof(GetDiff));
                 return process.CombinedOutput;
             },
             returnSelector: result => result);
@@ -210,11 +209,10 @@ public sealed class BendoverSDK
     public string GetHeadCommit()
     {
         return ExecuteAction(
-            actionName: "get_head_commit",
             action: () =>
             {
                 var process = RunProcess("git", new[] { "rev-parse", "HEAD" });
-                EnsureProcessSucceeded("get_head_commit", process);
+                EnsureProcessSucceeded(process, nameof(GetHeadCommit));
                 return process.CombinedOutput.Trim();
             },
             returnSelector: result => result);
@@ -229,11 +227,10 @@ public sealed class BendoverSDK
     public string GetCurrentBranch()
     {
         return ExecuteAction(
-            actionName: "get_current_branch",
             action: () =>
             {
                 var process = RunProcess("git", new[] { "rev-parse", "--abbrev-ref", "HEAD" });
-                EnsureProcessSucceeded("get_current_branch", process);
+                EnsureProcessSucceeded(process, nameof(GetCurrentBranch));
                 return process.CombinedOutput.Trim();
             },
             returnSelector: result => result);
@@ -248,7 +245,6 @@ public sealed class BendoverSDK
     public void Done()
     {
         ExecuteAction(
-            actionName: "done",
             action: () => new { done = true });
     }
 
@@ -511,10 +507,12 @@ public sealed class BendoverSDK
         return Regex.IsMatch(input, $"^{escaped}$", regexOptions);
     }
 
-    private static object RunDotNetCommand(string actionName, string verb)
+    private static object RunDotNetCommand(
+        string verb,
+        string methodName)
     {
         var process = RunProcess("dotnet", new[] { verb });
-        EnsureProcessSucceeded(actionName, process);
+        EnsureProcessSucceeded(process, methodName);
         return new
         {
             exit_code = process.ExitCode,
@@ -524,13 +522,16 @@ public sealed class BendoverSDK
         };
     }
 
-    private static void EnsureProcessSucceeded(string actionName, ProcessRunResult process)
+    private static void EnsureProcessSucceeded(
+        ProcessRunResult process,
+        string methodName)
     {
         if (process.ExitCode == 0)
         {
             return;
         }
 
+        var actionName = string.IsNullOrWhiteSpace(methodName) ? "SDK action" : methodName;
         throw new InvalidOperationException(
             $"{actionName} failed with exit code {process.ExitCode}.\n{process.CombinedOutput}");
     }
@@ -566,77 +567,87 @@ public sealed class BendoverSDK
             CombinedOutput: string.Concat(stdout, stderr));
     }
 
-    private static void ExecuteAction(string actionName, Func<object?> action)
+    private void ExecuteAction(
+        Func<object?> action,
+        [CallerMemberName] string methodName = "")
     {
-        ExecuteAction(actionName, action, returnSelector: _ => (object?)null);
+        ExecuteAction(
+            action,
+            returnSelector: static _ => (object?)null,
+            methodName: methodName);
     }
 
-    private static TResult ExecuteAction<TPayload, TResult>(
-        string actionName,
+    private TResult ExecuteAction<TPayload, TResult>(
         Func<TPayload> action,
-        Func<TPayload, TResult> returnSelector)
+        Func<TPayload, TResult> returnSelector,
+        [CallerMemberName] string methodName = "")
     {
+        var effectiveMethodName = string.IsNullOrWhiteSpace(methodName)
+            ? nameof(BendoverSDK)
+            : methodName;
         var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         EmitEvent(
-            eventType: "sdk_action_start",
-            actionName: actionName,
-            startedAt: startedAt,
-            elapsedMilliseconds: 0,
-            payload: null,
-            error: null);
+            new SdkActionEvent(
+                EventType: SdkActionEventType.Start,
+                MethodName: effectiveMethodName,
+                StartedAtUtc: startedAt,
+                ElapsedMs: 0,
+                PayloadJson: null,
+                Error: null));
 
         try
         {
             var payload = action();
             stopwatch.Stop();
             EmitEvent(
-                eventType: "sdk_action_success",
-                actionName: actionName,
-                startedAt: startedAt,
-                elapsedMilliseconds: stopwatch.ElapsedMilliseconds,
-                payload: payload,
-                error: null);
+                new SdkActionEvent(
+                    EventType: SdkActionEventType.Success,
+                    MethodName: effectiveMethodName,
+                    StartedAtUtc: startedAt,
+                    ElapsedMs: stopwatch.ElapsedMilliseconds,
+                    PayloadJson: SerializePayload(payload),
+                    Error: null));
             return returnSelector(payload);
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
             EmitEvent(
-                eventType: "sdk_action_failure",
-                actionName: actionName,
-                startedAt: startedAt,
-                elapsedMilliseconds: stopwatch.ElapsedMilliseconds,
-                payload: null,
-                error: new
-                {
-                    type = ex.GetType().FullName,
-                    message = ex.Message,
-                    stack_trace = ex.ToString()
-                });
+                new SdkActionEvent(
+                    EventType: SdkActionEventType.Failure,
+                    MethodName: effectiveMethodName,
+                    StartedAtUtc: startedAt,
+                    ElapsedMs: stopwatch.ElapsedMilliseconds,
+                    PayloadJson: null,
+                    Error: new SdkActionError(
+                        Type: ex.GetType().FullName ?? "System.Exception",
+                        Message: ex.Message,
+                        StackTrace: ex.ToString())));
             throw;
         }
     }
 
-    private static void EmitEvent(
-        string eventType,
-        string actionName,
-        DateTimeOffset startedAt,
-        long elapsedMilliseconds,
-        object? payload,
-        object? error)
+    private void EmitEvent(SdkActionEvent sdkEvent)
     {
-        var envelope = new
-        {
-            event_type = eventType,
-            action = actionName,
-            started_at_utc = startedAt,
-            elapsed_ms = elapsedMilliseconds,
-            payload,
-            error
-        };
+        _eventSink.OnEvent(sdkEvent);
+    }
 
-        Console.Out.WriteLine(JsonSerializer.Serialize(envelope));
+    private static string? SerializePayload<TPayload>(TPayload payload)
+    {
+        if (payload is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Serialize(payload);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { serialization_error = ex.Message });
+        }
     }
 
     private static string ResolveWorkspacePath(string path)

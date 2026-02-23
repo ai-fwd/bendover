@@ -19,7 +19,7 @@ public class AgenticTurnService : IAgenticTurnService
 
         var scriptResult = await _containerService.ExecuteScriptBodyAsync(scriptBody);
         var scriptExecution = scriptResult.Execution;
-        var action = scriptResult.Action;
+        var completionSignaled = scriptResult.CompletionSignaled;
 
         if (scriptExecution.ExitCode != 0)
         {
@@ -27,21 +27,21 @@ public class AgenticTurnService : IAgenticTurnService
                 ScriptExecution: scriptExecution,
                 DiffExecution: SkippedResult("diff skipped because script execution failed"),
                 HasChanges: false,
-                Action: action,
+                CompletionSignaled: completionSignaled,
                 StepPlan: scriptResult.StepPlan,
                 ToolCall: scriptResult.ToolCall);
         }
 
-        var diffExecution = action.IsDone
+        var diffExecution = completionSignaled
             ? await _containerService.ExecuteCommandAsync(turnSettings.DiffCommand)
             : SkippedResult("diff skipped until sdk.Done() is called");
-        var hasChanges = action.IsDone && !string.IsNullOrWhiteSpace(diffExecution.CombinedOutput);
+        var hasChanges = completionSignaled && !string.IsNullOrWhiteSpace(diffExecution.CombinedOutput);
 
         return new AgenticTurnObservation(
             ScriptExecution: scriptExecution,
             DiffExecution: diffExecution,
             HasChanges: hasChanges,
-            Action: action,
+            CompletionSignaled: completionSignaled,
             StepPlan: scriptResult.StepPlan,
             ToolCall: scriptResult.ToolCall);
     }

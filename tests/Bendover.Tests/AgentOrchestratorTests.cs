@@ -111,7 +111,7 @@ public class AgentOrchestratorTests
                     text.Contains("\"status\":\"completed\"", StringComparison.Ordinal) &&
                     text.Contains("\"has_code_changes\":false", StringComparison.Ordinal) &&
                     text.Contains("\"git_diff_bytes\":0", StringComparison.Ordinal) &&
-                    text.Contains("\"completion_action_name\":\"done\"", StringComparison.Ordinal))),
+                    text.Contains("\"completion_signaled\":true", StringComparison.Ordinal))),
             Times.Once);
         _runRecorderMock.Verify(x => x.RecordOutputAsync("engineer_step_failure_1", It.IsAny<string>()), Times.Never);
     }
@@ -207,7 +207,7 @@ public class AgentOrchestratorTests
         var secondStepUserText = ExtractUserText(capturedEngineerMessages[1]);
         Assert.Contains("Recent step history (oldest to newest, last 5):", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("Step 1 observation:", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("action_name=read_file", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("completion_signaled=false", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("Bendover.sln", secondStepUserText, StringComparison.Ordinal);
     }
 
@@ -259,7 +259,7 @@ public class AgentOrchestratorTests
                 ScriptExecution: new SandboxExecutionResult(0, "Bendover.sln\nREADME.md\n", string.Empty, "Bendover.sln\nREADME.md\n"),
                 DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
                 HasChanges: false,
-                Action: new AgenticStepAction("read_file", IsDone: false, Command: "sdk.ReadFile"),
+                CompletionSignaled: false,
                 StepPlan: "Need to inspect README",
                 ToolCall: "sdk.ReadFile(\"README.md\")"))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
@@ -272,7 +272,7 @@ public class AgentOrchestratorTests
         Assert.Equal(1, firstStepEvent.StepNumber);
         Assert.Equal("Need to inspect README", firstStepEvent.Plan);
         Assert.Equal("sdk.ReadFile(\"README.md\")", firstStepEvent.Tool);
-        Assert.Contains("action=read_file", firstStepEvent.Observation, StringComparison.Ordinal);
+        Assert.Contains("completion_signaled=false", firstStepEvent.Observation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -451,7 +451,7 @@ public class AgentOrchestratorTests
             ScriptExecution: new SandboxExecutionResult(1, string.Empty, "boom", "boom"),
             DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
             HasChanges: false,
-            Action: new AgenticStepAction("unknown"));
+            CompletionSignaled: false);
     }
 
     private static AgenticTurnObservation CreateCompleteObservation(bool hasChanges)
@@ -460,7 +460,7 @@ public class AgentOrchestratorTests
             ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
             DiffExecution: new SandboxExecutionResult(0, hasChanges ? AcceptedPatch : string.Empty, string.Empty, hasChanges ? AcceptedPatch : string.Empty),
             HasChanges: hasChanges,
-            Action: new AgenticStepAction("done", IsDone: true, Command: "sdk.Done"));
+            CompletionSignaled: true);
     }
 
     private static AgenticTurnObservation CreateDiscoveryObservation(string scriptOutput = "")
@@ -469,7 +469,7 @@ public class AgentOrchestratorTests
             ScriptExecution: new SandboxExecutionResult(0, scriptOutput, string.Empty, scriptOutput),
             DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
             HasChanges: false,
-            Action: new AgenticStepAction("read_file", IsDone: false, Command: "sdk.ReadFile"));
+            CompletionSignaled: false);
     }
 
     private static AgenticTurnObservation CreateUnknownObservation()
@@ -478,7 +478,7 @@ public class AgentOrchestratorTests
             ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
             DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
             HasChanges: false,
-            Action: new AgenticStepAction("unknown"));
+            CompletionSignaled: false);
     }
 
     private static string ExtractUserText(IReadOnlyList<ChatMessage> messages)

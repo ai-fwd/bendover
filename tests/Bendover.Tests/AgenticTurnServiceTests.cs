@@ -14,7 +14,7 @@ public class AgenticTurnServiceTests
         containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
             .ReturnsAsync(new ScriptExecutionResult(
                 Execution: new SandboxExecutionResult(1, string.Empty, "script error", "script error"),
-                Action: new AgenticStepAction(ActionName: "read_file"),
+                CompletionSignaled: false,
                 StepPlan: "Need to inspect file",
                 ToolCall: "sdk.ReadFile(\"README.md\")"));
 
@@ -24,8 +24,7 @@ public class AgenticTurnServiceTests
 
         Assert.Equal(1, observation.ScriptExecution.ExitCode);
         Assert.Equal(-1, observation.DiffExecution.ExitCode);
-        Assert.Equal("read_file", observation.Action.ActionName);
-        Assert.False(observation.Action.IsDone);
+        Assert.False(observation.CompletionSignaled);
         Assert.Equal("Need to inspect file", observation.StepPlan);
         Assert.Equal("sdk.ReadFile(\"README.md\")", observation.ToolCall);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(It.IsAny<string>()), Times.Never);
@@ -39,7 +38,7 @@ public class AgenticTurnServiceTests
         containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
             .ReturnsAsync(new ScriptExecutionResult(
                 Execution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
-                Action: new AgenticStepAction(ActionName: "build", IsDone: false, Command: "sdk.Build")));
+                CompletionSignaled: false));
 
         var sut = new AgenticTurnService(containerServiceMock.Object);
 
@@ -48,8 +47,7 @@ public class AgenticTurnServiceTests
         Assert.Equal(0, observation.ScriptExecution.ExitCode);
         Assert.Equal(-1, observation.DiffExecution.ExitCode);
         Assert.False(observation.HasChanges);
-        Assert.Equal("build", observation.Action.ActionName);
-        Assert.False(observation.Action.IsDone);
+        Assert.False(observation.CompletionSignaled);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.DiffCommand), Times.Never);
     }
 
@@ -61,7 +59,7 @@ public class AgenticTurnServiceTests
         containerServiceMock.Setup(x => x.ExecuteScriptBodyAsync(It.IsAny<string>()))
             .ReturnsAsync(new ScriptExecutionResult(
                 Execution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
-                Action: new AgenticStepAction(ActionName: "done", IsDone: true, Command: "sdk.Done")));
+                CompletionSignaled: true));
         containerServiceMock.Setup(x => x.ExecuteCommandAsync(settings.DiffCommand))
             .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt", string.Empty, "diff --git a/a.txt b/a.txt"));
 
@@ -72,8 +70,7 @@ public class AgenticTurnServiceTests
         Assert.Equal(0, observation.ScriptExecution.ExitCode);
         Assert.Equal(0, observation.DiffExecution.ExitCode);
         Assert.True(observation.HasChanges);
-        Assert.Equal("done", observation.Action.ActionName);
-        Assert.True(observation.Action.IsDone);
+        Assert.True(observation.CompletionSignaled);
         containerServiceMock.Verify(x => x.ExecuteCommandAsync(settings.DiffCommand), Times.Once);
     }
 }
