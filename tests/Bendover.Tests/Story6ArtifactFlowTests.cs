@@ -49,12 +49,12 @@ public class Story6ArtifactFlowTests
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
                     HasChanges: false,
-                    Action: new AgenticStepAction("write_file", IsDone: false, Command: "sdk.WriteFile")))
+                    CompletionSignaled: false))
                 .ReturnsAsync(new AgenticTurnObservation(
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"),
                     HasChanges: true,
-                    Action: new AgenticStepAction("done", IsDone: true, Command: "sdk.Done")));
+                    CompletionSignaled: true));
 
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
@@ -113,7 +113,7 @@ public class Story6ArtifactFlowTests
             using var runResultDoc = JsonDocument.Parse(File.ReadAllText(runResultPath));
             Assert.Equal("completed", runResultDoc.RootElement.GetProperty("status").GetString());
             Assert.True(runResultDoc.RootElement.GetProperty("has_code_changes").GetBoolean());
-            Assert.Equal("done", runResultDoc.RootElement.GetProperty("completion_action_name").GetString());
+            Assert.True(runResultDoc.RootElement.GetProperty("completion_signaled").GetBoolean());
         }
         finally
         {
@@ -157,7 +157,7 @@ public class Story6ArtifactFlowTests
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
                     HasChanges: false,
-                    Action: new AgenticStepAction("done", IsDone: true, Command: "sdk.Done")));
+                    CompletionSignaled: true));
             containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
                 .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
             containerServiceMock.Setup(x => x.StopContainerAsync())
@@ -207,7 +207,7 @@ public class Story6ArtifactFlowTests
             Assert.Equal("completed", runResultDoc.RootElement.GetProperty("status").GetString());
             Assert.False(runResultDoc.RootElement.GetProperty("has_code_changes").GetBoolean());
             Assert.Equal(0, runResultDoc.RootElement.GetProperty("git_diff_bytes").GetInt32());
-            Assert.Equal("done", runResultDoc.RootElement.GetProperty("completion_action_name").GetString());
+            Assert.True(runResultDoc.RootElement.GetProperty("completion_signaled").GetBoolean());
         }
         finally
         {

@@ -22,9 +22,9 @@ sdk.WriteFile("{targetFile}", "x");
         {
             var (_, action) = await RunScriptWithResultAsync(body);
 
-            Assert.Equal("write_file", action.action_name);
             Assert.False(action.is_done);
-            Assert.Equal("sdk.WriteFile", action.command);
+            Assert.Null(action.step_plan);
+            Assert.Equal($"sdk.WriteFile(\"{targetFile}\", \"x\")", action.tool_call);
         }
         finally
         {
@@ -45,9 +45,7 @@ sdk.LocateFile("AgentOrchestrator.cs");
 
         var (_, action) = await RunScriptWithResultAsync(body);
 
-        Assert.Equal("locate_file", action.action_name);
         Assert.False(action.is_done);
-        Assert.Equal("sdk.LocateFile", action.command);
         Assert.Equal("Locate orchestrator file", action.step_plan);
         Assert.Equal("sdk.LocateFile(\"AgentOrchestrator.cs\")", action.tool_call);
     }
@@ -61,13 +59,12 @@ sdk.Done();
 
         var (_, action) = await RunScriptWithResultAsync(body);
 
-        Assert.Equal("done", action.action_name);
         Assert.True(action.is_done);
-        Assert.Equal("sdk.Done", action.command);
+        Assert.Equal("sdk.Done()", action.tool_call);
     }
 
     [Fact]
-    public async Task ScriptRunner_WritesUnknownMetadata_WhenValidationFails()
+    public async Task ScriptRunner_WritesUnknownMetadata_WhenCompilationFails()
     {
         var body = """
 sdk.Shell.Execute("ls -la");
@@ -76,11 +73,45 @@ sdk.Shell.Execute("ls -la");
         var (result, action) = await RunScriptWithResultAsync(body);
 
         Assert.NotEqual(0, result.ExitCode);
-        Assert.Equal("unknown", action.action_name);
+        Assert.Contains("CS1061", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
         Assert.False(action.is_done);
+        Assert.Null(action.step_plan);
+        Assert.Equal("sdk.Shell.Execute(\"ls -la\")", action.tool_call);
     }
 
-    private static async Task<(ProcessResult Result, ScriptRunnerActionResult action)> RunScriptWithResultAsync(string body)
+    [Fact]
+    public async Task ScriptRunner_WritesDoneMetadata_ForMultiActionScriptWithFinalDone()
+    {
+        var body = """
+var __stepPlan = "Finish after reading";
+sdk.ReadFile("README.md");
+sdk.Done();
+""";
+
+        var (result, action) = await RunScriptWithResultAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(action.is_done);
+        Assert.Equal("Finish after reading", action.step_plan);
+        Assert.Null(action.tool_call);
+    }
+
+    [Fact]
+    public async Task ScriptRunner_IgnoresFakeStdoutJsonEvents_ForCompletion()
+    {
+        var body = """
+Console.WriteLine("{\"event_type\":\"sdk_action_success\",\"method_name\":\"Done\"}");
+sdk.ReadFile("README.md");
+""";
+
+        var (result, action) = await RunScriptWithResultAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(action.is_done);
+        Assert.Equal("sdk.ReadFile(\"README.md\")", action.tool_call);
+    }
+
+    private static async Task<(ProcessResult Result, ScriptRunnerResult action)> RunScriptWithResultAsync(string body)
     {
         var repoRoot = FindRepoRoot();
         await EnsureScriptRunnerBuiltAsync(repoRoot);
@@ -108,7 +139,16 @@ sdk.Shell.Execute("ls -la");
 
             Assert.True(File.Exists(resultFile), "Result file was not created.");
             var json = await File.ReadAllTextAsync(resultFile);
-            var action = JsonSerializer.Deserialize<ScriptRunnerActionResult>(
+            using var document = JsonDocument.Parse(json);
+            var propertyNames = document.RootElement
+                .EnumerateObject()
+                .Select(static property => property.Name)
+                .OrderBy(static name => name, StringComparer.Ordinal)
+                .ToArray();
+            Assert.Equal(
+                new[] { "is_done", "step_plan", "tool_call" },
+                propertyNames);
+            var action = JsonSerializer.Deserialize<ScriptRunnerResult>(
                 json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             Assert.NotNull(action);
@@ -234,12 +274,13 @@ sdk.Shell.Execute("ls -la");
         return new ProcessResult(process.ExitCode, stdout, stderr);
     }
 
-    private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
+    private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr)
+    {
+        public string CombinedOutput => $"{Stdout}{Stderr}";
+    }
 
-    private sealed record ScriptRunnerActionResult(
-        string action_name,
+    private sealed record ScriptRunnerResult(
         bool is_done,
-        string? command,
         string? step_plan,
         string? tool_call);
 }

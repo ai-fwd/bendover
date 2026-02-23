@@ -15,14 +15,9 @@ public sealed record SandboxExecutionResult(
     string CombinedOutput
 );
 
-public sealed record AgenticStepAction(
-    string ActionName,
-    bool IsDone = false,
-    string? Command = null);
-
 public sealed record ScriptExecutionResult(
     SandboxExecutionResult Execution,
-    AgenticStepAction Action,
+    bool CompletionSignaled,
     string? StepPlan = null,
     string? ToolCall = null
 );
@@ -35,7 +30,7 @@ public sealed record AgenticTurnObservation(
     SandboxExecutionResult ScriptExecution,
     SandboxExecutionResult DiffExecution,
     bool HasChanges,
-    AgenticStepAction Action,
+    bool CompletionSignaled,
     string? StepPlan = null,
     string? ToolCall = null
 );

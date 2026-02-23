@@ -75,20 +75,34 @@ sdk.Done();
     }
 
     [Fact]
-    public async Task ScriptBody_WithNestedSdkCalls_ShouldBeRejected()
+    public async Task ScriptBody_WithNestedSdkCalls_ShouldSucceed()
     {
-        var body = """
-sdk.WriteFile("a.txt", sdk.ReadFile("README.md"));
+        var repoRoot = FindRepoRoot();
+        var targetFileName = $"tmp-script-runner-nested-{Guid.NewGuid():N}.txt";
+        var targetPath = Path.Combine(repoRoot, targetFileName);
+        var body = $$"""
+sdk.WriteFile("{{targetFileName}}", sdk.ReadFile("README.md"));
 """;
 
-        var result = await RunScriptAsync(body);
+        try
+        {
+            var result = await RunScriptAsync(body);
 
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains("nested sdk calls", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("\"method_name\":\"ReadFile\"", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("\"method_name\":\"WriteFile\"", result.Stdout, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(targetPath))
+            {
+                File.Delete(targetPath);
+            }
+        }
     }
 
     [Fact]
-    public async Task ScriptBody_WithLegacyShellApi_ShouldBeRejected()
+    public async Task ScriptBody_WithLegacyShellApi_ShouldFailAtCompilation()
     {
         var body = """
 sdk.Shell.Execute("ls -la");
@@ -97,11 +111,11 @@ sdk.Shell.Execute("ls -la");
         var result = await RunScriptAsync(body);
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("legacy sdk surface is not supported", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CS1061", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ScriptBody_WithMultipleAtomicActions_ShouldBeRejected()
+    public async Task ScriptBody_WithMultipleAtomicActions_ShouldSucceed()
     {
         var body = """
 sdk.ReadFile("README.md");
@@ -110,8 +124,36 @@ sdk.LocateFile("AgentOrchestrator.cs");
 
         var result = await RunScriptAsync(body);
 
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("\"method_name\":\"ReadFile\"", result.Stdout, StringComparison.Ordinal);
+        Assert.Contains("\"method_name\":\"LocateFile\"", result.Stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithListChangedFiles_ShouldSucceed()
+    {
+        var body = """
+sdk.ListChangedFiles();
+""";
+
+        var result = await RunScriptAsync(body);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("\"method_name\":\"ListChangedFiles\"", result.Stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScriptBody_WithReferenceDirective_ShouldBeRejected()
+    {
+        var body = """
+#r "System.Xml"
+sdk.Done();
+""";
+
+        var result = await RunScriptAsync(body);
+
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("multiple actionable steps", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("contains #r directives", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<ProcessResult> RunScriptAsync(string body)

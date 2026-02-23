@@ -107,7 +107,7 @@ public class DockerContainerService : IContainerService
         {
             return new ScriptExecutionResult(
                 Execution: writeBodyResult,
-                Action: new AgenticStepAction("unknown"),
+                CompletionSignaled: false,
                 StepPlan: null,
                 ToolCall: null);
         }
@@ -125,7 +125,7 @@ public class DockerContainerService : IContainerService
         var executeResult = await ExecuteCommandAsync(
             $"cd {WorkspacePath} && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file {ScriptBodyPath} --result-file {scriptResultPath}");
 
-        var (action, stepPlan, toolCall, warning) = await TryReadScriptActionAsync(scriptResultPath);
+        var (completionSignaled, stepPlan, toolCall, warning) = await TryReadScriptResultMetadataAsync(scriptResultPath);
         if (!string.IsNullOrWhiteSpace(warning))
         {
             executeResult = AppendCombinedOutput(executeResult, warning);
@@ -133,7 +133,7 @@ public class DockerContainerService : IContainerService
 
         return new ScriptExecutionResult(
             Execution: executeResult,
-            Action: action,
+            CompletionSignaled: completionSignaled,
             StepPlan: stepPlan,
             ToolCall: toolCall);
     }
@@ -277,7 +277,7 @@ public class DockerContainerService : IContainerService
         return value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
     }
 
-    private async Task<(AgenticStepAction Action, string? StepPlan, string? ToolCall, string? Warning)> TryReadScriptActionAsync(string scriptResultPath)
+    private async Task<(bool CompletionSignaled, string? StepPlan, string? ToolCall, string? Warning)> TryReadScriptResultMetadataAsync(string scriptResultPath)
     {
         SandboxExecutionResult readResult;
         try
@@ -287,19 +287,19 @@ public class DockerContainerService : IContainerService
         catch (Exception ex)
         {
             return (
-                new AgenticStepAction("unknown"),
+                false,
                 null,
                 null,
-                $"script action metadata missing: {ex.Message}");
+                $"script result metadata missing: {ex.Message}");
         }
 
         if (readResult.ExitCode != 0 || string.IsNullOrWhiteSpace(readResult.CombinedOutput))
         {
             return (
-                new AgenticStepAction("unknown"),
+                false,
                 null,
                 null,
-                $"script action metadata unavailable.\n{readResult.CombinedOutput}");
+                $"script result metadata unavailable.\n{readResult.CombinedOutput}");
         }
 
         try
@@ -307,32 +307,28 @@ public class DockerContainerService : IContainerService
             var dto = JsonSerializer.Deserialize<ScriptRunnerActionDto>(
                 readResult.CombinedOutput,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (dto is null || string.IsNullOrWhiteSpace(dto.action_name))
+            if (dto is null)
             {
                 return (
-                    new AgenticStepAction("unknown"),
+                    false,
                     null,
                     null,
-                    $"script action metadata invalid.\n{readResult.CombinedOutput}");
+                    $"script result metadata invalid.\n{readResult.CombinedOutput}");
             }
 
-            var normalizedActionName = dto.action_name.Trim().ToLowerInvariant();
-            var warning = string.Equals(normalizedActionName, "unknown", StringComparison.Ordinal)
-                ? "script action metadata action_name 'unknown' was returned."
-                : null;
             return (
-                new AgenticStepAction(normalizedActionName, dto.is_done, dto.command),
+                dto.is_done,
                 string.IsNullOrWhiteSpace(dto.step_plan) ? null : dto.step_plan.Trim(),
                 string.IsNullOrWhiteSpace(dto.tool_call) ? null : dto.tool_call.Trim(),
-                warning);
+                null);
         }
         catch (Exception ex)
         {
             return (
-                new AgenticStepAction("unknown"),
+                false,
                 null,
                 null,
-                $"script action metadata parse failed: {ex.Message}\n{readResult.CombinedOutput}");
+                $"script result metadata parse failed: {ex.Message}\n{readResult.CombinedOutput}");
         }
     }
 
@@ -340,7 +336,7 @@ public class DockerContainerService : IContainerService
     {
         var suffix = string.IsNullOrWhiteSpace(text)
             ? string.Empty
-            : $"\n\n[script_action_metadata]\n{text}";
+            : $"\n\n[script_result_metadata]\n{text}";
 
         return new SandboxExecutionResult(
             result.ExitCode,
@@ -350,9 +346,7 @@ public class DockerContainerService : IContainerService
     }
 
     private sealed record ScriptRunnerActionDto(
-        string action_name,
         bool is_done,
-        string? command,
         string? step_plan,
         string? tool_call);
 }

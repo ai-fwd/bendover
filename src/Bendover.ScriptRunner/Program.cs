@@ -1,6 +1,6 @@
+using Bendover.SDK;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
-using Bendover.Domain.Entities;
 using System.Text.Json;
 
 namespace Bendover.ScriptRunner;
@@ -14,11 +14,9 @@ internal static class Program
         {
             await TryWriteResultFileAsync(
                 parsed.ResultFilePath,
-                new EngineerBodyAnalysis(
-                    ValidationError: null,
-                    Action: new AgenticStepAction("unknown"),
-                    StepPlan: null,
-                    ToolCall: null));
+                stepPlan: null,
+                toolCall: null,
+                isDone: false);
 
             Console.Error.WriteLine(parsed.Error);
             PrintUsage();
@@ -27,7 +25,11 @@ internal static class Program
 
         var bodyContent = await ResolveBodyContentAsync(parsed.BodyFilePath, parsed.BodyText);
         var analysis = EngineerBodyValidator.Analyze(bodyContent);
-        await TryWriteResultFileAsync(parsed.ResultFilePath, analysis);
+        await TryWriteResultFileAsync(
+            parsed.ResultFilePath,
+            analysis.StepPlan,
+            analysis.ToolCall,
+            isDone: false);
 
         if (analysis.ValidationError is not null)
         {
@@ -35,34 +37,56 @@ internal static class Program
             return 1;
         }
 
+        var runtimeSink = new InMemorySdkEventSink();
+        var sdkSink = new CompositeSdkActionEventSink(
+            runtimeSink,
+            new ConsoleJsonSdkEventSink());
+        var globals = new ScriptGlobals(new BendoverSDK(sdkSink));
+
+        var exitCode = 0;
         try
         {
             var scriptOptions = ScriptOptions.Default
                 .AddReferences(typeof(ScriptGlobals).Assembly)
-                .AddReferences(typeof(Bendover.SDK.BendoverSDK).Assembly)
+                .AddReferences(typeof(BendoverSDK).Assembly)
+                .AddImports("Bendover.SDK")
                 .AddImports(
                     "System",
                     "System.IO",
                     "System.Linq",
                     "System.Collections.Generic"
                 );
-            await CSharpScript.RunAsync(bodyContent, scriptOptions, new ScriptGlobals());
-            return 0;
+            await CSharpScript.RunAsync(bodyContent, scriptOptions, globals);
         }
-        catch (Microsoft.CodeAnalysis.Scripting.CompilationErrorException ex)
+        catch (CompilationErrorException ex)
         {
             foreach (var diagnostic in ex.Diagnostics)
             {
                 Console.Error.WriteLine(diagnostic.ToString());
             }
 
-            return 1;
+            exitCode = 1;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine(ex.ToString());
-            return 1;
+            exitCode = 1;
         }
+        finally
+        {
+            var isDone = string.Equals(
+                runtimeSink.LastSuccessEvent?.MethodName,
+                nameof(BendoverSDK.Done),
+                StringComparison.Ordinal);
+
+            await TryWriteResultFileAsync(
+                parsed.ResultFilePath,
+                analysis.StepPlan,
+                analysis.ToolCall,
+                isDone);
+        }
+
+        return exitCode;
     }
 
     private static async Task<string> ResolveBodyContentAsync(string? bodyFilePath, string? bodyText)
@@ -83,7 +107,11 @@ internal static class Program
         Console.Error.WriteLine("  Bendover.ScriptRunner.dll --body-file <path> --result-file <path>");
     }
 
-    private static async Task WriteResultFileAsync(string path, EngineerBodyAnalysis analysis)
+    private static async Task WriteResultFileAsync(
+        string path,
+        string? stepPlan,
+        string? toolCall,
+        bool isDone)
     {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath);
@@ -92,17 +120,19 @@ internal static class Program
             Directory.CreateDirectory(directory);
         }
 
-        var payload = new ScriptRunnerActionResult(
-            action_name: analysis.Action.ActionName,
-            is_done: analysis.Action.IsDone,
-            command: analysis.Action.Command,
-            step_plan: analysis.StepPlan,
-            tool_call: analysis.ToolCall);
+        var payload = new ScriptRunnerResult(
+            is_done: isDone,
+            step_plan: stepPlan,
+            tool_call: toolCall);
         var json = JsonSerializer.Serialize(payload);
         await File.WriteAllTextAsync(fullPath, json);
     }
 
-    private static async Task TryWriteResultFileAsync(string? path, EngineerBodyAnalysis analysis)
+    private static async Task TryWriteResultFileAsync(
+        string? path,
+        string? stepPlan,
+        string? toolCall,
+        bool isDone)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -111,7 +141,7 @@ internal static class Program
 
         try
         {
-            await WriteResultFileAsync(path, analysis);
+            await WriteResultFileAsync(path, stepPlan, toolCall, isDone);
         }
         catch (Exception ex)
         {
@@ -197,10 +227,8 @@ internal static class Program
         }
     }
 
-    private readonly record struct ScriptRunnerActionResult(
-        string action_name,
+    private readonly record struct ScriptRunnerResult(
         bool is_done,
-        string? command,
         string? step_plan,
         string? tool_call);
 }

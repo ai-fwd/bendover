@@ -4,9 +4,9 @@ namespace Bendover.ScriptRunner;
 
 public sealed class ScriptGlobals
 {
-    public ScriptGlobals()
+    public ScriptGlobals(BendoverSDK sdk)
     {
-        sdk = new BendoverSDK();
+        this.sdk = sdk ?? throw new ArgumentNullException(nameof(sdk));
     }
 
     public BendoverSDK sdk { get; }
