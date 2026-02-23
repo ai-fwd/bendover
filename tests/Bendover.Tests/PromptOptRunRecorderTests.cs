@@ -110,6 +110,84 @@ public class PromptOptRunRecorderTests
     }
 
     [Fact]
+    public async Task RecordOutputAsync_Lead_WritesLiveArtifactsBeforeFinalize()
+    {
+        var outDir = "/runs/out-live-lead";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("lead", new List<ChatMessage> { new(ChatRole.User, "Goal: Test Goal") });
+
+        await _sut.RecordOutputAsync("lead", "[\"practice1\"]");
+
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+    }
+
+    [Fact]
+    public async Task RecordOutputAsync_EngineerStepOutputOnly_DoesNotWriteLiveArtifacts()
+    {
+        var outDir = "/runs/out-live-no-flush";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("engineer_step_1", new List<ChatMessage> { new(ChatRole.User, "step1") });
+
+        await _sut.RecordOutputAsync("engineer_step_1", "step1 output");
+
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+    }
+
+    [Fact]
+    public async Task RecordOutputAsync_Observation_WritesLiveArtifacts()
+    {
+        var outDir = "/runs/out-live-observation";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("engineer_step_1", new List<ChatMessage> { new(ChatRole.User, "step1") });
+        await _sut.RecordOutputAsync("engineer_step_1", "step1 output");
+
+        await _sut.RecordOutputAsync("agentic_step_observation_1", "obs1");
+
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+        Assert.Contains("### engineer_step_1", transcript);
+        Assert.Contains("### agentic_step_observation_1", transcript);
+    }
+
+    [Fact]
+    public async Task RecordOutputAsync_Failure_WritesLiveArtifacts()
+    {
+        var outDir = "/runs/out-live-failure";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("engineer_step_1", new List<ChatMessage> { new(ChatRole.User, "step1") });
+        await _sut.RecordOutputAsync("engineer_step_1", "step1 output");
+
+        await _sut.RecordOutputAsync("engineer_step_failure_1", "failure1");
+
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.True(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+        Assert.Contains("### engineer_step_failure_1", transcript);
+        Assert.Contains("failure1", transcript);
+    }
+
+    [Fact]
     public async Task RecordArtifactAsync_CaptureEnabled_WritesArtifact()
     {
         var outDir = "/runs/out-artifacts";
@@ -233,6 +311,24 @@ public class PromptOptRunRecorderTests
         await _sut.FinalizeRunAsync();
 
         // Assert
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+    }
+
+    [Fact]
+    public async Task RecordOutputAsync_CaptureDisabled_DoesNotWriteLiveArtifacts()
+    {
+        var outDir = "/runs/out-5";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: false));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordPromptAsync("lead", new List<ChatMessage> { new(ChatRole.User, "Goal: Test Goal") });
+        await _sut.RecordOutputAsync("lead", "[\"practice1\"]");
+
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
+        Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
     }
 }

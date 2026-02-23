@@ -173,6 +173,8 @@ The CLI prints:
 
 ### Key Artifacts
 
+When capture is enabled, `prompts.json`, `outputs.json`, and `transcript.md` are updated during execution at lead output and engineer step-boundary events (observation/failure), then finalized again at run completion.
+
 | Artifact | Produced by | Purpose | Consumed by |
 | --- | --- | --- | --- |
 | `goal.txt` | run recorder | original user goal | GEPA replay context |
