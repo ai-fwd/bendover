@@ -78,6 +78,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Context is generated on the ScriptRunner but it should be on the SDK project not the ScriptRunner
 - [ ] Add a delete file tool
 - [ ] SDK has gotten away from me...Git can't be used (b/c of validator) others require return value usage. Shell is auto surfaced to output but is this a good pattern?
+- [x] LocateFile should ignore script_body.csx
 
 
 ## promptopt (Python)
