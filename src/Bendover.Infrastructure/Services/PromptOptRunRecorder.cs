@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Bendover.Application.Interfaces;
@@ -20,6 +21,11 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
     private readonly Dictionary<string, List<ChatMessage>> _prompts = new();
     private readonly Dictionary<string, string> _outputs = new();
+    private static readonly JsonSerializerOptions PrettyJsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     public PromptOptRunRecorder(
         IFileSystem fileSystem,
@@ -168,6 +174,11 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
 
             if (_outputs.TryGetValue(phase, out var output))
             {
+                if (TryParseEngineerStepObservation(phase, out _) && TryAppendObservationOutput(lines, output))
+                {
+                    continue;
+                }
+
                 lines.Add("#### Output");
                 lines.Add(string.Empty);
                 AppendCodeBlock(lines, output);
@@ -552,6 +563,338 @@ public class PromptOptRunRecorder : IPromptOptRunRecorder
         lines.Add("~~~text");
         lines.Add(text ?? string.Empty);
         lines.Add("~~~");
+    }
+
+    private static bool TryAppendObservationOutput(List<string> lines, string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var root = doc.RootElement;
+
+            lines.Add("#### Observation Summary");
+            lines.Add(string.Empty);
+            AppendObservationSummary(lines, root);
+            lines.Add(string.Empty);
+
+            lines.Add("#### SDK Actions");
+            lines.Add(string.Empty);
+            AppendSdkActions(lines, root);
+            lines.Add(string.Empty);
+
+            lines.Add("#### Raw Observation (JSON)");
+            lines.Add(string.Empty);
+            AppendCodeBlock(lines, JsonSerializer.Serialize(root, PrettyJsonOptions));
+            lines.Add(string.Empty);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void AppendObservationSummary(List<string> lines, JsonElement root)
+    {
+        lines.Add($"completion_signaled: {GetBooleanText(root, "CompletionSignaled")}");
+        lines.Add($"has_changes: {GetBooleanText(root, "HasChanges")}");
+        lines.Add($"step_plan: {GetStringText(root, "StepPlan")}");
+        lines.Add($"tool_call: {GetStringText(root, "ToolCall")}");
+
+        var scriptExit = TryGetNestedInt32(root, "ScriptExecution", "ExitCode", out var scriptExitCode)
+            ? scriptExitCode.ToString()
+            : "(none)";
+        var diffExit = TryGetNestedInt32(root, "DiffExecution", "ExitCode", out var diffExitCode)
+            ? diffExitCode.ToString()
+            : "(none)";
+
+        lines.Add($"script_exit: {scriptExit}");
+        lines.Add($"diff_exit: {diffExit}");
+
+        var diffNote = TryGetNestedString(root, "DiffExecution", "CombinedOutput", out var diffCombinedOutput)
+            ? ToCompactSingleLine(diffCombinedOutput, 220)
+            : "(none)";
+        lines.Add($"diff_note: {diffNote}");
+    }
+
+    private static void AppendSdkActions(List<string> lines, JsonElement root)
+    {
+        var stdout = TryGetNestedString(root, "ScriptExecution", "Stdout", out var stdoutValue)
+            ? stdoutValue
+            : string.Empty;
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            lines.Add("(none)");
+            return;
+        }
+
+        var parsedCount = 0;
+        var unparsed = new List<string>();
+
+        var rawLines = stdout
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var raw in rawLines)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (TryParseSdkActionLine(line, out var actionLine, out var payloadLine, out var errorLine))
+            {
+                parsedCount++;
+                lines.Add($"{parsedCount}. {actionLine}");
+                if (!string.IsNullOrWhiteSpace(payloadLine))
+                {
+                    lines.Add($"   payload: {payloadLine}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(errorLine))
+                {
+                    lines.Add($"   error: {errorLine}");
+                }
+
+                continue;
+            }
+
+            unparsed.Add(line);
+        }
+
+        if (parsedCount == 0)
+        {
+            lines.Add("(none)");
+        }
+
+        if (unparsed.Count == 0)
+        {
+            return;
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("Unparsed stdout lines:");
+        foreach (var line in unparsed)
+        {
+            lines.Add($"- {ToCompactSingleLine(line, 320)}");
+        }
+    }
+
+    private static bool TryParseSdkActionLine(
+        string line,
+        out string actionLine,
+        out string? payloadLine,
+        out string? errorLine)
+    {
+        actionLine = string.Empty;
+        payloadLine = null;
+        errorLine = null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var root = doc.RootElement;
+            if (!TryGetPropertyIgnoreCase(root, "event_type", out var eventTypeElement)
+                || eventTypeElement.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var eventType = eventTypeElement.GetString() ?? "(unknown_event)";
+            var methodName = TryGetPropertyIgnoreCase(root, "method_name", out var methodNameElement)
+                             && methodNameElement.ValueKind == JsonValueKind.String
+                ? methodNameElement.GetString() ?? "(unknown_method)"
+                : "(unknown_method)";
+            var elapsed = TryGetPropertyIgnoreCase(root, "elapsed_ms", out var elapsedElement)
+                          && elapsedElement.ValueKind == JsonValueKind.Number
+                          && elapsedElement.TryGetInt64(out var elapsedMs)
+                ? $"{elapsedMs}ms"
+                : "n/a";
+
+            actionLine = $"{eventType} {methodName} elapsed={elapsed}";
+
+            if (TryGetPropertyIgnoreCase(root, "payload_json", out var payloadElement)
+                && payloadElement.ValueKind == JsonValueKind.String)
+            {
+                var rawPayload = payloadElement.GetString();
+                if (!string.IsNullOrWhiteSpace(rawPayload))
+                {
+                    payloadLine = ToCompactSingleLine(TryFormatJsonString(rawPayload), 320);
+                }
+            }
+
+            if (TryGetPropertyIgnoreCase(root, "error", out var errorElement)
+                && errorElement.ValueKind != JsonValueKind.Null)
+            {
+                errorLine = ToCompactSingleLine(FormatError(errorElement), 320);
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string FormatError(JsonElement errorElement)
+    {
+        if (errorElement.ValueKind == JsonValueKind.Object)
+        {
+            var type = TryGetPropertyIgnoreCase(errorElement, "Type", out var typeElement)
+                       && typeElement.ValueKind == JsonValueKind.String
+                ? typeElement.GetString()
+                : null;
+            var message = TryGetPropertyIgnoreCase(errorElement, "Message", out var messageElement)
+                          && messageElement.ValueKind == JsonValueKind.String
+                ? messageElement.GetString()
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(type) || !string.IsNullOrWhiteSpace(message))
+            {
+                return $"{(string.IsNullOrWhiteSpace(type) ? "error" : type)}: {(string.IsNullOrWhiteSpace(message) ? "(none)" : message)}";
+            }
+        }
+
+        return JsonSerializer.Serialize(errorElement, PrettyJsonOptions);
+    }
+
+    private static string TryFormatJsonString(string rawText)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawText);
+            return JsonSerializer.Serialize(doc.RootElement, PrettyJsonOptions);
+        }
+        catch
+        {
+            return rawText;
+        }
+    }
+
+    private static string GetBooleanText(JsonElement root, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(root, propertyName, out var element))
+        {
+            return "(none)";
+        }
+
+        return element.ValueKind switch
+        {
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => "(none)"
+        };
+    }
+
+    private static string GetStringText(JsonElement root, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(root, propertyName, out var element)
+            || element.ValueKind != JsonValueKind.String)
+        {
+            return "(none)";
+        }
+
+        return ToCompactSingleLine(element.GetString(), 220);
+    }
+
+    private static bool TryGetNestedString(
+        JsonElement root,
+        string parentProperty,
+        string childProperty,
+        out string value)
+    {
+        value = string.Empty;
+        if (!TryGetPropertyIgnoreCase(root, parentProperty, out var parent)
+            || parent.ValueKind != JsonValueKind.Object
+            || !TryGetPropertyIgnoreCase(parent, childProperty, out var child)
+            || child.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = child.GetString() ?? string.Empty;
+        return true;
+    }
+
+    private static bool TryGetNestedInt32(
+        JsonElement root,
+        string parentProperty,
+        string childProperty,
+        out int value)
+    {
+        value = 0;
+        if (!TryGetPropertyIgnoreCase(root, parentProperty, out var parent)
+            || parent.ValueKind != JsonValueKind.Object
+            || !TryGetPropertyIgnoreCase(parent, childProperty, out var child)
+            || child.ValueKind != JsonValueKind.Number
+            || !child.TryGetInt32(out value))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out value))
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string ToCompactSingleLine(string? text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "(none)";
+        }
+
+        var singleLine = text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Trim();
+
+        if (singleLine.Length <= maxLength)
+        {
+            return singleLine;
+        }
+
+        return $"{singleLine[..maxLength]}...(truncated)";
     }
 
     private sealed record PromptDelta(List<PromptDeltaMessage> Messages, int RemovedMessageCount);
