@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Bendover.Application.Interfaces;
 using Bendover.Infrastructure.Services;
@@ -163,6 +164,79 @@ public class PromptOptRunRecorderTests
         var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
         Assert.Contains("### engineer_step_1", transcript);
         Assert.Contains("### agentic_step_observation_1", transcript);
+    }
+
+    [Fact]
+    public async Task FinalizeRunAsync_ObservationOutput_RendersHumanReadableSections_AndPrettyRawJson()
+    {
+        var outDir = "/runs/out-readable-observation";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordOutputAsync("agentic_step_observation_1", BuildObservationOutput(includeUnparsedStdoutLine: true));
+        await _sut.FinalizeRunAsync();
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+        Assert.Contains("#### Observation Summary", transcript);
+        Assert.Contains("completion_signaled: false", transcript);
+        Assert.Contains("has_changes: false", transcript);
+        Assert.Contains("script_exit: 0", transcript);
+        Assert.Contains("diff_exit: -1", transcript);
+        Assert.Contains("step_plan: Locate AgentOrchestrator.cs", transcript);
+        Assert.Contains("tool_call: sdk.LocateFile(\"AgentOrchestrator.cs\", new LocateFileOptions())", transcript);
+        Assert.Contains("#### SDK Actions", transcript);
+        Assert.Contains("1. sdk_action_start LocateFile elapsed=0ms", transcript);
+        Assert.Contains("2. sdk_action_success LocateFile elapsed=131ms", transcript);
+        Assert.Contains("payload:", transcript);
+        Assert.Contains("AgentOrchestrator.cs", transcript);
+        Assert.Contains("Unparsed stdout lines:", transcript);
+        Assert.Contains("raw-non-json-line", transcript);
+        Assert.Contains("#### Raw Observation (JSON)", transcript);
+        Assert.DoesNotContain("\\u0022event_type\\u0022", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FinalizeRunAsync_ObservationOutput_MalformedJson_FallsBackToLegacyOutput()
+    {
+        var outDir = "/runs/out-observation-fallback";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordOutputAsync("agentic_step_observation_1", "not-json");
+        await _sut.FinalizeRunAsync();
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+        Assert.Contains("### agentic_step_observation_1", transcript);
+        Assert.Contains("#### Output", transcript);
+        Assert.Contains("not-json", transcript);
+        Assert.DoesNotContain("#### Observation Summary", transcript);
+        Assert.DoesNotContain("#### SDK Actions", transcript);
+        Assert.DoesNotContain("#### Raw Observation (JSON)", transcript);
+    }
+
+    [Fact]
+    public async Task FinalizeRunAsync_NonObservationPhase_KeepsLegacyOutputFormat()
+    {
+        var outDir = "/runs/out-non-observation-format";
+        _runContextAccessorMock.Setup(x => x.Current)
+            .Returns(new PromptOptRunContext(outDir, Capture: true));
+
+        await _sut.StartRunAsync("Test Goal", "abc1234", "bundle-1");
+        await _sut.RecordOutputAsync("lead", "[\"practice1\"]");
+        await _sut.RecordOutputAsync("engineer_step_1", "Console.WriteLine(\"hello\");");
+        await _sut.FinalizeRunAsync();
+
+        var transcript = _fileSystem.File.ReadAllText(Path.Combine(outDir, "transcript.md"));
+        var phaseStart = transcript.IndexOf("### engineer_step_1", StringComparison.Ordinal);
+        Assert.True(phaseStart >= 0);
+        var section = transcript.Substring(phaseStart);
+        Assert.Contains("#### Output", section);
+        Assert.Contains("Console.WriteLine(\"hello\");", section);
+        Assert.DoesNotContain("#### Observation Summary", section);
+        Assert.DoesNotContain("#### SDK Actions", section);
+        Assert.DoesNotContain("#### Raw Observation (JSON)", section);
     }
 
     [Fact]
@@ -330,5 +404,57 @@ public class PromptOptRunRecorderTests
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "prompts.json")));
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "outputs.json")));
         Assert.False(_fileSystem.File.Exists(Path.Combine(outDir, "transcript.md")));
+    }
+
+    private static string BuildObservationOutput(bool includeUnparsedStdoutLine)
+    {
+        var eventStart = JsonSerializer.Serialize(new
+        {
+            event_type = "sdk_action_start",
+            method_name = "LocateFile",
+            elapsed_ms = 0,
+            payload_json = (string?)null,
+            error = (object?)null
+        });
+        var eventSuccess = JsonSerializer.Serialize(new
+        {
+            event_type = "sdk_action_success",
+            method_name = "LocateFile",
+            elapsed_ms = 131,
+            payload_json = JsonSerializer.Serialize(new
+            {
+                Pattern = "AgentOrchestrator.cs",
+                TotalMatches = 1
+            }),
+            error = (object?)null
+        });
+
+        var stdout = includeUnparsedStdoutLine
+            ? $"{eventStart}\n{eventSuccess}\nraw-non-json-line\n"
+            : $"{eventStart}\n{eventSuccess}\n";
+
+        var observation = new
+        {
+            ScriptExecution = new
+            {
+                ExitCode = 0,
+                Stdout = stdout,
+                Stderr = "",
+                CombinedOutput = stdout
+            },
+            DiffExecution = new
+            {
+                ExitCode = -1,
+                Stdout = "",
+                Stderr = "",
+                CombinedOutput = "skipped: diff skipped until sdk.Done() is called"
+            },
+            HasChanges = false,
+            CompletionSignaled = false,
+            StepPlan = "Locate AgentOrchestrator.cs",
+            ToolCall = "sdk.LocateFile(\"AgentOrchestrator.cs\", new LocateFileOptions())"
+        };
+
+        return JsonSerializer.Serialize(observation);
     }
 }
