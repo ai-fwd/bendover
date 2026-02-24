@@ -13,7 +13,6 @@ public class AgentOrchestrator : IAgentOrchestrator
     private const int MaxActionSteps = 24;
     private const int TranscriptPreviewLimit = 320;
     private const int PromptHistoryDepth = 5;
-    private const int HistoryPreviewLimit = 140;
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
@@ -29,8 +28,8 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     private sealed record EngineerStepHistoryEntry(
         int StepNumber,
-        string ObservationSummary,
-        string? FailureSummary);
+        string ObservationContext,
+        string? FailureContext);
 
     public AgentOrchestrator(
         IAgentPromptService agentPromptService,
@@ -233,7 +232,6 @@ public class AgentOrchestrator : IAgentOrchestrator
                         var serializedObservation = JsonSerializer.Serialize(turnObservation);
                         await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
                         await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
-                        var observationSummary = BuildCompactObservationSummary(turnObservation);
                         lastScriptExitCode = turnObservation.ScriptExecution.ExitCode;
                         await NotifyStepAsync(new AgentStepEvent(
                             StepNumber: stepNumber,
@@ -250,13 +248,13 @@ public class AgentOrchestrator : IAgentOrchestrator
                             AppendStepHistory(
                                 stepHistory,
                                 stepNumber,
-                                observationSummary,
-                                BuildCompactFailureSummaryFromObservation(turnObservation, "script_exit_non_zero"));
+                                serializedObservation,
+                                lastFailureDigestForRunResult);
                             await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
                             continue;
                         }
 
-                        AppendStepHistory(stepHistory, stepNumber, observationSummary, failureSummary: null);
+                        AppendStepHistory(stepHistory, stepNumber, serializedObservation, failureContext: null);
 
                         if (turnObservation.CompletionSignaled)
                         {
@@ -277,8 +275,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                         AppendStepHistory(
                             stepHistory,
                             stepNumber,
-                            BuildCompactExceptionObservationSummary(ex),
-                            BuildCompactFailureSummaryFromException(ex));
+                            BuildExceptionObservationContext(ex),
+                            lastFailureDigestForRunResult);
                         await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
                     }
                 }
@@ -340,11 +338,15 @@ public class AgentOrchestrator : IAgentOrchestrator
             historyBuilder.AppendLine($"Recent step history (oldest to newest, last {PromptHistoryDepth}):");
             foreach (var entry in history)
             {
-                historyBuilder.AppendLine($"Step {entry.StepNumber} observation: {entry.ObservationSummary}");
-                if (!string.IsNullOrWhiteSpace(entry.FailureSummary))
+                historyBuilder.AppendLine($"Step {entry.StepNumber} observation (raw):");
+                historyBuilder.AppendLine(entry.ObservationContext);
+                if (!string.IsNullOrWhiteSpace(entry.FailureContext))
                 {
-                    historyBuilder.AppendLine($"Step {entry.StepNumber} failure: {entry.FailureSummary}");
+                    historyBuilder.AppendLine($"Step {entry.StepNumber} failure (raw):");
+                    historyBuilder.AppendLine(entry.FailureContext);
                 }
+
+                historyBuilder.AppendLine();
             }
 
             messages.Add(new ChatMessage(ChatRole.User, historyBuilder.ToString().TrimEnd()));
@@ -488,10 +490,10 @@ public class AgentOrchestrator : IAgentOrchestrator
     private static void AppendStepHistory(
         List<EngineerStepHistoryEntry> stepHistory,
         int stepNumber,
-        string observationSummary,
-        string? failureSummary)
+        string observationContext,
+        string? failureContext)
     {
-        stepHistory.Add(new EngineerStepHistoryEntry(stepNumber, observationSummary, failureSummary));
+        stepHistory.Add(new EngineerStepHistoryEntry(stepNumber, observationContext, failureContext));
         var overflow = stepHistory.Count - PromptHistoryDepth;
         if (overflow > 0)
         {
@@ -499,42 +501,11 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
-    private static string BuildCompactObservationSummary(AgenticTurnObservation observation)
+    private static string BuildExceptionObservationContext(Exception exception)
     {
-        return $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}; " +
-               $"tool_call={ToCompactSingleLine(observation.ToolCall, HistoryPreviewLimit)}; " +
-               $"step_plan={ToCompactSingleLine(observation.StepPlan, HistoryPreviewLimit)}; " +
-               $"script_exit={observation.ScriptExecution.ExitCode}; " +
-               $"has_changes={observation.HasChanges}; " +
-               $"diff_exit={observation.DiffExecution.ExitCode}; " +
-               $"output_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
-    }
-
-    private static string BuildCompactExceptionObservationSummary(Exception exception)
-    {
-        return $"completion_signaled=false; " +
-               $"tool_call=(none); " +
-               $"step_plan=(none); " +
-               $"script_exit=1; " +
-               $"has_changes=false; " +
-               $"diff_exit=n/a; " +
-               $"output_preview={ToCompactSingleLine(exception.ToString(), HistoryPreviewLimit)}";
-    }
-
-    private static string BuildCompactFailureSummaryFromObservation(AgenticTurnObservation observation, string failureType)
-    {
-        return $"failure_type={failureType}; " +
-               $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}; " +
-               $"script_exit={observation.ScriptExecution.ExitCode}; " +
-               $"error_preview={ToCompactSingleLine(observation.ScriptExecution.CombinedOutput, HistoryPreviewLimit)}";
-    }
-
-    private static string BuildCompactFailureSummaryFromException(Exception exception)
-    {
-        return $"failure_type=exception; " +
-               $"exception_type={exception.GetType().FullName ?? "n/a"}; " +
-               $"exception_message={ToCompactSingleLine(exception.Message, HistoryPreviewLimit)}; " +
-               $"error_preview={ToCompactSingleLine(exception.ToString(), HistoryPreviewLimit)}";
+        return $"exception_type={exception.GetType().FullName ?? "n/a"}\n" +
+               $"exception_message={exception.Message}\n" +
+               $"exception:\n{exception}";
     }
 
     private static string BuildTurnFailureDigest(

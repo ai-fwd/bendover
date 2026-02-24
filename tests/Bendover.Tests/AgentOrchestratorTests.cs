@@ -179,10 +179,11 @@ public class AgentOrchestratorTests
         Assert.True(capturedEngineerMessages.Count >= 2);
         var secondStepUserText = ExtractUserText(capturedEngineerMessages[1]);
         Assert.Contains("Recent step history (oldest to newest, last 5):", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("Step 1 observation:", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("Step 1 failure:", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("failure_type=script_exit_non_zero", secondStepUserText, StringComparison.Ordinal);
-        Assert.DoesNotContain("script_output_tail:", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Step 1 observation (raw):", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Step 1 failure (raw):", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("\"ScriptExecution\":{\"ExitCode\":1", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("failed_checks=script_exit_non_zero", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("script_output_tail:", secondStepUserText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -206,8 +207,8 @@ public class AgentOrchestratorTests
         Assert.True(capturedEngineerMessages.Count >= 2);
         var secondStepUserText = ExtractUserText(capturedEngineerMessages[1]);
         Assert.Contains("Recent step history (oldest to newest, last 5):", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("Step 1 observation:", secondStepUserText, StringComparison.Ordinal);
-        Assert.Contains("completion_signaled=false", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("Step 1 observation (raw):", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains("\"CompletionSignaled\":false", secondStepUserText, StringComparison.Ordinal);
         Assert.Contains("Bendover.sln", secondStepUserText, StringComparison.Ordinal);
     }
 
@@ -236,12 +237,40 @@ public class AgentOrchestratorTests
 
         Assert.True(capturedEngineerMessages.Count >= 7);
         var stepSevenPrompt = ExtractUserText(capturedEngineerMessages[6]);
-        Assert.Contains("Step 2 observation:", stepSevenPrompt, StringComparison.Ordinal);
-        Assert.Contains("Step 3 observation:", stepSevenPrompt, StringComparison.Ordinal);
-        Assert.Contains("Step 4 observation:", stepSevenPrompt, StringComparison.Ordinal);
-        Assert.Contains("Step 5 observation:", stepSevenPrompt, StringComparison.Ordinal);
-        Assert.Contains("Step 6 observation:", stepSevenPrompt, StringComparison.Ordinal);
-        Assert.DoesNotContain("Step 1 observation:", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 2 observation (raw):", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 3 observation (raw):", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 4 observation (raw):", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 5 observation (raw):", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.Contains("Step 6 observation (raw):", stepSevenPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("Step 1 observation (raw):", stepSevenPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldKeepPromptHistoryUntruncated_WhenObservationContainsLongOutput()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        var capturedEngineerMessages = new List<IReadOnlyList<ChatMessage>>();
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
+                capturedEngineerMessages.Add(messages.ToList()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.ReadFile(\"README.md\");") }));
+
+        var expectedPath = "/workspace/src/Bendover.Application/AgentOrchestrator.cs";
+        var longScriptOutput = $"{new string('x', 180)}\n{expectedPath}";
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateDiscoveryObservation(longScriptOutput))
+            .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        Assert.True(capturedEngineerMessages.Count >= 2);
+        var secondStepUserText = ExtractUserText(capturedEngineerMessages[1]);
+        Assert.Contains("Step 1 observation (raw):", secondStepUserText, StringComparison.Ordinal);
+        Assert.Contains(expectedPath, secondStepUserText, StringComparison.Ordinal);
+        Assert.DoesNotContain("...(truncated)", secondStepUserText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -273,6 +302,33 @@ public class AgentOrchestratorTests
         Assert.Equal("Need to inspect README", firstStepEvent.Plan);
         Assert.Equal("sdk.ReadFile(\"README.md\")", firstStepEvent.Tool);
         Assert.Contains("completion_signaled=false", firstStepEvent.Observation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldKeepTranscriptOutputCompacted_WhenStreamingTranscriptEnabled()
+    {
+        SetupRunContext(streamTranscript: true);
+        SetupLeadSelection("Build feature");
+        var events = new List<AgentEvent>();
+        _observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>()))
+            .Callback<AgentEvent>(evt => events.Add(evt))
+            .Returns(Task.CompletedTask);
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, new string('a', 360)) }));
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            .ReturnsAsync(CreateCompleteObservation(hasChanges: false));
+        _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
+            .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        await _sut.RunAsync("Build feature", CreatePractices());
+
+        var outputTranscriptEvent = events
+            .OfType<AgentProgressEvent>()
+            .FirstOrDefault(x => x.Message.Contains("[transcript][output] phase=engineer_step_1", StringComparison.Ordinal));
+        Assert.NotNull(outputTranscriptEvent);
+        Assert.Contains("...(truncated)", outputTranscriptEvent!.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -414,7 +470,7 @@ public class AgentOrchestratorTests
             Times.Never);
     }
 
-    private void SetupRunContext(bool applySandboxPatchToSource = false)
+    private void SetupRunContext(bool applySandboxPatchToSource = false, bool streamTranscript = false)
     {
         _runContextAccessorMock.Setup(x => x.Current)
             .Returns(new PromptOptRunContext(
@@ -422,7 +478,8 @@ public class AgentOrchestratorTests
                 Capture: true,
                 RunId: "run-1",
                 BundleId: "bundle-123",
-                ApplySandboxPatchToSource: applySandboxPatchToSource));
+                ApplySandboxPatchToSource: applySandboxPatchToSource,
+                StreamTranscript: streamTranscript));
     }
 
     private void SetupLeadSelection(string goal)
