@@ -20,6 +20,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] AgentOrchestrator is focused on script run vs. goal accomplished
 - [ ] Need to improve PracticeService because the LM is not picking correctly
 - [x] Passing a rolling history of N previous messages. hard code for now.
+- [ ] Container cleanup when host terminates the loop
 
 
 ## Infrastructure
