@@ -101,6 +101,50 @@ public class BenchmarkRunOrchestratorTests
     }
 
     [Fact]
+    public async Task RunAsync_ShouldResolveRelativeOutputPathToAbsolutePath()
+    {
+        var bundlePath = "/bundle/bundle-456";
+        var taskPath = "/task";
+        var outputPath = "relative/out";
+        var expectedOutputPath = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), outputPath));
+        var practicesPath = "/bundle/bundle-456/practices";
+        var agentsPath = "/bundle/bundle-456/agents";
+        var taskText = "Do the work";
+
+        _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData("abc1234"));
+        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
+        _fileSystem.AddFile(
+            Path.Combine(practicesPath, "tdd_spirit.md"),
+            new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
+        _fileSystem.AddFile(Path.Combine(agentsPath, "lead.md"), new MockFileData("Lead prompt template"));
+        _fileSystem.AddFile(Path.Combine(agentsPath, "engineer.md"), new MockFileData("Engineer prompt template"));
+        _fileSystem.AddFile(
+            Path.Combine(agentsPath, "tools.md"),
+            new MockFileData("# SDK Tool Usage Contract (Auto-generated)\n- sdk contract"));
+
+        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("clone")), It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("");
+        _gitRunnerMock.Setup(x => x.RunAsync(It.Is<string>(s => s.StartsWith("checkout")), It.IsAny<string>(), It.IsAny<string?>()))
+            .ReturnsAsync("");
+        _bundleResolverMock.Setup(x => x.Resolve(bundlePath))
+            .Returns(practicesPath);
+        _agentOrchestratorMock.Setup(x => x.RunAsync(taskText, It.IsAny<IReadOnlyCollection<Practice>>(), It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.RunAsync(bundlePath, taskPath, outputPath);
+
+        _runContextAccessorMock.VerifySet(
+            x => x.Current = It.Is<PromptOptRunContext>(
+                ctx => ctx.OutDir == expectedOutputPath
+                       && ctx.Capture
+                       && ctx.BundleId == "bundle-456"
+                       && !ctx.ApplySandboxPatchToSource
+            ),
+            Times.Once);
+        _runEvaluatorMock.Verify(x => x.EvaluateAsync(expectedOutputPath, bundlePath), Times.Once);
+    }
+
+    [Fact]
     public async Task RunAsync_ShouldCopyAgentsPromptsIntoWorkspaceBundleAgents()
     {
         var bundlePath = "/bundle/bundle-456";
