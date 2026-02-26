@@ -24,7 +24,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 
 
 ## Infrastructure
-- [ ] PromptOptRunRecorder is saving the run based on CWD. Need to resolve explicitly.
+- [x] PromptOptRunRecorder is saving the run based on CWD. Need to resolve explicitly.
 - [ ] Need to change the naming to just RunRecorder
 - [x] Based on new practice specific mutation the PromptOptRunEvaluator needs to be updated to create a correct evaluator.json containing:
 

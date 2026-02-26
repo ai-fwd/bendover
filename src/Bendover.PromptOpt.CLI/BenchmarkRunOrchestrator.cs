@@ -51,7 +51,12 @@ public class BenchmarkRunOrchestrator
 
     public async Task RunAsync(string bundlePath, string taskPath, string outputPath, bool verbose)
     {
-        Log(verbose, $"Starting run. bundle={bundlePath} task={taskPath} out={outputPath}");
+        var invocationDirectory = Directory.GetCurrentDirectory();
+        var resolvedOutputPath = Path.IsPathRooted(outputPath)
+            ? outputPath
+            : Path.GetFullPath(Path.Combine(invocationDirectory, outputPath));
+
+        Log(verbose, $"Starting run. bundle={bundlePath} task={taskPath} out={resolvedOutputPath}");
         var workingDirectory = _fileSystem.Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         _fileSystem.Directory.CreateDirectory(workingDirectory);
         Directory.CreateDirectory(workingDirectory);
@@ -110,18 +115,18 @@ public class BenchmarkRunOrchestrator
             var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
             Log(verbose, $"Loaded task file: {taskFilePath}");
 
-            if (!_fileSystem.Directory.Exists(outputPath))
+            if (!_fileSystem.Directory.Exists(resolvedOutputPath))
             {
-                _fileSystem.Directory.CreateDirectory(outputPath);
-                Log(verbose, $"Created output directory: {outputPath}");
+                _fileSystem.Directory.CreateDirectory(resolvedOutputPath);
+                Log(verbose, $"Created output directory: {resolvedOutputPath}");
             }
             else
             {
-                Log(verbose, $"Using existing output directory: {outputPath}");
+                Log(verbose, $"Using existing output directory: {resolvedOutputPath}");
             }
 
             _runContextAccessor.Current = new PromptOptRunContext(
-                outputPath,
+                resolvedOutputPath,
                 Capture: true,
                 BundleId: bundleId,
                 ApplySandboxPatchToSource: false
@@ -160,7 +165,7 @@ public class BenchmarkRunOrchestrator
         }
 
         Log(verbose, "Running evaluation...");
-        await _runEvaluator.EvaluateAsync(outputPath, bundlePath);
+        await _runEvaluator.EvaluateAsync(resolvedOutputPath, bundlePath);
         Log(verbose, "Evaluation completed.");
     }
 
