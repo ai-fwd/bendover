@@ -1,7 +1,9 @@
 import shutil
 from unittest.mock import patch
-from promptopt.models import RunArtifact
+import pytest
+from promptopt.models import EvaluationResult, RunArtifact
 from promptopt.run_gepa import (
+    evaluate_run_replay,
     metric_fn,
     prepare_task_dir,
     select_feedback_targeted_components,
@@ -94,6 +96,80 @@ def test_prepare_task_dir_copies_previous_run_results(tmp_path):
         assert copied_path.read_text() == run_result_content
     finally:
         shutil.rmtree(task_dir, ignore_errors=True)
+
+
+def test_evaluate_run_replay_cleans_up_temp_task_dir_on_success(tmp_path, monkeypatch):
+    run_dir = tmp_path / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    run = RunArtifact(
+        run_id="run-1",
+        run_dir=run_dir,
+        goal="Ship feature",
+        base_commit="abc123",
+    )
+    bundle_path = tmp_path / "bundle"
+    bundle_path.mkdir()
+    log_dir = tmp_path / "logs"
+
+    seen_task_path = None
+
+    def fake_evaluate_bundle(bundle_path, task_path, cli_command, log_dir, timeout_seconds, run_label):
+        nonlocal seen_task_path
+        seen_task_path = task_path
+        assert task_path.exists()
+        return EvaluationResult(passed=True, score=0.75)
+
+    monkeypatch.setattr("promptopt.run_gepa.evaluate_bundle", fake_evaluate_bundle)
+
+    result = evaluate_run_replay(
+        bundle_path=bundle_path,
+        run=run,
+        cli_command="promptopt-cli",
+        log_dir=log_dir,
+        timeout_seconds=30,
+        run_label=run.run_id,
+    )
+
+    assert result.score == 0.75
+    assert seen_task_path is not None
+    assert not seen_task_path.exists()
+
+
+def test_evaluate_run_replay_cleans_up_temp_task_dir_on_failure(tmp_path, monkeypatch):
+    run_dir = tmp_path / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    run = RunArtifact(
+        run_id="run-1",
+        run_dir=run_dir,
+        goal="Ship feature",
+        base_commit="abc123",
+    )
+    bundle_path = tmp_path / "bundle"
+    bundle_path.mkdir()
+    log_dir = tmp_path / "logs"
+
+    seen_task_path = None
+
+    def fake_evaluate_bundle(bundle_path, task_path, cli_command, log_dir, timeout_seconds, run_label):
+        nonlocal seen_task_path
+        seen_task_path = task_path
+        assert task_path.exists()
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("promptopt.run_gepa.evaluate_bundle", fake_evaluate_bundle)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        evaluate_run_replay(
+            bundle_path=bundle_path,
+            run=run,
+            cli_command="promptopt-cli",
+            log_dir=log_dir,
+            timeout_seconds=30,
+            run_label=run.run_id,
+        )
+
+    assert seen_task_path is not None
+    assert not seen_task_path.exists()
 
 
 def test_configure_reflection_lm_attaches_transcript_callback():

@@ -478,10 +478,9 @@ class BundleProgram(dspy.Module):
             # Replay the run using the external evaluator (PromptOpt.CLI).
             _status(f"replay-eval start run={run_id} bundle={written_bundle.bundle_id}")
             run = self.runs_by_id[run_id]
-            task_path = prepare_task_dir(run)
-            result = evaluate_bundle(
+            result = evaluate_run_replay(
                 bundle_path=written_bundle.path,
-                task_path=task_path,
+                run=run,
                 cli_command=self.cli_command,
                 log_dir=self.log_dir,
                 timeout_seconds=self.timeout,
@@ -665,6 +664,28 @@ def prepare_task_dir(run: RunArtifact) -> Path:
     if previous_run_result_path.exists():
         (temp_dir / "previous_run_results.json").write_bytes(previous_run_result_path.read_bytes())
     return temp_dir
+
+
+def evaluate_run_replay(
+    bundle_path: Path,
+    run: RunArtifact,
+    cli_command: str,
+    log_dir: Path,
+    timeout_seconds: int,
+    run_label: str,
+) -> EvaluationResult:
+    task_path = prepare_task_dir(run)
+    try:
+        return evaluate_bundle(
+            bundle_path=Path(bundle_path),
+            task_path=task_path,
+            cli_command=cli_command,
+            log_dir=Path(log_dir),
+            timeout_seconds=timeout_seconds,
+            run_label=run_label,
+        )
+    finally:
+        _safe_remove_path(task_path)
 
 
 def build_batches(run_ids: list[str], batch_size: int) -> list[list[str]]:
@@ -972,11 +993,10 @@ def _run_optimization(
                 evaluations.append(cached)
                 continue
             run = runs[run_id]
-            task_path = prepare_task_dir(run)
             _status(f"final-score start run={run_id}")
-            result = evaluate_bundle(
+            result = evaluate_run_replay(
                 bundle_path=written_bundle.path,
-                task_path=task_path,
+                run=run,
                 cli_command=resolved_cli_command,
                 log_dir=logs_root,
                 timeout_seconds=timeout_seconds,
