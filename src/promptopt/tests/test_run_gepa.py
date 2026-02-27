@@ -1,5 +1,5 @@
 import pytest
-from promptopt.run_gepa import metric_fn
+from promptopt.run_gepa import metric_fn, select_feedback_targeted_components
 from dspy import Prediction
 
 def test_metric_fn_signature():
@@ -35,3 +35,31 @@ def test_gepa_initialization():
     gepa = GEPA(metric=metric_fn, max_full_evals=10, reflection_lm=lm)
     assert gepa is not None
 
+
+def test_select_feedback_targeted_components_prefers_feedback_by_pred():
+    class _State:
+        list_of_named_predictors = ["practice_0", "practice_1", "practice_2"]
+        named_predictor_id_to_update_next_for_program_candidate = [0]
+
+    state = _State()
+    trajectories = [
+        {
+            "prediction": Prediction(
+                feedback_by_pred={
+                    "practice_2": "targeted",
+                }
+            )
+        }
+    ]
+    selected = select_feedback_targeted_components(
+        state=state,
+        trajectories=trajectories,
+        subsample_scores=[0.7],
+        candidate_idx=0,
+        candidate={
+            "practice_0": "a",
+            "practice_1": "b",
+            "practice_2": "c",
+        },
+    )
+    assert selected == ["practice_2"]
