@@ -110,3 +110,4 @@ build/
 # Generated SDK tool surface context
 .bendover/agents/tools.md
 **/.bendover/promptopt/bundles/*/agents/tools.md
+.bendover/promptopt/cache/

@@ -88,7 +88,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Mutate only practices that are necessary
 - [x] Build GEPA run context from replay artifacts (goal/diff/test/build/outputs summary)
 - [x] Validate promptopt behavior on a curated run - not perfect but does work
-- [ ] Needs to use ChatGPT Pro/Plus subscription like CLI
+- [x] Needs to use ChatGPT Pro/Plus subscription like CLI
 
 ## Infrastructure (PromptOpt artifacts)
 - [x] Capture `dotnet_build.txt` / `dotnet_build_error.txt` in PromptOpt run recorder
