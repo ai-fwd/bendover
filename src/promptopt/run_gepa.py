@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -548,8 +549,7 @@ def configure_reflection_lm(reflection_lm: str, cache_enabled: bool = True) -> B
     return dspy.LM(reflection_lm, cache=cache_enabled)
 
 
-@app.command()
-def main(
+def _run_optimization(
     cli_command: str | None = typer.Option(
         None,
         help="Command to invoke Bendover CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
@@ -733,6 +733,79 @@ def main(
     print("Optimization Complete.")
     print(f"Best bundle: {written_bundle.bundle_id}")
     print(f"Final score: {final_score}")
+
+
+def _safe_remove_path(path: Path) -> None:
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+        return
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+        return
+    path.unlink(missing_ok=True)
+
+
+def _run_clean(promptopt_root: str) -> None:
+    root = Path(promptopt_root)
+    active_json = root / "active.json"
+    logs_root = root / "logs"
+    bundles_root = root / "bundles"
+    cache_evals_root = root / "cache" / "evals"
+
+    _safe_remove_path(active_json)
+
+    if logs_root.exists() and logs_root.is_dir():
+        for child in list(logs_root.iterdir()):
+            _safe_remove_path(child)
+
+    if bundles_root.exists() and bundles_root.is_dir():
+        for child in list(bundles_root.glob("gen*")):
+            _safe_remove_path(child)
+
+    if cache_evals_root.exists() and cache_evals_root.is_dir():
+        for child in list(cache_evals_root.iterdir()):
+            _safe_remove_path(child)
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    cli_command: str | None = typer.Option(
+        None,
+        help="Command to invoke Bendover CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
+    ),
+    promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
+    train_split: str | None = typer.Option(None, help="Path to train.txt (defaults to datasets/train.txt)"),
+    timeout_seconds: int = typer.Option(900, help="Execution timeout"),
+    reflection_lm: str = typer.Option(
+        os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="Reflection LM model or 'test'"
+    ),
+    max_full_evals: int = typer.Option(10, help="GEPA max full evals"),
+    batch_size: int = typer.Option(0, help="Batch size for training"),
+    disable_dspy_cache: bool = typer.Option(False, help="Disable DSPy memory/disk caches"),
+):
+    if ctx.invoked_subcommand is not None:
+        return
+
+    _run_optimization(
+        cli_command=cli_command,
+        promptopt_root=promptopt_root,
+        train_split=train_split,
+        timeout_seconds=timeout_seconds,
+        reflection_lm=reflection_lm,
+        max_full_evals=max_full_evals,
+        batch_size=batch_size,
+        disable_dspy_cache=disable_dspy_cache,
+    )
+
+
+@app.command("clean")
+def clean(
+    promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
+):
+    _run_clean(promptopt_root)
 
 
 def cli() -> None:
