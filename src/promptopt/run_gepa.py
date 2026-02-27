@@ -321,7 +321,6 @@ class TestReflectionLM:
 
 class BundleProgram(dspy.Module):
     _TEXT_LIMIT = 1200
-    _OUTPUT_LIMIT = 800
 
     def __init__(
         self,
@@ -425,15 +424,6 @@ class BundleProgram(dspy.Module):
             return text
         return f"{text[:limit]}...(truncated)"
 
-    def _build_outputs_summary(self, run: RunArtifact) -> str:
-        if not run.outputs:
-            return "(none)"
-        lines = []
-        for phase in sorted(run.outputs.keys()):
-            lines.append(f"[{phase}]")
-            lines.append(self._truncate(run.outputs[phase], self._OUTPUT_LIMIT))
-        return "\n".join(lines)
-
     def _build_run_context(self, batch_ids: list[str]) -> str:
         sections = []
         for run_id in batch_ids:
@@ -447,7 +437,6 @@ class BundleProgram(dspy.Module):
                 f"git_diff:\n{self._truncate(run.git_diff, self._TEXT_LIMIT)}",
                 f"dotnet_test:\n{self._truncate(test_signal, self._TEXT_LIMIT)}",
                 f"dotnet_build:\n{self._truncate(build_signal, self._TEXT_LIMIT)}",
-                f"outputs:\n{self._build_outputs_summary(run)}",
             ]
             sections.append("\n".join(section))
         return "\n\n---\n\n".join(sections)

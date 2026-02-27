@@ -580,6 +580,7 @@ def test_bundle_program_run_context_contains_artifacts(tmp_path):
     assert "diff --git a/foo b/foo" in context
     assert "test output" in context
     assert "build output" in context
-    assert "[architect]" in context
-    assert "[engineer]" in context
+    assert "outputs:" not in context
+    assert "[architect]" not in context
+    assert "[engineer]" not in context
     assert "prompts.json" not in context
