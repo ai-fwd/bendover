@@ -90,6 +90,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Validate promptopt behavior on a curated run - not perfect but does work
 - [x] Needs to use ChatGPT Pro/Plus subscription like CLI
 - [ ] Only sends the offending practices to the reflection LM but I think it should send them all and only provide mutations for the offending ones. Need to investigate.
+- [ ] It's possible that when running optimization you actually get the intended result because it's non-deterministic. There should be some retry logic to get a failure and if not then abort. 
 
 ## Infrastructure (PromptOpt artifacts)
 - [x] Capture `dotnet_build.txt` / `dotnet_build_error.txt` in PromptOpt run recorder
