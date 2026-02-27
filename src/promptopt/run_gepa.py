@@ -420,6 +420,9 @@ def prepare_task_dir(run: RunArtifact) -> Path:
     temp_dir = Path(tempfile.mkdtemp(prefix=f"bendover_replay_{run.run_id}_"))
     (temp_dir / "task.md").write_text(run.goal)
     (temp_dir / "base_commit.txt").write_text(run.base_commit)
+    previous_run_result_path = run.run_dir / "run_result.json"
+    if previous_run_result_path.exists():
+        (temp_dir / "previous_run_results.json").write_bytes(previous_run_result_path.read_bytes())
     return temp_dir
 
 

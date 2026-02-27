@@ -17,7 +17,8 @@ public record EvaluationContext(
     string TestOutput,
     IEnumerable<FileDiff> ChangedFiles,
     IReadOnlyList<string>? SelectedPractices = null,
-    IReadOnlyList<string>? AllPractices = null
+    IReadOnlyList<string>? AllPractices = null,
+    bool? PreviousRunHadCodeChanges = null
 );
 
 public record RuleResult(

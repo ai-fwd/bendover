@@ -1,5 +1,7 @@
 import pytest
-from promptopt.run_gepa import metric_fn, select_feedback_targeted_components
+import shutil
+from promptopt.models import RunArtifact
+from promptopt.run_gepa import metric_fn, prepare_task_dir, select_feedback_targeted_components
 from dspy import Prediction
 
 def test_metric_fn_signature():
@@ -63,3 +65,25 @@ def test_select_feedback_targeted_components_prefers_feedback_by_pred():
         },
     )
     assert selected == ["practice_2"]
+
+
+def test_prepare_task_dir_copies_previous_run_results(tmp_path):
+    run_dir = tmp_path / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    run_result_content = '{"has_code_changes": true, "completion_signaled": true}'
+    (run_dir / "run_result.json").write_text(run_result_content)
+
+    run = RunArtifact(
+        run_id="run-1",
+        run_dir=run_dir,
+        goal="Ship feature",
+        base_commit="abc123",
+    )
+
+    task_dir = prepare_task_dir(run)
+    try:
+        copied_path = task_dir / "previous_run_results.json"
+        assert copied_path.exists()
+        assert copied_path.read_text() == run_result_content
+    finally:
+        shutil.rmtree(task_dir, ignore_errors=True)

@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
@@ -38,6 +39,7 @@ public class PromptOptRunEvaluator : IPromptOptRunEvaluator
             : string.Empty;
         var selectedPractices = await ReadSelectedPracticesAsync(outDir);
         var allPractices = await ReadAllPracticesAsync(bundlePath);
+        var previousRunHadCodeChanges = await ReadPreviousRunHasCodeChangesAsync(outDir);
 
         // Evaluator
         var changedFiles = new List<FileDiff>();
@@ -55,7 +57,8 @@ public class PromptOptRunEvaluator : IPromptOptRunEvaluator
             TestOutput: testOutput,
             ChangedFiles: changedFiles,
             SelectedPractices: selectedPractices,
-            AllPractices: allPractices
+            AllPractices: allPractices,
+            PreviousRunHadCodeChanges: previousRunHadCodeChanges
         );
 
         var evaluation = _evaluator.Evaluate(context);
@@ -243,5 +246,33 @@ public class PromptOptRunEvaluator : IPromptOptRunEvaluator
     {
         var path = Path.Combine(outDir, filename);
         await _fileSystem.File.WriteAllTextAsync(path, json);
+    }
+
+    private async Task<bool?> ReadPreviousRunHasCodeChangesAsync(string outDir)
+    {
+        var path = Path.Combine(outDir, "previous_run_results.json");
+        if (!_fileSystem.File.Exists(path))
+            return null;
+
+        try
+        {
+            var json = await _fileSystem.File.ReadAllTextAsync(path);
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            var model = JsonSerializer.Deserialize<PreviousRunResults>(json, options);
+            return model?.HasCodeChanges;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class PreviousRunResults
+    {
+        [JsonPropertyName("has_code_changes")]
+        public bool? HasCodeChanges { get; set; }
     }
 }

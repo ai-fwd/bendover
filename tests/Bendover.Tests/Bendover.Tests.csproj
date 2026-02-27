@@ -31,6 +31,7 @@
     <ProjectReference Include="..\..\src\Bendover.Infrastructure\Bendover.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Bendover.SDK\Bendover.SDK.csproj" />
     <ProjectReference Include="..\..\src\Bendover.Presentation.CLI\Bendover.Presentation.CLI.csproj" />
+    <ProjectReference Include="..\..\src\Bendover.PromptOpt.CLI\Bendover.PromptOpt.CLI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
