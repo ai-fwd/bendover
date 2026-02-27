@@ -1,7 +1,14 @@
-import pytest
 import shutil
+from unittest.mock import patch
 from promptopt.models import RunArtifact
-from promptopt.run_gepa import metric_fn, prepare_task_dir, select_feedback_targeted_components
+from promptopt.run_gepa import (
+    metric_fn,
+    prepare_task_dir,
+    select_feedback_targeted_components,
+    configure_reflection_lm,
+    ReflectionLMTranscriptCallback,
+    ReflectionTranscriptRecorder,
+)
 from dspy import Prediction
 
 def test_metric_fn_signature():
@@ -87,3 +94,63 @@ def test_prepare_task_dir_copies_previous_run_results(tmp_path):
         assert copied_path.read_text() == run_result_content
     finally:
         shutil.rmtree(task_dir, ignore_errors=True)
+
+
+def test_configure_reflection_lm_attaches_transcript_callback():
+    recorder = ReflectionTranscriptRecorder(enabled=True)
+
+    with patch("promptopt.run_gepa.dspy.LM") as mock_lm:
+        configure_reflection_lm("openai/gpt-4o-mini", cache_enabled=False, transcript_recorder=recorder)
+
+    callbacks = mock_lm.call_args.kwargs.get("callbacks")
+    assert isinstance(callbacks, list)
+    assert len(callbacks) == 1
+    assert isinstance(callbacks[0], ReflectionLMTranscriptCallback)
+
+
+def test_test_reflection_lm_records_transcript_and_writes_markdown(tmp_path):
+    recorder = ReflectionTranscriptRecorder(enabled=True)
+    reflection_lm = configure_reflection_lm("test", transcript_recorder=recorder)
+
+    outputs = reflection_lm(
+        "Instruction block\nADD_LINE: include unit tests",
+        messages=[{"role": "user", "content": "prompt body"}],
+    )
+
+    transcript_path = tmp_path / "reflection_transcript.md"
+    recorder.write_markdown(transcript_path)
+    transcript = transcript_path.read_text()
+
+    assert outputs
+    assert "## Call 1" in transcript
+    assert "Instruction block" in transcript
+    assert "include unit tests" in transcript
+    assert "### Output" in transcript
+
+
+def test_reflection_transcript_markdown_preserves_call_order(tmp_path):
+    recorder = ReflectionTranscriptRecorder(enabled=True)
+    callback = ReflectionLMTranscriptCallback(recorder)
+
+    callback.on_lm_start(
+        call_id="call-1",
+        instance=None,
+        inputs={"prompt": "first prompt", "messages": [{"role": "user", "content": "first"}], "kwargs": {}},
+    )
+    callback.on_lm_end(call_id="call-1", outputs=["first output"], exception=None)
+    callback.on_lm_start(
+        call_id="call-2",
+        instance=None,
+        inputs={"prompt": "second prompt", "messages": [{"role": "user", "content": "second"}], "kwargs": {}},
+    )
+    callback.on_lm_end(call_id="call-2", outputs=["second output"], exception=None)
+
+    transcript_path = tmp_path / "reflection_transcript.md"
+    recorder.write_markdown(transcript_path)
+    transcript = transcript_path.read_text()
+
+    call_1_index = transcript.index("## Call 1")
+    call_2_index = transcript.index("## Call 2")
+    assert call_1_index < call_2_index
+    assert "first prompt" in transcript
+    assert "second output" in transcript

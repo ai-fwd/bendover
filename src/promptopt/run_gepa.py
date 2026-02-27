@@ -1,6 +1,9 @@
 import os
+import json
 import shutil
 import tempfile
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Any
@@ -11,6 +14,7 @@ from dspy.clients import configure_cache
 from dspy.clients.base_lm import BaseLM
 from dspy.teleprompt import GEPA
 from dspy.utils import DummyLM
+from dspy.utils.callback import BaseCallback
 from dotenv import load_dotenv
 
 from promptopt.bundle_store import (
@@ -31,6 +35,227 @@ from promptopt.run_store import load_run_artifact
 load_dotenv()
 
 app = typer.Typer()
+
+REFLECTION_TRANSCRIPT_ENABLED = True
+EVAL_HEARTBEAT_SECONDS = 15
+TRANSCRIPT_PREVIEW_LIMIT = 240
+
+
+def _utc_timestamp() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _status(message: str) -> None:
+    print(f"[promptopt][{_utc_timestamp()}] {message}", flush=True)
+
+
+def _compact_single_line(text: str | None, limit: int = TRANSCRIPT_PREVIEW_LIMIT) -> str:
+    if not text:
+        return "(none)"
+    compact = (
+        str(text)
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\n", "\\n")
+        .strip()
+    )
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[:limit]}...(truncated)"
+
+
+def _safe_json(value: Any) -> str:
+    try:
+        return json.dumps(value, indent=2, sort_keys=True, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _stringify_outputs(outputs: Any) -> str:
+    if outputs is None:
+        return "(none)"
+    if isinstance(outputs, list):
+        return "\n".join(str(item) for item in outputs)
+    if isinstance(outputs, dict):
+        return _safe_json(outputs)
+    return str(outputs)
+
+
+def _append_block(lines: list[str], language: str, value: str | None) -> None:
+    lines.append(f"```{language}")
+    lines.append(value or "")
+    lines.append("```")
+
+
+def _extract_reflection_input(prompt: Any, messages: Any) -> str:
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt
+    if isinstance(messages, list):
+        parts: list[str] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role", "unknown"))
+            content = str(message.get("content", ""))
+            if content:
+                parts.append(f"[{role}] {content}")
+        if parts:
+            return "\n".join(parts)
+    return "(none)"
+
+
+@dataclass
+class ReflectionTranscriptEvent:
+    index: int
+    call_id: str
+    started_at_utc: str
+    prompt: str | None
+    messages: Any
+    kwargs: dict[str, Any]
+    ended_at_utc: str | None = None
+    duration_ms: int | None = None
+    outputs: Any = None
+    exception: str | None = None
+
+
+class ReflectionTranscriptRecorder:
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self._events: list[ReflectionTranscriptEvent] = []
+        self._event_index_by_call_id: dict[str, int] = {}
+        self._started_monotonic_by_call_id: dict[str, float] = {}
+
+    def start(self, call_id: str, prompt: Any, messages: Any, kwargs: Any) -> None:
+        if not self.enabled:
+            return
+
+        event = ReflectionTranscriptEvent(
+            index=len(self._events) + 1,
+            call_id=call_id,
+            started_at_utc=_utc_timestamp(),
+            prompt=prompt if isinstance(prompt, str) else None,
+            messages=messages,
+            kwargs=dict(kwargs or {}),
+        )
+        self._events.append(event)
+        self._event_index_by_call_id[call_id] = len(self._events) - 1
+        self._started_monotonic_by_call_id[call_id] = time.monotonic()
+
+        input_text = _extract_reflection_input(prompt, messages)
+        _status(
+            f"[reflection][prompt] call={event.index} chars={len(input_text)} preview={_compact_single_line(input_text)}"
+        )
+
+    def end(self, call_id: str, outputs: Any, exception: Exception | None = None) -> None:
+        if not self.enabled:
+            return
+
+        if call_id not in self._event_index_by_call_id:
+            self.start(call_id=call_id, prompt=None, messages=None, kwargs={})
+
+        event_index = self._event_index_by_call_id[call_id]
+        event = self._events[event_index]
+
+        now = time.monotonic()
+        started = self._started_monotonic_by_call_id.pop(call_id, now)
+        duration_ms = int((now - started) * 1000)
+
+        event.ended_at_utc = _utc_timestamp()
+        event.duration_ms = duration_ms
+        event.outputs = outputs
+        if exception is not None:
+            event.exception = f"{type(exception).__name__}: {exception}"
+
+        output_text = _stringify_outputs(outputs)
+        _status(
+            f"[reflection][output] call={event.index} chars={len(output_text)} duration_ms={duration_ms} "
+            f"preview={_compact_single_line(output_text)}"
+        )
+        if event.exception:
+            _status(f"[reflection][failure] call={event.index} detail={_compact_single_line(event.exception)}")
+
+    def write_markdown(self, path: Path) -> None:
+        if not self.enabled:
+            return
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Reflection LM Transcript",
+            "",
+            f"captured_at_utc: {_utc_timestamp()}",
+            f"calls: {len(self._events)}",
+            "",
+        ]
+
+        for event in self._events:
+            lines.extend([
+                f"## Call {event.index}",
+                "",
+                f"call_id: {event.call_id}",
+                f"started_at_utc: {event.started_at_utc}",
+                f"ended_at_utc: {event.ended_at_utc or '(none)'}",
+                f"duration_ms: {event.duration_ms if event.duration_ms is not None else '(none)'}",
+                "",
+                "### Prompt",
+                "",
+            ])
+            _append_block(lines, "text", event.prompt or "")
+            lines.extend([
+                "",
+                "### Messages",
+                "",
+            ])
+            _append_block(lines, "json", _safe_json(event.messages))
+            lines.extend([
+                "",
+                "### Kwargs",
+                "",
+            ])
+            _append_block(lines, "json", _safe_json(event.kwargs))
+            lines.extend([
+                "",
+                "### Output",
+                "",
+            ])
+            _append_block(lines, "text", _stringify_outputs(event.outputs))
+            if event.exception:
+                lines.extend([
+                    "",
+                    "### Exception",
+                    "",
+                ])
+                _append_block(lines, "text", event.exception)
+            lines.append("")
+
+        path.write_text("\n".join(lines))
+        _status(f"reflection-transcript written path={path} calls={len(self._events)}")
+
+
+class ReflectionLMTranscriptCallback(BaseCallback):
+    def __init__(self, recorder: ReflectionTranscriptRecorder):
+        self._recorder = recorder
+
+    def on_lm_start(
+        self,
+        call_id: str,
+        instance: Any,
+        inputs: dict[str, Any],
+    ):
+        del instance
+        self._recorder.start(
+            call_id=call_id,
+            prompt=inputs.get("prompt"),
+            messages=inputs.get("messages"),
+            kwargs=inputs.get("kwargs"),
+        )
+
+    def on_lm_end(
+        self,
+        call_id: str,
+        outputs: Any | None,
+        exception: Exception | None = None,
+    ):
+        self._recorder.end(call_id=call_id, outputs=outputs, exception=exception)
 
 
 class PracticeSignature(dspy.Signature):
@@ -54,22 +279,44 @@ class TestReflectionLM:
     current instruction extracted from the first ``` block.
     """
 
+    def __init__(self, transcript_recorder: ReflectionTranscriptRecorder | None = None):
+        self._transcript_recorder = transcript_recorder
+        self._call_count = 0
+
     def __call__(self, prompt: str, **kwargs) -> list[str]:
-        current_instruction = _extract_first_code_block(prompt)
-        add_lines = []
-        for line in prompt.splitlines():
-            if "ADD_LINE:" in line:
-                _, payload = line.split("ADD_LINE:", 1)
-                payload = payload.strip()
-                if payload:
-                    add_lines.append(payload)
+        self._call_count += 1
+        call_id = f"test_reflection_{self._call_count}"
+        if self._transcript_recorder is not None:
+            self._transcript_recorder.start(
+                call_id=call_id,
+                prompt=prompt,
+                messages=kwargs.get("messages"),
+                kwargs=kwargs,
+            )
 
-        updated = current_instruction
-        for payload in add_lines:
-            if payload not in updated:
-                updated = updated.rstrip() + "\n" + payload
+        try:
+            current_instruction = _extract_first_code_block(prompt)
+            add_lines = []
+            for line in prompt.splitlines():
+                if "ADD_LINE:" in line:
+                    _, payload = line.split("ADD_LINE:", 1)
+                    payload = payload.strip()
+                    if payload:
+                        add_lines.append(payload)
 
-        return [f"```\n{updated.strip()}\n```"]
+            updated = current_instruction
+            for payload in add_lines:
+                if payload not in updated:
+                    updated = updated.rstrip() + "\n" + payload
+
+            result = [f"```\n{updated.strip()}\n```"]
+            if self._transcript_recorder is not None:
+                self._transcript_recorder.end(call_id=call_id, outputs=result, exception=None)
+            return result
+        except Exception as exc:
+            if self._transcript_recorder is not None:
+                self._transcript_recorder.end(call_id=call_id, outputs=None, exception=exc)
+            raise
 
 
 class BundleProgram(dspy.Module):
@@ -235,10 +482,12 @@ class BundleProgram(dspy.Module):
         for run_id in batch_ids:
             cached = self.cache.get(run_id, bundle_hash)
             if cached:
+                _status(f"replay-eval cache-hit run={run_id} score={cached.score}")
                 evaluations_by_run.append((run_id, cached))
                 continue
 
             # Replay the run using the external evaluator (PromptOpt.CLI).
+            _status(f"replay-eval start run={run_id} bundle={written_bundle.bundle_id}")
             run = self.runs_by_id[run_id]
             task_path = prepare_task_dir(run)
             result = evaluate_bundle(
@@ -247,7 +496,9 @@ class BundleProgram(dspy.Module):
                 cli_command=self.cli_command,
                 log_dir=self.log_dir,
                 timeout_seconds=self.timeout,
+                run_label=run_id,
             )
+            _status(f"replay-eval done run={run_id} pass={result.passed} score={result.score}")
             self.cache.set(run_id, bundle_hash, result)
             evaluations_by_run.append((run_id, result))
 
@@ -540,13 +791,19 @@ def configure_base_lm() -> BaseLM:
     return lm
 
 
-def configure_reflection_lm(reflection_lm: str, cache_enabled: bool = True) -> BaseLM | TestReflectionLM:
+def configure_reflection_lm(
+    reflection_lm: str,
+    cache_enabled: bool = True,
+    transcript_recorder: ReflectionTranscriptRecorder | None = None,
+) -> BaseLM | TestReflectionLM:
     """
     Reflection LM is used by GEPA to propose new instructions.
     """
     if reflection_lm == "test":
-        return TestReflectionLM()
-    return dspy.LM(reflection_lm, cache=cache_enabled)
+        return TestReflectionLM(transcript_recorder=transcript_recorder)
+
+    callbacks = [ReflectionLMTranscriptCallback(transcript_recorder)] if transcript_recorder is not None else None
+    return dspy.LM(reflection_lm, cache=cache_enabled, callbacks=callbacks)
 
 
 def _run_optimization(
@@ -623,116 +880,146 @@ def _run_optimization(
         valset = [dspy.Example(run_ids=batch).with_inputs("run_ids") for batch in val_batches]
 
     cache_enabled = not disable_dspy_cache
+    _status(
+        f"optimization-start root={root} run_count={len(run_ids)} "
+        f"reflection_transcript_enabled={REFLECTION_TRANSCRIPT_ENABLED} heartbeat_seconds={EVAL_HEARTBEAT_SECONDS}"
+    )
+
     # DSPy cache can be disabled for deterministic integration tests.
     if disable_dspy_cache:
         configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
-    configure_base_lm()
-    reflection_lm_instance = configure_reflection_lm(reflection_lm, cache_enabled=cache_enabled)
-
-    cache = EvaluationCache(cache_root)
-
-    program = BundleProgram(
-        seed_bundle=seed_bundle,
-        runs_by_id=runs,
-        bundle_root=bundles_root,
-        log_dir=logs_root,
-        cache=cache,
-        cli_command=resolved_cli_command,
-        timeout=timeout_seconds,
-    )
+    reflection_transcript_recorder = ReflectionTranscriptRecorder(enabled=REFLECTION_TRANSCRIPT_ENABLED)
+    reflection_transcript_path = logs_root / "reflection_transcript.md"
 
     try:
-        run_attribution_preflight(program, trainset)
-    except RuntimeError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1)
-
-    reflection_minibatch_size = min(3, max(len(trainset), 1))
-
-    # GEPA uses the reflection LM + traces from the base LM to propose new instructions.
-    teleprompter = GEPA(
-        metric=metric_fn,
-        max_full_evals=max_full_evals,
-        reflection_minibatch_size=reflection_minibatch_size,
-        reflection_lm=reflection_lm_instance,
-        component_selector=select_feedback_targeted_components,
-        log_dir=str(logs_root),
-        track_stats=True,
-    )
-
-    compiled_program = teleprompter.compile(
-        program,
-        trainset=trainset,
-        valset=valset,
-    )
-
-    seed_updates = {name: practice.body for name, practice in seed_bundle.practices.items()}
-    best_program = compiled_program
-
-    if reflection_lm == "test" and hasattr(compiled_program, "detailed_results"):
-        candidates = getattr(compiled_program.detailed_results, "candidates", [])
-        for candidate in candidates:
-            if not hasattr(candidate, "get_practice_updates"):
-                continue
-            candidate_updates = candidate.get_practice_updates()
-            if any(candidate_updates.get(k) != seed_updates.get(k) for k in seed_updates.keys()):
-                best_program = candidate
-                break
-
-    best_updates = best_program.get_practice_updates()
-
-    best_bundle = build_bundle_from_seed(seed_bundle, best_updates)
-    best_hash = hash_bundle(best_bundle.practices, best_bundle.passthrough_files)
-
-    written_bundle = write_bundle(
-        bundle_root=bundles_root,
-        bundle=best_bundle,
-        parent_id=seed_bundle.bundle_id,
-        generation="gepa",
-        metadata={
-            "trainRunIds": train_ids,
-            "devRunIds": dev_ids,
-        },
-        exist_ok=True,
-    )
-
-    # Final score across all runs (cached if already evaluated)
-    evaluations = []
-    for run_id in run_ids:
-        cached = cache.get(run_id, best_hash)
-        if cached:
-            evaluations.append(cached)
-            continue
-        run = runs[run_id]
-        task_path = prepare_task_dir(run)
-        result = evaluate_bundle(
-            bundle_path=written_bundle.path,
-            task_path=task_path,
-            cli_command=resolved_cli_command,
-            log_dir=logs_root,
-            timeout_seconds=timeout_seconds,
+        configure_base_lm()
+        reflection_lm_instance = configure_reflection_lm(
+            reflection_lm,
+            cache_enabled=cache_enabled,
+            transcript_recorder=reflection_transcript_recorder,
         )
-        cache.set(run_id, best_hash, result)
-        evaluations.append(result)
 
-    final_score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
+        cache = EvaluationCache(cache_root)
 
-    update_active_json(
-        active_json,
-        written_bundle.bundle_id,
-        {
-            "updatedAt": datetime.utcnow().isoformat() + "Z",
-            "parentBundleId": seed_bundle.bundle_id,
-            "score": final_score,
-            "trainRunIds": train_ids,
-            "devRunIds": dev_ids,
-        },
-    )
+        program = BundleProgram(
+            seed_bundle=seed_bundle,
+            runs_by_id=runs,
+            bundle_root=bundles_root,
+            log_dir=logs_root,
+            cache=cache,
+            cli_command=resolved_cli_command,
+            timeout=timeout_seconds,
+        )
 
-    print("Optimization Complete.")
-    print(f"Best bundle: {written_bundle.bundle_id}")
-    print(f"Final score: {final_score}")
+        _status("attribution-preflight start")
+        try:
+            run_attribution_preflight(program, trainset)
+        except RuntimeError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1)
+        _status("attribution-preflight done")
+
+        reflection_minibatch_size = min(3, max(len(trainset), 1))
+
+        # GEPA uses the reflection LM + traces from the base LM to propose new instructions.
+        teleprompter = GEPA(
+            metric=metric_fn,
+            max_full_evals=max_full_evals,
+            reflection_minibatch_size=reflection_minibatch_size,
+            reflection_lm=reflection_lm_instance,
+            component_selector=select_feedback_targeted_components,
+            log_dir=str(logs_root),
+            track_stats=True,
+        )
+
+        _status(
+            f"gepa-compile start train_batches={len(trainset)} "
+            f"dev_batches={0 if valset is None else len(valset)} max_full_evals={max_full_evals}"
+        )
+        compiled_program = teleprompter.compile(
+            program,
+            trainset=trainset,
+            valset=valset,
+        )
+        _status("gepa-compile done")
+
+        seed_updates = {name: practice.body for name, practice in seed_bundle.practices.items()}
+        best_program = compiled_program
+
+        if reflection_lm == "test" and hasattr(compiled_program, "detailed_results"):
+            candidates = getattr(compiled_program.detailed_results, "candidates", [])
+            for candidate in candidates:
+                if not hasattr(candidate, "get_practice_updates"):
+                    continue
+                candidate_updates = candidate.get_practice_updates()
+                if any(candidate_updates.get(k) != seed_updates.get(k) for k in seed_updates.keys()):
+                    best_program = candidate
+                    break
+
+        best_updates = best_program.get_practice_updates()
+
+        best_bundle = build_bundle_from_seed(seed_bundle, best_updates)
+        best_hash = hash_bundle(best_bundle.practices, best_bundle.passthrough_files)
+
+        written_bundle = write_bundle(
+            bundle_root=bundles_root,
+            bundle=best_bundle,
+            parent_id=seed_bundle.bundle_id,
+            generation="gepa",
+            metadata={
+                "trainRunIds": train_ids,
+                "devRunIds": dev_ids,
+            },
+            exist_ok=True,
+        )
+
+        # Final score across all runs (cached if already evaluated)
+        evaluations = []
+        for run_id in run_ids:
+            cached = cache.get(run_id, best_hash)
+            if cached:
+                _status(f"final-score cache-hit run={run_id} score={cached.score}")
+                evaluations.append(cached)
+                continue
+            run = runs[run_id]
+            task_path = prepare_task_dir(run)
+            _status(f"final-score start run={run_id}")
+            result = evaluate_bundle(
+                bundle_path=written_bundle.path,
+                task_path=task_path,
+                cli_command=resolved_cli_command,
+                log_dir=logs_root,
+                timeout_seconds=timeout_seconds,
+                run_label=run_id,
+            )
+            _status(f"final-score done run={run_id} pass={result.passed} score={result.score}")
+            cache.set(run_id, best_hash, result)
+            evaluations.append(result)
+
+        final_score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
+        _status(f"optimization-final-score score={final_score}")
+
+        update_active_json(
+            active_json,
+            written_bundle.bundle_id,
+            {
+                "updatedAt": datetime.utcnow().isoformat() + "Z",
+                "parentBundleId": seed_bundle.bundle_id,
+                "score": final_score,
+                "trainRunIds": train_ids,
+                "devRunIds": dev_ids,
+            },
+        )
+
+        print("Optimization Complete.")
+        print(f"Best bundle: {written_bundle.bundle_id}")
+        print(f"Final score: {final_score}")
+    finally:
+        try:
+            reflection_transcript_recorder.write_markdown(reflection_transcript_path)
+        except Exception as exc:
+            _status(f"reflection-transcript write failed path={reflection_transcript_path} error={exc}")
 
 
 def _safe_remove_path(path: Path) -> None:

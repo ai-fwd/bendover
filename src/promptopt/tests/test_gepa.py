@@ -1,9 +1,8 @@
 import pytest
 import shutil
 import json
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from promptopt.gepa_driver import load_split, create_candidate_bundle, evaluate_bundle
 
 @pytest.fixture
@@ -96,29 +95,32 @@ def test_create_candidate_bundle_exists(temp_workspace):
         create_candidate_bundle("seed", bundle_root, 1, practices)
 
 
-@patch("subprocess.run")
-def test_evaluate_bundle_contract(mock_run, temp_workspace):
+@patch("promptopt.evaluator_client.subprocess.Popen")
+def test_evaluate_bundle_contract(mock_popen, temp_workspace):
     log_dir = temp_workspace["root"] / "logs"
     log_dir.mkdir()
     bundle_path = temp_workspace["bundles_dir"] / "gen1_12345678"
     task_path = temp_workspace["root"] / "bench" / "tasks" / "task1"
-    
-    # Mock successful run with evaluator.json creation
-    def side_effect_success(*args, **kwargs):
-        # args[0] is the command list
-        cmd = args[0]
-        # extract --out dir from command
-        try:
-            out_idx = cmd.index("--out")
-            out_dir = Path(cmd[out_idx + 1])
-            # emulate tool writing evaluator.json
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "evaluator.json").write_text('{"pass": true, "score": 100.0}')
-        except ValueError:
-            pass
-        return MagicMock(returncode=0)
 
-    mock_run.side_effect = side_effect_success
+    class _Process:
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 0
+
+    def side_effect_success(*args, **kwargs):
+        cmd = args[0]
+        out_idx = cmd.index("--out")
+        out_dir = Path(cmd[out_idx + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "evaluator.json").write_text('{"pass": true, "score": 100.0}')
+        return _Process()
+
+    mock_popen.side_effect = side_effect_success
     
     success, score = evaluate_bundle(
         bundle_path=bundle_path,
@@ -133,68 +135,94 @@ def test_evaluate_bundle_contract(mock_run, temp_workspace):
     
     # Verify Unique Output Directory
     # Inspect the call args to ensure unique path structure: log_dir / bundle_id / task_id
-    args, _ = mock_run.call_args
+    args, _ = mock_popen.call_args
     cmd = args[0]
     out_idx = cmd.index("--out")
     out_dir_arg = Path(cmd[out_idx + 1])
     
     expected_out = log_dir / "gen1_12345678" / "task1"
     assert out_dir_arg == expected_out
-    assert mock_run.call_count == 1
+    assert mock_popen.call_count == 1
 
 
-@patch("subprocess.run")
-def test_evaluate_bundle_timeout_retry(mock_run, temp_workspace):
+@patch("promptopt.evaluator_client.subprocess.Popen")
+def test_evaluate_bundle_timeout_retry(mock_popen, temp_workspace):
     log_dir = temp_workspace["root"] / "logs_retry"
     log_dir.mkdir()
     bundle_path = temp_workspace["bundles_dir"] / "gen1_retry"
     task_path = temp_workspace["root"] / "bench" / "tasks" / "task1"
-    
-    # First call times out, Second call succeeds
+
+    class _NeverEndingProcess:
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return -9
+
+    class _SuccessProcess:
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 0
+
     def side_effect_timeout_then_success(*args, **kwargs):
-        # We need to maintain state to switch behavior
         if not hasattr(side_effect_timeout_then_success, "called"):
             side_effect_timeout_then_success.called = True
-            raise subprocess.TimeoutExpired(cmd=args[0], timeout=10)
-        else:
-             # Success on retry
-            cmd = args[0]
-            out_idx = cmd.index("--out")
-            out_dir = Path(cmd[out_idx + 1])
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "evaluator.json").write_text('{"pass": false, "score": 0.0}')
-            return MagicMock(returncode=0)
+            return _NeverEndingProcess()
+        cmd = args[0]
+        out_idx = cmd.index("--out")
+        out_dir = Path(cmd[out_idx + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "evaluator.json").write_text('{"pass": false, "score": 0.0}')
+        return _SuccessProcess()
 
-    mock_run.side_effect = side_effect_timeout_then_success
+    mock_popen.side_effect = side_effect_timeout_then_success
     
     success, score = evaluate_bundle(
         bundle_path=bundle_path,
         task_path=task_path,
         cli_command="bendover-cli",
         log_dir=log_dir,
-        timeout_seconds=10
+        timeout_seconds=0
     )
     
     # It should succeed (return valid score) after retry, even if pass is false
     assert success is False
     assert score == 0.0
-    assert mock_run.call_count == 2
+    assert mock_popen.call_count == 2
 
-@patch("subprocess.run")
-def test_evaluate_bundle_no_retry_if_evaluator_exists(mock_run, temp_workspace):
+@patch("promptopt.evaluator_client.subprocess.Popen")
+def test_evaluate_bundle_no_retry_if_evaluator_exists(mock_popen, temp_workspace):
     # Scenario: Process crashes (non-zero exit) BUT wrote evaluator.json. Should NOT retry.
     log_dir = temp_workspace["root"] / "logs_crash"
     log_dir.mkdir()
-    
+
+    class _CrashProcess:
+        def poll(self):
+            return 1
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 1
+
     def side_effect_crash_with_json(*args, **kwargs):
         cmd = args[0]
         out_idx = cmd.index("--out")
         out_dir = Path(cmd[out_idx + 1])
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "evaluator.json").write_text('{"pass": true, "score": 50.0}') # Wrote partial result?
-        return MagicMock(returncode=1) # Error code
+        return _CrashProcess() # Error code
 
-    mock_run.side_effect = side_effect_crash_with_json
+    mock_popen.side_effect = side_effect_crash_with_json
     
     success, score = evaluate_bundle(
         bundle_path=Path("b"),
@@ -206,4 +234,48 @@ def test_evaluate_bundle_no_retry_if_evaluator_exists(mock_run, temp_workspace):
     
     assert success is True
     assert score == 50.0
-    assert mock_run.call_count == 1
+    assert mock_popen.call_count == 1
+
+
+@patch("promptopt.evaluator_client.time.sleep", return_value=None)
+@patch("promptopt.evaluator_client.time.monotonic", side_effect=[0.0, 15.1])
+@patch("promptopt.evaluator_client.subprocess.Popen")
+def test_evaluate_bundle_emits_heartbeat(mock_popen, _mock_monotonic, _mock_sleep, temp_workspace, capsys):
+    log_dir = temp_workspace["root"] / "logs_heartbeat"
+    log_dir.mkdir()
+
+    class _HeartbeatProcess:
+        def __init__(self):
+            self._poll_values = [None, 0]
+
+        def poll(self):
+            return self._poll_values.pop(0)
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 0
+
+    def side_effect(*args, **kwargs):
+        cmd = args[0]
+        out_idx = cmd.index("--out")
+        out_dir = Path(cmd[out_idx + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "evaluator.json").write_text('{"pass": true, "score": 1.0}')
+        return _HeartbeatProcess()
+
+    mock_popen.side_effect = side_effect
+
+    success, score = evaluate_bundle(
+        bundle_path=Path("bundle_x"),
+        task_path=Path("task_y"),
+        cli_command="bendover-cli",
+        log_dir=log_dir,
+        timeout_seconds=30,
+    )
+
+    output = capsys.readouterr().out
+    assert "eval-running" in output
+    assert success is True
+    assert score == 1.0

@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
 
 from promptopt.models import EvaluationResult, PracticeAttribution
+
+HEARTBEAT_SECONDS = 15
+POLL_INTERVAL_SECONDS = 0.25
 
 
 def _get_ci(data: dict, key: str, default=None):
@@ -63,6 +68,7 @@ def evaluate_bundle(
     cli_command: str,
     log_dir: Path,
     timeout_seconds: int,
+    run_label: str | None = None,
 ) -> EvaluationResult:
     """
     Execute the PromptOpt CLI against a bundle + task and parse evaluator.json.
@@ -87,26 +93,60 @@ def evaluate_bundle(
         str(out_dir),
     ]
 
-    def run_eval():
-        return subprocess.run(cmd, timeout=timeout_seconds, capture_output=True, text=True)
+    label = (run_label or f"{candidate_id}/{task_id}").strip() or f"{candidate_id}/{task_id}"
+
+    def status(message: str) -> None:
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        print(f"[promptopt][{timestamp}] {message}", flush=True)
+
+    def run_eval_once() -> int:
+        process = subprocess.Popen(cmd, text=True)
+        started = time.monotonic()
+        next_heartbeat = started + HEARTBEAT_SECONDS
+
+        while True:
+            returncode = process.poll()
+            if returncode is not None:
+                return returncode
+
+            now = time.monotonic()
+            elapsed = now - started
+            if elapsed >= timeout_seconds:
+                process.kill()
+                process.wait()
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout_seconds)
+
+            if now >= next_heartbeat:
+                status(f"eval-running run={label} elapsed={int(elapsed)}s out={out_dir}")
+                next_heartbeat = now + HEARTBEAT_SECONDS
+
+            time.sleep(POLL_INTERVAL_SECONDS)
+
+    status(f"eval-start run={label} candidate={candidate_id} task={task_id} timeout={timeout_seconds}s")
 
     try:
-        result = run_eval()
+        returncode = run_eval_once()
     except subprocess.TimeoutExpired:
+        status(f"eval-timeout run={label} attempt=1 timeout={timeout_seconds}s retry=true")
         try:
-            result = run_eval()
+            returncode = run_eval_once()
         except subprocess.TimeoutExpired:
+            status(f"eval-timeout run={label} attempt=2 timeout={timeout_seconds}s retry=false")
             return EvaluationResult(passed=False, score=0.0)
 
-    if result.returncode != 0:
-        evaluator_json = out_dir / "evaluator.json"
-        if not evaluator_json.exists():
-            try:
-                result = run_eval()
-            except subprocess.TimeoutExpired:
-                pass
+    status(f"eval-exit run={label} returncode={returncode}")
 
     evaluator_json = out_dir / "evaluator.json"
+
+    if returncode != 0 and not evaluator_json.exists():
+        status(f"eval-nonzero run={label} returncode={returncode} evaluator_missing=true retry=true")
+        evaluator_json = out_dir / "evaluator.json"
+        try:
+            returncode = run_eval_once()
+            status(f"eval-exit run={label} returncode={returncode} retry=true")
+        except subprocess.TimeoutExpired:
+            status(f"eval-timeout run={label} retry_after_nonzero=true timeout={timeout_seconds}s")
+
     if evaluator_json.exists():
         try:
             return parse_evaluator_json(evaluator_json)
