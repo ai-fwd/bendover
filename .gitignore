@@ -111,3 +111,5 @@ build/
 .bendover/agents/tools.md
 **/.bendover/promptopt/bundles/*/agents/tools.md
 .bendover/promptopt/cache/
+.bendover/promptopt/active.json
+.bendover/promptopt/datasets/train.txt
