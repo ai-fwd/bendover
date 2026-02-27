@@ -9,6 +9,7 @@ public sealed class ChatGptOpenAiProxyServer : IAsyncDisposable
 {
     public const string DefaultPrefix = "http://127.0.0.1:11434/";
     public const string DefaultApiBase = "http://127.0.0.1:11434/v1";
+    private const string DefaultSystemPrompt = "You are a careful assistant. Follow the user\u2019s instructions exactly. Output only what the user asked for, in the requested format.";
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
@@ -267,6 +268,11 @@ public sealed class ChatGptOpenAiProxyServer : IAsyncDisposable
                 cancellationToken).ConfigureAwait(false);
             return;
         }
+        messages = EnsureSystemInstruction(messages, out var chatPromptInjected);
+        if (chatPromptInjected)
+        {
+            Log(traceId, "No system/developer instruction detected. Injected default system prompt.");
+        }
 
         var options = BuildChatOptions(root, model);
         Log(traceId, "Mapped request:");
@@ -371,6 +377,11 @@ public sealed class ChatGptOpenAiProxyServer : IAsyncDisposable
                 "responses request must include instructions or input.",
                 cancellationToken).ConfigureAwait(false);
             return;
+        }
+        messages = EnsureSystemInstruction(messages, out var responsesPromptInjected);
+        if (responsesPromptInjected)
+        {
+            Log(traceId, "No system/developer instruction detected. Injected default system prompt.");
         }
 
         var options = BuildChatOptions(root, model);
@@ -747,6 +758,31 @@ public sealed class ChatGptOpenAiProxyServer : IAsyncDisposable
         return element.TryGetProperty(propertyName, out var node)
                && node.ValueKind == JsonValueKind.Number
                && node.TryGetInt64(out value);
+    }
+
+    private static IList<ChatMessage> EnsureSystemInstruction(IList<ChatMessage> messages, out bool injected)
+    {
+        for (var i = 0; i < messages.Count; i++)
+        {
+            var message = messages[i];
+            if (message.Role == ChatRole.System && !string.IsNullOrWhiteSpace(message.Text))
+            {
+                injected = false;
+                return messages;
+            }
+        }
+
+        injected = true;
+        var withSystemPrompt = new List<ChatMessage>(messages.Count + 1)
+        {
+            new ChatMessage(ChatRole.System, DefaultSystemPrompt)
+        };
+        for (var i = 0; i < messages.Count; i++)
+        {
+            withSystemPrompt.Add(messages[i]);
+        }
+
+        return withSystemPrompt;
     }
 
     private static async Task WriteErrorAsync(
