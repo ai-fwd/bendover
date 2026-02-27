@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace Bendover.Application.Evaluation;
 
 public record FileDiff(string Path, FileStatus Status, string Content);
