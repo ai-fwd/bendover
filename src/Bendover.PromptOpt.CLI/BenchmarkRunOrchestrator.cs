@@ -125,6 +125,12 @@ public class BenchmarkRunOrchestrator
                 Log(verbose, $"Using existing output directory: {resolvedOutputPath}");
             }
 
+            CopyOptionalTaskArtifact(
+                taskPath: taskPath,
+                outDir: resolvedOutputPath,
+                artifactName: "previous_run_results.json",
+                verbose: verbose);
+
             _runContextAccessor.Current = new PromptOptRunContext(
                 resolvedOutputPath,
                 Capture: true,
@@ -197,6 +203,31 @@ public class BenchmarkRunOrchestrator
             }
 
             _fileSystem.File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    private void CopyOptionalTaskArtifact(
+        string taskPath,
+        string outDir,
+        string artifactName,
+        bool verbose)
+    {
+        var sourcePath = _fileSystem.Path.Combine(taskPath, artifactName);
+        if (!_fileSystem.File.Exists(sourcePath))
+        {
+            Log(verbose, $"Optional task artifact not found: {sourcePath}");
+            return;
+        }
+
+        var destinationPath = _fileSystem.Path.Combine(outDir, artifactName);
+        try
+        {
+            _fileSystem.File.Copy(sourcePath, destinationPath, overwrite: true);
+            Log(verbose, $"Copied optional task artifact: {sourcePath} -> {destinationPath}");
+        }
+        catch (Exception ex)
+        {
+            Log(verbose, $"Failed to copy optional task artifact '{sourcePath}' to '{destinationPath}': {ex.Message}");
         }
     }
 

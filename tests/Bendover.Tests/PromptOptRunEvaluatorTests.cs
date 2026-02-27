@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
+using Bendover.PromptOpt.CLI.Evaluation.Rules;
 using Bendover.Infrastructure.Services;
 using Xunit;
 
@@ -104,6 +105,74 @@ public class PromptOptRunEvaluatorTests
         Assert.Equal(
             new[] { "fallback_name", "tdd_spirit" },
             (capturingRule.LastContext?.AllPractices ?? Array.Empty<string>()).OrderBy(x => x).ToArray());
+    }
+
+    [Fact]
+    public async Task Reads_PreviousRunHasCodeChanges_From_PreviousRunResultsArtifact()
+    {
+        var fileSystem = new MockFileSystem();
+        var capturingRule = new CapturingRule();
+        var evaluatorEngine = new EvaluatorEngine(new[] { capturingRule });
+
+        var outDir = "/runs/out-previous-run-result";
+        fileSystem.Directory.CreateDirectory(outDir);
+        fileSystem.File.WriteAllText(
+            Path.Combine(outDir, "previous_run_results.json"),
+            "{ \"has_code_changes\": true }");
+        SeedBundle(fileSystem);
+
+        var sut = new PromptOptRunEvaluator(fileSystem, evaluatorEngine);
+        await sut.EvaluateAsync(outDir, BundlePath);
+
+        Assert.True(capturingRule.LastContext?.PreviousRunHadCodeChanges);
+    }
+
+    [Fact]
+    public async Task HardFails_WhenPreviousRunRequiredCodeChanges_AndReplayHasNoDiff()
+    {
+        var fileSystem = new MockFileSystem();
+        var evaluatorEngine = new EvaluatorEngine(new IEvaluatorRule[]
+        {
+            new ExpectedCodeChangeReplayRule()
+        });
+
+        var outDir = "/runs/out-hard-fail";
+        fileSystem.Directory.CreateDirectory(outDir);
+        fileSystem.File.WriteAllText(
+            Path.Combine(outDir, "previous_run_results.json"),
+            "{ \"has_code_changes\": true }");
+        SeedBundle(fileSystem);
+
+        var sut = new PromptOptRunEvaluator(fileSystem, evaluatorEngine);
+        await sut.EvaluateAsync(outDir, BundlePath);
+
+        var evaluatorPath = Path.Combine(outDir, "evaluator.json");
+        var root = JsonDocument.Parse(fileSystem.File.ReadAllText(evaluatorPath)).RootElement;
+
+        Assert.False(root.GetProperty("pass").GetBoolean());
+        Assert.Equal(0, root.GetProperty("score").GetDouble());
+    }
+
+    [Fact]
+    public async Task DoesNotHardFail_WhenPreviousRunExpectationArtifactIsMissing()
+    {
+        var fileSystem = new MockFileSystem();
+        var evaluatorEngine = new EvaluatorEngine(new IEvaluatorRule[]
+        {
+            new ExpectedCodeChangeReplayRule()
+        });
+
+        var outDir = "/runs/out-no-previous-artifact";
+        fileSystem.Directory.CreateDirectory(outDir);
+        SeedBundle(fileSystem);
+
+        var sut = new PromptOptRunEvaluator(fileSystem, evaluatorEngine);
+        await sut.EvaluateAsync(outDir, BundlePath);
+
+        var evaluatorPath = Path.Combine(outDir, "evaluator.json");
+        var root = JsonDocument.Parse(fileSystem.File.ReadAllText(evaluatorPath)).RootElement;
+
+        Assert.True(root.GetProperty("pass").GetBoolean());
     }
 
     [Fact]
