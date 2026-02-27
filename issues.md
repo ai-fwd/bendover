@@ -53,8 +53,8 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [ ] Changed to .env file but readme is showing support for different agent configs via appsettings.json & configuration.GetSection(AgentOptions.SectionName) still exists. I don't see tests.
 - [x] Improve output to include the plan, tool, observation
 - [ ] script_output_tail should be included in the observations
-- [ ] Remove all the [transcript][prompt] outputs now that we've got plan, tool, obs
-- [ ] Clean up the visual using panels
+- [x] Remove all the [transcript][prompt] outputs now that we've got plan, tool, obs
+- [x] Clean up the visual using panels
 
 ## Presentation.Server
 - [ ] Falling behind the CLI -- will require large changes in design

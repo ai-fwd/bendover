@@ -52,7 +52,9 @@ dotnet build
 dotnet test
 
 # 4) Capture a real run
-# The CLI prints: run_id=<value>
+# The CLI header shows:
+#   Run Id: <value>
+#   Run Dir: .bendover/promptopt/runs/<run_id>
 ./bendover "Add a unit test for run scoring"
 
 # 5) Score the captured run (use the printed run_id)
@@ -172,10 +174,10 @@ Capture a run:
 ./bendover "Your task description"
 ```
 
-The CLI prints:
+The CLI header shows:
 
-- `run_id=<run_id>`
-- `artifacts=.bendover/promptopt/runs/<run_id>`
+- `Run Id: <run_id>`
+- `Run Dir: .bendover/promptopt/runs/<run_id>` (rendered as a `TextPath`)
 
 ### Sandbox and Patch Apply Behavior
 

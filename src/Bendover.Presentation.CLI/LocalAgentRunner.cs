@@ -48,6 +48,7 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IAgenticTurnService, AgenticTurnService>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
+        services.AddSingleton<CliDashboard>();
         services.AddSingleton<IAgentObserver, ConsoleAgentObserver>();
         services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
         services.AddSingleton<IFileService, FileService>();
@@ -69,65 +70,87 @@ public class LocalAgentRunner : IAgentRunner
 
         var serviceProvider = services.BuildServiceProvider();
 
+        var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
+        var practiceService = serviceProvider.GetRequiredService<IPracticeService>();
+        var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
+        var dashboard = serviceProvider.GetRequiredService<CliDashboard>();
+        var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+
+        var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
+        var outDir = Path.Combine(".bendover", "promptopt", "runs", runId);
+
+        var streamTranscript = HasFlag(args, "--transcript");
+        var goal = ResolveGoalWithStartup(args, lmSummary);
+
+        runContextAccessor.Current = new PromptOptRunContext(
+            outDir,
+            Capture: true,
+            RunId: runId,
+            BundleId: "current",
+            ApplySandboxPatchToSource: true,
+            StreamTranscript: streamTranscript
+        );
+
+        dashboard.Initialize(lmSummary, runId, outDir, goal);
+
+        if (interactive)
+        {
+            AnsiConsole.Clear();
+        }
+
         try
         {
-            AnsiConsole.MarkupLine($"[bold blue]Starting Bendover Agent - {Markup.Escape(lmSummary)}[/]");
-
-            var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
-            var practiceService = serviceProvider.GetRequiredService<IPracticeService>();
-            var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
-            var practices = (await practiceService.GetPracticesAsync()).ToList();
-
-            var streamTranscript = HasFlag(args, "--transcript");
-            var goal = ResolveGoal(args);
-
-            var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
-            var outDir = Path.Combine(".bendover", "promptopt", "runs", runId);
-            runContextAccessor.Current = new PromptOptRunContext(
-                outDir,
-                Capture: true,
-                RunId: runId,
-                BundleId: "current",
-                ApplySandboxPatchToSource: true,
-                StreamTranscript: streamTranscript
-            );
-            AnsiConsole.MarkupLine($"[grey]run_id={Markup.Escape(runId)}[/]");
-            AnsiConsole.MarkupLine($"[grey]artifacts={Markup.Escape(outDir)}[/]");
-
-            AnsiConsole.MarkupLine("[bold purple]🎵take it easy, I will do the work...🎵[/]");
-
-            await orchestrator.RunAsync(goal, practices);
-
-            AnsiConsole.MarkupLine("[bold green]Agent Finished Successfully.[/]");
-        }
-        catch (DockerUnavailableException ex)
-        {
-            var panel = new Panel($"[bold red]Docker Error[/]\n\n{ex.Message}")
-               .BorderColor(Color.Red)
-               .Header("Environment Failure");
-            AnsiConsole.Write(panel);
-            Environment.Exit(1);
+            await dashboard.RunWithLiveAsync(async () =>
+            {
+                try
+                {
+                    var practices = (await practiceService.GetPracticesAsync()).ToList();
+                    await orchestrator.RunAsync(goal, practices);
+                    dashboard.MarkSuccess();
+                }
+                catch (Exception ex)
+                {
+                    dashboard.MarkError(BuildErrorMessage(ex));
+                    throw;
+                }
+            });
         }
         catch (Exception ex)
         {
-            AnsiConsole.WriteException(ex);
+            if (!AnsiConsole.Profile.Capabilities.Interactive)
+            {
+                Console.Error.WriteLine(BuildErrorMessage(ex));
+            }
+
             Environment.Exit(1);
         }
     }
 
-    private static string ResolveGoal(string[] args)
+    private static string ResolveGoalWithStartup(string[] args, string modelSummary)
     {
-        var goalFromArgs = string.Join(
-            " ",
-            (args ?? Array.Empty<string>()).Where(a => !IsControlFlag(a)))
-            .Trim();
+        var goalFromArgs = ResolveGoal(args);
 
         if (!string.IsNullOrWhiteSpace(goalFromArgs))
         {
             return goalFromArgs;
         }
 
+        WriteStartupBrandingIfInteractive();
+        WritePromptStatusPanelIfInteractive(modelSummary);
         return AnsiConsole.Ask<string>("[bold yellow]What do you want to build?[/]");
+    }
+
+    private static string ResolveGoal(string[] args)
+    {
+        return ResolveGoalFromArgs(args);
+    }
+
+    private static string ResolveGoalFromArgs(string[] args)
+    {
+        return string.Join(
+            " ",
+            (args ?? Array.Empty<string>()).Where(a => !IsControlFlag(a)))
+            .Trim();
     }
 
     private static bool HasFlag(string[] args, string flag)
@@ -167,5 +190,41 @@ public class LocalAgentRunner : IAgentRunner
 
         var endpoint = string.IsNullOrWhiteSpace(options.Endpoint) ? "<unset-endpoint>" : options.Endpoint;
         return $"endpoint mode ({model} @ {endpoint})";
+    }
+
+    private static void WriteStartupBrandingIfInteractive()
+    {
+        if (!AnsiConsole.Profile.Capabilities.Interactive)
+        {
+            return;
+        }
+
+        AnsiConsole.Write(new FigletText("BENDOVER")
+        {
+            Color = Color.Orange1,
+            Justification = Justify.Center
+        });
+    }
+
+    private static void WritePromptStatusPanelIfInteractive(string modelSummary)
+    {
+        if (!AnsiConsole.Profile.Capabilities.Interactive)
+        {
+            return;
+        }
+
+        AnsiConsole.Write(CliDashboard.BuildPromptStatusPanel(modelSummary));
+    }
+
+    private static string BuildErrorMessage(Exception ex)
+    {
+        if (ex is DockerUnavailableException dockerUnavailableException)
+        {
+            return dockerUnavailableException.Message;
+        }
+
+        return string.IsNullOrWhiteSpace(ex.Message)
+            ? ex.ToString()
+            : ex.Message;
     }
 }
