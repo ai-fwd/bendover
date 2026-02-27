@@ -9,6 +9,8 @@ namespace Bendover.Tests;
 
 public sealed class ChatGptOpenAiProxyServerTests
 {
+    private const string DefaultSystemPrompt = "You are a careful assistant. Follow the user\u2019s instructions exactly. Output only what the user asked for, in the requested format.";
+
     [Fact]
     public async Task ChatCompletions_ShouldTranslateRequest_AndReturnOpenAiPayload()
     {
@@ -111,6 +113,31 @@ public sealed class ChatGptOpenAiProxyServerTests
     }
 
     [Fact]
+    public async Task ChatCompletions_ShouldInjectDefaultSystemPrompt_WhenMissing()
+    {
+        using var auth = new AuthFixture(withSession: true);
+        var recordingClient = new RecordingChatClient("proxy-ok");
+        await using var harness = await ProxyHarness.StartAsync(auth.TokenProvider, _ => recordingClient);
+
+        var requestJson = """
+            {
+              "model":"openai/gpt-5.3-codex",
+              "messages":[{"role":"user","content":"hello"}]
+            }
+            """;
+
+        var response = await harness.HttpClient.PostAsync(
+            $"{harness.BaseUrl}/v1/chat/completions",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var call = Assert.Single(recordingClient.Calls);
+        Assert.Equal(ChatRole.System, call.Messages[0].Role);
+        Assert.Equal(DefaultSystemPrompt, call.Messages[0].Text);
+        Assert.Equal("hello", call.Messages[1].Text);
+    }
+
+    [Fact]
     public async Task ModelsEndpoint_ShouldReturnModelList()
     {
         using var auth = new AuthFixture(withSession: true);
@@ -167,6 +194,31 @@ public sealed class ChatGptOpenAiProxyServerTests
         using var doc = JsonDocument.Parse(body);
         Assert.Equal("response", doc.RootElement.GetProperty("object").GetString());
         Assert.Equal("response-ok", doc.RootElement.GetProperty("output")[0].GetProperty("content")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task ResponsesEndpoint_ShouldInjectDefaultSystemPrompt_WhenInstructionsMissing()
+    {
+        using var auth = new AuthFixture(withSession: true);
+        var recordingClient = new RecordingChatClient("response-ok");
+        await using var harness = await ProxyHarness.StartAsync(auth.TokenProvider, _ => recordingClient);
+
+        var requestJson = """
+            {
+              "model":"openai/gpt-5.3-codex",
+              "input":"hi from responses"
+            }
+            """;
+
+        var response = await harness.HttpClient.PostAsync(
+            $"{harness.BaseUrl}/v1/responses",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var call = Assert.Single(recordingClient.Calls);
+        Assert.Equal(ChatRole.System, call.Messages[0].Role);
+        Assert.Equal(DefaultSystemPrompt, call.Messages[0].Text);
+        Assert.Equal("hi from responses", call.Messages[1].Text);
     }
 
     [Fact]
