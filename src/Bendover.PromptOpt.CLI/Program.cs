@@ -17,11 +17,20 @@ public static class Program
 {
     public static Task<int> Main(string[] args)
     {
-        var app = new CommandApp<RunCommand>();
-        app.Configure(config =>
+        if (args.Length > 0 && string.Equals(args[0], "serve-chatgpt-proxy", StringComparison.OrdinalIgnoreCase))
         {
-            config.SetApplicationName("bendover-promptopt");
-        });
+            var proxyApp = new CommandApp<ServeChatGptProxyCommand>();
+            proxyApp.Configure(config => config.SetApplicationName("bendover-promptopt"));
+            return proxyApp.RunAsync(args.Skip(1).ToArray());
+        }
+
+        if (args.Length > 0 && string.Equals(args[0], "run", StringComparison.OrdinalIgnoreCase))
+        {
+            args = args.Skip(1).ToArray();
+        }
+
+        var app = new CommandApp<RunCommand>();
+        app.Configure(config => config.SetApplicationName("bendover-promptopt"));
         return app.RunAsync(args);
     }
 }

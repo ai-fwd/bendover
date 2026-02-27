@@ -91,7 +91,7 @@ Agent__ApiKey=sk-local-dummy
 # PromptOpt replay command used by the Python optimizer
 export PROMPTOPT_CLI_COMMAND='dotnet run --project src/Bendover.PromptOpt.CLI --'
 
-# Reflection model provider settings
+# Reflection model provider settings (OpenAI API key mode)
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_API_KEY=sk-your-openai-key
 DSPY_REFLECTION_MODEL=openai/gpt-4o
@@ -122,7 +122,17 @@ Model behavior with subscription:
 Reflection model note:
 
 - DSPy reflection uses Python-side provider settings (`OPENAI_*`, `DSPY_REFLECTION_MODEL`).
-- It does **not** reuse the ChatGPT subscription token automatically (yet).
+- To use ChatGPT subscription for reflection, run the local proxy and point `OPENAI_API_BASE` to it:
+
+```bash
+dotnet run --project src/Bendover.PromptOpt.CLI -- serve-chatgpt-proxy
+```
+
+```dotenv
+OPENAI_API_BASE=http://127.0.0.1:11434/v1
+OPENAI_API_KEY=sk-local-dummy
+DSPY_REFLECTION_MODEL=gpt-5.3-codex
+```
 
 ## Core Concepts (Plain English)
 
@@ -307,6 +317,7 @@ Evaluator contract (`evaluator.json`):
 
 - Verify `.env` includes `Agent__Model`, `Agent__Endpoint`, `Agent__ApiKey` for endpoint mode.
 - For subscription mode, run `/connect` and leave `Agent__ApiKey` empty.
+- For reflection via subscription, start `serve-chatgpt-proxy` and set `OPENAI_API_BASE=http://127.0.0.1:11434/v1`.
 
 ### 6.2 Docker unavailable
 
