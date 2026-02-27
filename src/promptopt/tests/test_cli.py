@@ -112,6 +112,9 @@ def test_cli_invocation_format_uses_env_cli_command(mock_dependencies, tmp_path,
     deps["ensure_active_bundle"].assert_called_once_with(promptopt_root)
     deps["load_bundle"].assert_called_once_with(promptopt_root / "bundles" / "seed")
     deps["GEPA"].assert_called_once()
+    selector = deps["GEPA"].call_args.kwargs["component_selector"]
+    assert callable(selector)
+    assert getattr(selector, "__name__", "") == "select_feedback_targeted_components"
     deps["program"].assert_called_once_with(run_ids=["run1"])
     deps["teleprompter"].compile.assert_called_once()
 

@@ -2,7 +2,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Any
 
 import typer
 import dspy
@@ -351,6 +351,42 @@ def metric_fn(gold, pred, trace=None, pred_name=None, pred_trace=None):
     return score
 
 
+def select_feedback_targeted_components(
+    state: Any,
+    trajectories: list[dict[str, Any]],
+    subsample_scores: list[float],
+    candidate_idx: int,
+    candidate: dict[str, str],
+) -> list[str]:
+    """
+    Select only predictors that received targeted feedback in this minibatch.
+
+    This keeps GEPA aligned with notes_by_practice-driven attribution and avoids
+    attempting reflection on predictors with no reflective dataset entries.
+    """
+    del subsample_scores
+
+    targeted: set[str] = set()
+    for trajectory in trajectories or []:
+        prediction = trajectory.get("prediction")
+        feedback_map = getattr(prediction, "feedback_by_pred", None)
+        if not isinstance(feedback_map, dict):
+            continue
+        for pred_name in feedback_map.keys():
+            if pred_name in candidate:
+                targeted.add(pred_name)
+
+    if targeted:
+        return [name for name in state.list_of_named_predictors if name in targeted and name in candidate]
+
+    # Fallback to round-robin behavior when no targeted feedback is available.
+    pid = state.named_predictor_id_to_update_next_for_program_candidate[candidate_idx]
+    state.named_predictor_id_to_update_next_for_program_candidate[candidate_idx] = (pid + 1) % len(
+        state.list_of_named_predictors
+    )
+    return [state.list_of_named_predictors[pid]]
+
+
 def _extract_first_code_block(prompt: str) -> str:
     start = prompt.find("```")
     if start == -1:
@@ -617,6 +653,7 @@ def main(
         max_full_evals=max_full_evals,
         reflection_minibatch_size=reflection_minibatch_size,
         reflection_lm=reflection_lm_instance,
+        component_selector=select_feedback_targeted_components,
         log_dir=str(logs_root),
         track_stats=True,
     )
