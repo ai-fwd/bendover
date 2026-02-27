@@ -66,11 +66,14 @@ printf "%s\n" "<run_id>" > .bendover/promptopt/datasets/train.txt
 python -m venv .venv
 ./.venv/bin/pip install -e .
 
-# 8) Run GEPA 
-./.venv/bin/promptopt --promptopt-root .bendover/promptopt --max-full-evals 3
+# 8) Run GEPA (defaults --promptopt-root to .bendover/promptopt)
+./.venv/bin/promptopt --max-full-evals 3
 
 # 9) Inspect active optimized bundle
 cat .bendover/promptopt/active.json
+
+# 10) Clean promptopt generated state
+./.venv/bin/promptopt clean
 ```
 
 ## Configuration (.env Only)
@@ -255,14 +258,36 @@ python -m venv .venv
 ### 4.3 Run GEPA
 
 ```bash
-./.venv/bin/promptopt --promptopt-root .bendover/promptopt --max-full-evals 3
+./.venv/bin/promptopt --max-full-evals 3
 ```
 
 If `PROMPTOPT_CLI_COMMAND` is not set in environment or `.env`, pass `--cli-command` explicitly.
 
+Default root behavior:
+
+- `promptopt` and `promptopt clean` both default `--promptopt-root` to `.bendover/promptopt`.
+- Override with `--promptopt-root <path>` when needed.
+
 Useful option:
 
 - `--disable-dspy-cache` disables DSPy disk/memory cache.
+
+### 4.4 Clean PromptOpt State
+
+```bash
+# default root (.bendover/promptopt)
+./.venv/bin/promptopt clean
+
+# custom root
+./.venv/bin/promptopt clean --promptopt-root /path/to/promptopt
+```
+
+`promptopt clean` is idempotent and safe to rerun. It removes:
+
+- `active.json`
+- all children under `logs/` (keeps `logs/`)
+- top-level `bundles/gen*` entries only
+- all children under `cache/evals/` (keeps `cache/evals/`)
 
 Bundle lifecycle (current behavior):
 

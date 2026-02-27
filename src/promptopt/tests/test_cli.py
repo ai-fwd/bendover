@@ -1,8 +1,10 @@
-import pytest
-from typer.testing import CliRunner
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import dspy
+import pytest
 from dspy.utils import DummyLM
+from typer.testing import CliRunner
 
 from promptopt.run_gepa import app, BundleProgram
 from promptopt.models import Bundle, PracticeFile, RunArtifact, EvaluationResult, PracticeAttribution
@@ -165,6 +167,87 @@ def test_cli_fails_when_cli_command_missing(mock_dependencies, tmp_path, monkeyp
 
     assert result.exit_code != 0
     assert "Missing CLI command" in result.output
+
+
+def test_cli_uses_default_promptopt_root_for_optimization(mock_dependencies, monkeypatch):
+    deps = mock_dependencies
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
+
+    result = runner.invoke(app, [
+        "--reflection-lm", "test",
+        "--max-full-evals", "1",
+    ])
+
+    assert result.exit_code == 0
+    deps["load_split"].assert_called_with(".bendover/promptopt/datasets/train.txt")
+    deps["ensure_active_bundle"].assert_called_once_with(Path(".bendover/promptopt"))
+
+
+def test_cli_uses_default_promptopt_root_for_clean():
+    with patch("promptopt.run_gepa._run_clean") as mock_clean:
+        result = runner.invoke(app, ["clean"])
+
+    assert result.exit_code == 0
+    mock_clean.assert_called_once_with(".bendover/promptopt")
+
+
+def test_cli_clean_removes_targets_and_preserves_non_gen_entries(tmp_path):
+    promptopt_root = tmp_path / "promptopt"
+    logs_root = promptopt_root / "logs"
+    bundles_root = promptopt_root / "bundles"
+    cache_evals_root = promptopt_root / "cache" / "evals"
+    keep_bundle = bundles_root / "manual"
+    nested_gen = keep_bundle / "gen_nested"
+    keep_cache_file = promptopt_root / "cache" / "index.json"
+
+    logs_root.mkdir(parents=True)
+    (logs_root / "trace.log").write_text("trace")
+    (logs_root / "nested").mkdir()
+    (logs_root / "nested" / "event.json").write_text("{}")
+
+    bundles_root.mkdir(parents=True)
+    (bundles_root / "gen001").mkdir()
+    (bundles_root / "gen-file.txt").write_text("gen")
+    keep_bundle.mkdir()
+    (keep_bundle / "notes.txt").write_text("keep")
+    nested_gen.mkdir()
+
+    cache_evals_root.mkdir(parents=True)
+    (cache_evals_root / "eval-1.json").write_text("{}")
+    (cache_evals_root / "nested").mkdir()
+    (cache_evals_root / "nested" / "eval-2.json").write_text("{}")
+    keep_cache_file.write_text("{}")
+
+    (promptopt_root / "active.json").write_text("{}")
+
+    result = runner.invoke(app, [
+        "clean",
+        "--promptopt-root", str(promptopt_root),
+    ])
+
+    assert result.exit_code == 0
+    assert not (promptopt_root / "active.json").exists()
+    assert logs_root.exists()
+    assert logs_root.is_dir()
+    assert list(logs_root.iterdir()) == []
+    assert not (bundles_root / "gen001").exists()
+    assert not (bundles_root / "gen-file.txt").exists()
+    assert keep_bundle.exists()
+    assert nested_gen.exists()
+    assert cache_evals_root.exists()
+    assert cache_evals_root.is_dir()
+    assert list(cache_evals_root.iterdir()) == []
+    assert keep_cache_file.exists()
+
+
+def test_cli_clean_is_idempotent_when_targets_missing(tmp_path):
+    promptopt_root = tmp_path / "promptopt"
+
+    first = runner.invoke(app, ["clean", "--promptopt-root", str(promptopt_root)])
+    second = runner.invoke(app, ["clean", "--promptopt-root", str(promptopt_root)])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
 
 
 def test_bundle_program_forward_uses_feedback(tmp_path):
