@@ -17,13 +17,25 @@ public class RunScoringOrchestrator
         _runEvaluator = runEvaluator;
     }
 
-    public async Task<string> ScoreAsync(string runId, string? bundleOverridePath, bool verbose = false)
+    public Task<string> ScoreAsync(string runId, string? bundleOverridePath, bool verbose = false)
     {
+        return ScoreAsync(runId, bundleOverridePath, verbose, statusSink: null);
+    }
+
+    public async Task<string> ScoreAsync(
+        string runId,
+        string? bundleOverridePath,
+        bool verbose,
+        IPromptOptCliStatusSink? statusSink)
+    {
+        var sink = statusSink ?? NoOpPromptOptCliStatusSink.Instance;
+
         if (string.IsNullOrWhiteSpace(runId))
         {
             throw new ArgumentException("runId is required.", nameof(runId));
         }
 
+        sink.SetStatus("Resolving run directory");
         var repoRoot = Directory.GetCurrentDirectory();
         var runsRoot = _fileSystem.Path.Combine(repoRoot, ".bendover", "promptopt", "runs");
         var runDirectory = _fileSystem.Path.Combine(runsRoot, runId.Trim());
@@ -35,9 +47,20 @@ public class RunScoringOrchestrator
         var bundlePath = ResolveBundlePath(repoRoot, runDirectory, bundleOverridePath);
         ValidateBundlePath(bundlePath, runDirectory);
 
-        Log(verbose, $"Scoring existing run. run_id={runId} bundle={bundlePath} out={runDirectory}");
+        if (verbose)
+        {
+            sink.AddVerboseDetail($"Scoring existing run. run_id={runId} bundle={bundlePath} out={runDirectory}");
+        }
+
+        sink.SetStatus("Running evaluation");
+        sink.SetEvaluationState(Bendover.Presentation.Console.EvaluationPanelState.Running);
         await _runEvaluator.EvaluateAsync(runDirectory, bundlePath);
-        Log(verbose, "Scoring completed.");
+        sink.SetStatus("Evaluation completed");
+
+        if (verbose)
+        {
+            sink.AddVerboseDetail("Scoring completed.");
+        }
 
         return runDirectory;
     }
@@ -131,15 +154,5 @@ public class RunScoringOrchestrator
             throw new DirectoryNotFoundException(
                 $"Resolved bundle path is missing practices directory: {practicesPath}");
         }
-    }
-
-    private static void Log(bool verbose, string message)
-    {
-        if (!verbose)
-        {
-            return;
-        }
-
-        Console.WriteLine($"[promptopt][{DateTime.UtcNow:O}] {message}");
     }
 }

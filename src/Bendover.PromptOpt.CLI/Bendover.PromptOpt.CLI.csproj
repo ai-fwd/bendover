@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Bendover.Application\Bendover.Application.csproj" />
     <ProjectReference Include="..\Bendover.Infrastructure\Bendover.Infrastructure.csproj" />
+    <ProjectReference Include="..\Bendover.Presentation.Console\Bendover.Presentation.Console.csproj" />
   </ItemGroup>
 
   <ItemGroup>

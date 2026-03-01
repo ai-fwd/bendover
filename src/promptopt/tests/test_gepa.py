@@ -137,12 +137,89 @@ def test_evaluate_bundle_contract(mock_popen, temp_workspace):
     # Inspect the call args to ensure unique path structure: log_dir / bundle_id / task_id
     args, _ = mock_popen.call_args
     cmd = args[0]
+    ui_idx = cmd.index("--ui")
+    assert cmd[ui_idx + 1] == "plain"
     out_idx = cmd.index("--out")
     out_dir_arg = Path(cmd[out_idx + 1])
     
     expected_out = log_dir / "gen1_12345678" / "task1"
     assert out_dir_arg == expected_out
     assert mock_popen.call_count == 1
+
+
+@patch("promptopt.evaluator_client.subprocess.Popen")
+def test_evaluate_bundle_preserves_explicit_long_ui_flag(mock_popen, temp_workspace):
+    log_dir = temp_workspace["root"] / "logs_ui_long"
+    log_dir.mkdir()
+
+    class _Process:
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 0
+
+    def side_effect(*args, **kwargs):
+        cmd = args[0]
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "evaluator.json").write_text('{"pass": true, "score": 1.0}')
+        return _Process()
+
+    mock_popen.side_effect = side_effect
+
+    evaluate_bundle(
+        bundle_path=Path("bundle"),
+        task_path=Path("task"),
+        cli_command="bendover-cli --ui live",
+        log_dir=log_dir,
+        timeout_seconds=10,
+    )
+
+    cmd = mock_popen.call_args.args[0]
+    assert cmd.count("--ui") == 1
+    assert cmd[cmd.index("--ui") + 1] == "live"
+
+
+@patch("promptopt.evaluator_client.subprocess.Popen")
+def test_evaluate_bundle_preserves_explicit_short_ui_flag(mock_popen, temp_workspace):
+    log_dir = temp_workspace["root"] / "logs_ui_short"
+    log_dir.mkdir()
+
+    class _Process:
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return 0
+
+    def side_effect(*args, **kwargs):
+        cmd = args[0]
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "evaluator.json").write_text('{"pass": true, "score": 1.0}')
+        return _Process()
+
+    mock_popen.side_effect = side_effect
+
+    evaluate_bundle(
+        bundle_path=Path("bundle"),
+        task_path=Path("task"),
+        cli_command="bendover-cli -u plain",
+        log_dir=log_dir,
+        timeout_seconds=10,
+    )
+
+    cmd = mock_popen.call_args.args[0]
+    assert "--ui" not in cmd
+    assert cmd.count("-u") == 1
+    assert cmd[cmd.index("-u") + 1] == "plain"
 
 
 @patch("promptopt.evaluator_client.subprocess.Popen")

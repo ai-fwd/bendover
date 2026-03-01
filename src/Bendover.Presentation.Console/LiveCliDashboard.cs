@@ -2,11 +2,58 @@ using Bendover.Domain.Interfaces;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-namespace Bendover.Presentation.CLI;
+namespace Bendover.Presentation.Console;
 
-public class CliDashboard
+public enum DashboardStatus
+{
+    Running,
+    Success,
+    Error
+}
+
+public enum EvaluationPanelState
+{
+    Pending,
+    Running,
+    Completed,
+    Missing,
+    ParseError,
+    Failed
+}
+
+public sealed record LiveCliDashboardOptions(
+    string ModelSummary,
+    string RunId,
+    string RunDir,
+    string Goal,
+    bool ShowEvaluationPanel);
+
+public sealed record EvaluationPanelSnapshot(
+    EvaluationPanelState State,
+    string OutputDirectory,
+    string LeadSelectedPracticesText,
+    string EvaluatorPassScoreText,
+    string EvaluatorSelectedPracticesText,
+    string EvaluatorOffendingPracticesText,
+    string? ErrorMessage)
+{
+    public static EvaluationPanelSnapshot Pending(string? outputDirectory = null)
+    {
+        return new EvaluationPanelSnapshot(
+            State: EvaluationPanelState.Pending,
+            OutputDirectory: string.IsNullOrWhiteSpace(outputDirectory) ? "(pending)" : outputDirectory,
+            LeadSelectedPracticesText: "(pending)",
+            EvaluatorPassScoreText: "(pending)",
+            EvaluatorSelectedPracticesText: "(pending)",
+            EvaluatorOffendingPracticesText: "(pending)",
+            ErrorMessage: null);
+    }
+}
+
+public sealed class LiveCliDashboard
 {
     private const string RunningStatusText = "[bold]🎵 take it easy, I will do the work...🎵[/]";
+
     private readonly object _stateLock = new();
     private readonly List<AgentStepEvent> _steps = new();
     private readonly string[] _spinnerFrames = Spinner.Known.Dots.Frames.ToArray();
@@ -17,15 +64,10 @@ public class CliDashboard
     private string _goal = "(not provided)";
     private string _latestInfoMessage = "Waiting for updates...";
     private string? _errorMessage;
+    private bool _showEvaluationPanel;
+    private EvaluationPanelSnapshot _evaluationSnapshot = EvaluationPanelSnapshot.Pending();
     private int _spinnerIndex;
     private DashboardStatus _status = DashboardStatus.Running;
-
-    private enum DashboardStatus
-    {
-        Running,
-        Success,
-        Error
-    }
 
     private sealed record DashboardSnapshot(
         string ModelSummary,
@@ -34,20 +76,26 @@ public class CliDashboard
         string Goal,
         string LatestInfoMessage,
         string? ErrorMessage,
+        bool ShowEvaluationPanel,
+        EvaluationPanelSnapshot EvaluationSnapshot,
         int SpinnerIndex,
         DashboardStatus Status,
         AgentStepEvent[] Steps);
 
-    public void Initialize(string modelSummary, string runId, string runDir, string goal)
+    public void Initialize(LiveCliDashboardOptions options)
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         lock (_stateLock)
         {
-            _modelSummary = string.IsNullOrWhiteSpace(modelSummary) ? "<unset-model>" : modelSummary;
-            _runId = string.IsNullOrWhiteSpace(runId) ? "<unset-run-id>" : runId;
-            _runDir = string.IsNullOrWhiteSpace(runDir) ? "." : runDir;
-            _goal = string.IsNullOrWhiteSpace(goal) ? "(not provided)" : goal.Trim();
+            _modelSummary = string.IsNullOrWhiteSpace(options.ModelSummary) ? "<unset-model>" : options.ModelSummary;
+            _runId = string.IsNullOrWhiteSpace(options.RunId) ? "<unset-run-id>" : options.RunId;
+            _runDir = string.IsNullOrWhiteSpace(options.RunDir) ? "." : options.RunDir;
+            _goal = string.IsNullOrWhiteSpace(options.Goal) ? "(not provided)" : options.Goal.Trim();
             _latestInfoMessage = "Waiting for updates...";
             _errorMessage = null;
+            _showEvaluationPanel = options.ShowEvaluationPanel;
+            _evaluationSnapshot = EvaluationPanelSnapshot.Pending(options.RunDir);
             _spinnerIndex = 0;
             _status = DashboardStatus.Running;
             _steps.Clear();
@@ -66,9 +114,21 @@ public class CliDashboard
 
     public void AddStep(AgentStepEvent step)
     {
+        ArgumentNullException.ThrowIfNull(step);
+
         lock (_stateLock)
         {
             _steps.Add(step);
+        }
+    }
+
+    public void UpdateEvaluation(EvaluationPanelSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        lock (_stateLock)
+        {
+            _evaluationSnapshot = snapshot;
         }
     }
 
@@ -96,6 +156,8 @@ public class CliDashboard
 
     public async Task RunWithLiveAsync(Func<Task> executeAsync)
     {
+        ArgumentNullException.ThrowIfNull(executeAsync);
+
         if (!AnsiConsole.Profile.Capabilities.Interactive)
         {
             await executeAsync();
@@ -133,46 +195,6 @@ public class CliDashboard
         await executionTask;
     }
 
-    private void AdvanceSpinner()
-    {
-        lock (_stateLock)
-        {
-            if (_status != DashboardStatus.Running || _spinnerFrames.Length == 0)
-            {
-                return;
-            }
-
-            _spinnerIndex = (_spinnerIndex + 1) % _spinnerFrames.Length;
-        }
-    }
-
-    private DashboardSnapshot Snapshot()
-    {
-        lock (_stateLock)
-        {
-            return new DashboardSnapshot(
-                _modelSummary,
-                _runId,
-                _runDir,
-                _goal,
-                _latestInfoMessage,
-                _errorMessage,
-                _spinnerIndex,
-                _status,
-                _steps.ToArray());
-        }
-    }
-
-    private IRenderable BuildLayout()
-    {
-        var snapshot = Snapshot();
-        return new Rows(
-            BuildBranding(),
-            BuildHeaderPanel(snapshot),
-            BuildGoalPanel(snapshot),
-            BuildMainPanel(snapshot));
-    }
-
     public static IRenderable BuildPromptStatusPanel(string modelSummary)
     {
         var selectedModel = new Rows(
@@ -199,14 +221,55 @@ public class CliDashboard
         };
     }
 
-    public static IRenderable BuildStaticStatusPanel(
-        string modelSummary,
-        string runId,
-        string runDir,
-        string statusText,
-        string latestInfoMessage)
+    private void AdvanceSpinner()
     {
-        return BuildHeaderPanelCore(modelSummary, runId, runDir, statusText, latestInfoMessage);
+        lock (_stateLock)
+        {
+            if (_status != DashboardStatus.Running || _spinnerFrames.Length == 0)
+            {
+                return;
+            }
+
+            _spinnerIndex = (_spinnerIndex + 1) % _spinnerFrames.Length;
+        }
+    }
+
+    private DashboardSnapshot Snapshot()
+    {
+        lock (_stateLock)
+        {
+            return new DashboardSnapshot(
+                _modelSummary,
+                _runId,
+                _runDir,
+                _goal,
+                _latestInfoMessage,
+                _errorMessage,
+                _showEvaluationPanel,
+                _evaluationSnapshot,
+                _spinnerIndex,
+                _status,
+                _steps.ToArray());
+        }
+    }
+
+    private IRenderable BuildLayout()
+    {
+        var snapshot = Snapshot();
+        var rows = new List<IRenderable>
+        {
+            BuildBranding(),
+            BuildHeaderPanel(snapshot),
+            BuildGoalPanel(snapshot)
+        };
+
+        if (snapshot.ShowEvaluationPanel)
+        {
+            rows.Add(BuildEvaluationPanel(snapshot));
+        }
+
+        rows.Add(BuildMainPanel(snapshot));
+        return new Rows(rows);
     }
 
     private IRenderable BuildHeaderPanel(DashboardSnapshot snapshot)
@@ -292,6 +355,51 @@ public class CliDashboard
         };
     }
 
+    private static IRenderable BuildEvaluationPanel(DashboardSnapshot snapshot)
+    {
+        var evaluation = snapshot.EvaluationSnapshot;
+        var rows = new List<IRenderable>
+        {
+            new Markup($"[bold]State:[/] {StateMarkup(evaluation.State)}"),
+            new Markup($"[bold]Output:[/] {Markup.Escape(DisplayOrDefault(evaluation.OutputDirectory, "(pending)"))}"),
+            new Markup($"[bold]Lead Selected:[/] {Markup.Escape(DisplayOrDefault(evaluation.LeadSelectedPracticesText, "(pending)"))}"),
+            new Markup($"[bold]Pass / Score:[/] {Markup.Escape(DisplayOrDefault(evaluation.EvaluatorPassScoreText, "(pending)"))}"),
+            new Markup($"[bold]Evaluator Selected:[/] {Markup.Escape(DisplayOrDefault(evaluation.EvaluatorSelectedPracticesText, "(pending)"))}"),
+            new Markup($"[bold]Evaluator Offending:[/] {Markup.Escape(DisplayOrDefault(evaluation.EvaluatorOffendingPracticesText, "(pending)"))}")
+        };
+
+        if (!string.IsNullOrWhiteSpace(evaluation.ErrorMessage))
+        {
+            rows.Add(new Markup($"[bold red]Error:[/] {Markup.Escape(evaluation.ErrorMessage)}"));
+        }
+
+        return new Panel(new Rows(rows))
+        {
+            Header = new PanelHeader("Evaluation", Justify.Left),
+            Expand = true
+        };
+    }
+
+    private static string StateMarkup(EvaluationPanelState state)
+    {
+        var text = state switch
+        {
+            EvaluationPanelState.Completed => "[green]Completed[/]",
+            EvaluationPanelState.Running => "[blue]Running[/]",
+            EvaluationPanelState.Missing => "[yellow]Missing[/]",
+            EvaluationPanelState.ParseError => "[red]ParseError[/]",
+            EvaluationPanelState.Failed => "[red]Failed[/]",
+            _ => "[grey]Pending[/]"
+        };
+
+        return text;
+    }
+
+    private static string DisplayOrDefault(string? value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
     private static IRenderable BuildMainPanel(DashboardSnapshot snapshot)
     {
         var rows = new List<IRenderable>();
@@ -357,5 +465,30 @@ public class CliDashboard
 
         var normalizedIndex = Math.Abs(spinnerIndex % _spinnerFrames.Length);
         return _spinnerFrames[normalizedIndex];
+    }
+}
+
+public sealed class LiveCliDashboardObserver : IAgentObserver
+{
+    private readonly LiveCliDashboard _dashboard;
+
+    public LiveCliDashboardObserver(LiveCliDashboard dashboard)
+    {
+        _dashboard = dashboard;
+    }
+
+    public Task OnEventAsync(AgentEvent evt)
+    {
+        switch (evt)
+        {
+            case AgentProgressEvent progress:
+                _dashboard.SetLatestInfo(progress.Message ?? string.Empty);
+                break;
+            case AgentStepEvent step:
+                _dashboard.AddStep(step);
+                break;
+        }
+
+        return Task.CompletedTask;
     }
 }

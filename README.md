@@ -60,6 +60,9 @@ dotnet test
 # 5) Score the captured run (use the printed run_id)
 dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
 
+# Optional: force plain console output
+dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --ui plain --verbose
+
 # 6) Create GEPA training split
 mkdir -p .bendover/promptopt/datasets
 printf "%s\n" "<run_id>" > .bendover/promptopt/datasets/train.txt
@@ -211,6 +214,13 @@ Score a recorded run without rerunning agents:
 ```bash
 dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
 ```
+
+PromptOpt console behavior:
+
+- Direct `PromptOpt.CLI` invocations default to `--ui live`.
+- Supported modes are `--ui live` and `--ui plain`.
+- If the terminal is non-interactive, `live` falls back to `plain`.
+- Python `promptopt` replay runs append `--ui plain` unless `PROMPTOPT_CLI_COMMAND` or `--cli-command` already specifies `--ui` or `-u`.
 
 Bundle resolution in `--run-id` mode:
 

@@ -6,9 +6,13 @@ using System.Threading.Tasks;
 using Bendover.Application;
 using Bendover.Application.Interfaces;
 using Bendover.Domain.Interfaces;
+using Bendover.Infrastructure.ChatGpt;
+using Bendover.Infrastructure.Configuration;
+using Bendover.Presentation.Console;
 using DotNetEnv;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace Bendover.PromptOpt.CLI;
@@ -39,55 +43,14 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, RunCommandSettings settings, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(settings.StubEvalJson))
+        var requestedUiMode = settings.GetUiMode();
+        var effectiveUiMode = ResolveEffectiveUiMode(requestedUiMode);
+        if (requestedUiMode == PromptOptUiMode.Live
+            && effectiveUiMode == PromptOptUiMode.Plain
+            && settings.Verbose)
         {
-            if (string.IsNullOrWhiteSpace(settings.Out))
-            {
-                throw new InvalidOperationException("--out is required when using --stub-eval-json.");
-            }
-
-            Directory.CreateDirectory(settings.Out);
-            var targetPath = Path.Combine(settings.Out, "evaluator.json");
-
-            var jsonText = File.ReadAllText(settings.StubEvalJson);
-            var node = JsonNode.Parse(jsonText) as JsonObject ?? new JsonObject();
-
-            if (node.TryGetPropertyValue("score_if_contains", out var ruleNode) && ruleNode is JsonObject rule)
-            {
-                var file = rule["file"]?.GetValue<string>();
-                var needle = rule["needle"]?.GetValue<string>();
-                var score = rule["score"]?.GetValue<double>();
-
-                if (!string.IsNullOrWhiteSpace(file) && !string.IsNullOrWhiteSpace(needle) && score.HasValue)
-                {
-                    if (!string.IsNullOrWhiteSpace(settings.Bundle))
-                    {
-                        var practicePath = Path.Combine(settings.Bundle, "practices", file);
-                        if (File.Exists(practicePath))
-                        {
-                            var content = File.ReadAllText(practicePath);
-                            if (content.Contains(needle, StringComparison.Ordinal))
-                            {
-                                node["score"] = score.Value;
-                                node["pass"] = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            node.Remove("score_if_contains");
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            File.WriteAllText(targetPath, node.ToJsonString(options));
-            if (settings.Verbose)
-            {
-                Console.WriteLine($"[promptopt] Wrote evaluator: {targetPath}");
-                PrintVerboseSummary(settings.Out);
-            }
-            return 0;
+            global::System.Console.WriteLine("[promptopt] ui.live requested but terminal is non-interactive; using plain output.");
         }
-
-        var services = new ServiceCollection();
 
         Env.TraversePath().Load();
 
@@ -95,11 +58,42 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddEnvironmentVariables()
             .Build();
+        var modelSummary = BuildLmSummary(configuration.GetSection(AgentOptions.SectionName).Get<AgentOptions>() ?? new AgentOptions());
+        var summaryReader = new PromptOptSummaryReader();
+        var dashboard = effectiveUiMode == PromptOptUiMode.Live ? CreateDashboard() : null;
 
+        if (!string.IsNullOrWhiteSpace(settings.StubEvalJson))
+        {
+            if (string.IsNullOrWhiteSpace(settings.Out))
+            {
+                throw new InvalidOperationException("--out is required when using --stub-eval-json.");
+            }
+
+            var outputDirectory = ResolvePath(settings.Out);
+            await ExecuteFlowAsync(
+                dashboard,
+                modelSummary,
+                GetRunLabelFromPath(outputDirectory),
+                outputDirectory,
+                "Write evaluator.json from stub",
+                settings.Verbose,
+                includeLeadSummary: false,
+                async sink =>
+                {
+                    sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(outputDirectory, includeLeadSummary: false));
+                    await RunStubModeAsync(settings, outputDirectory, sink);
+                    var summary = summaryReader.Read(outputDirectory, includeLeadSummary: false);
+                    sink.SetEvaluationSummary(summary);
+                    WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, outputDirectory, includeLeadSummary: false);
+                });
+            return 0;
+        }
+
+        var services = new ServiceCollection();
         ProgramServiceRegistration.RegisterServices(services, configuration, Directory.GetCurrentDirectory());
+        RegisterAgentObserver(services, dashboard);
 
-        var serviceProvider = services.BuildServiceProvider();
-
+        using var serviceProvider = services.BuildServiceProvider();
         var fileSystem = serviceProvider.GetRequiredService<System.IO.Abstractions.IFileSystem>();
         var fileService = serviceProvider.GetRequiredService<IFileService>();
         var gitRunner = serviceProvider.GetRequiredService<IGitRunner>();
@@ -131,17 +125,28 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
                 throw new InvalidOperationException("--out cannot be used with --run-id.");
             }
 
-            var outDir = await runScorer.ScoreAsync(
-                settings.RunId,
-                settings.Bundle,
-                settings.Verbose
-            );
+            var runDirectory = ResolveRunDirectory(settings.RunId);
+            await ExecuteFlowAsync(
+                dashboard,
+                modelSummary,
+                settings.RunId.Trim(),
+                runDirectory,
+                "Score existing run",
+                settings.Verbose,
+                includeLeadSummary: true,
+                async sink =>
+                {
+                    sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(runDirectory));
+                    var outDir = await runScorer.ScoreAsync(
+                        settings.RunId,
+                        settings.Bundle,
+                        settings.Verbose,
+                        sink);
 
-            if (settings.Verbose)
-            {
-                PrintVerboseSummary(outDir);
-            }
-
+                    var summary = summaryReader.Read(outDir);
+                    sink.SetEvaluationSummary(summary);
+                    WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, outDir);
+                });
             return 0;
         }
 
@@ -155,161 +160,245 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             throw new InvalidOperationException("--out is required for bundle/task replay mode.");
         }
 
-        await orchestrator.RunAsync(
-            settings.Bundle,
-            settings.Task,
-            settings.Out,
-            settings.Verbose
-        );
+        var replayOutputDirectory = ResolvePath(settings.Out);
+        var replayGoal = LoadReplayGoal(settings.Task);
 
-        if (settings.Verbose)
-        {
-            PrintVerboseSummary(settings.Out);
-        }
+        await ExecuteFlowAsync(
+            dashboard,
+            modelSummary,
+            GetRunLabelFromPath(replayOutputDirectory),
+            replayOutputDirectory,
+            replayGoal,
+            settings.Verbose,
+            includeLeadSummary: true,
+            async sink =>
+            {
+                sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(replayOutputDirectory));
+                await orchestrator.RunAsync(
+                    settings.Bundle,
+                    settings.Task,
+                    settings.Out,
+                    settings.Verbose,
+                    sink);
+
+                var summary = summaryReader.Read(replayOutputDirectory);
+                sink.SetEvaluationSummary(summary);
+                WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, replayOutputDirectory);
+            });
 
         return 0;
     }
 
-    private static void PrintVerboseSummary(string outDir)
+    private static PromptOptUiMode ResolveEffectiveUiMode(PromptOptUiMode requestedMode)
     {
-        Console.WriteLine($"[promptopt] Out: {outDir}");
+        if (requestedMode == PromptOptUiMode.Live && !AnsiConsole.Profile.Capabilities.Interactive)
+        {
+            return PromptOptUiMode.Plain;
+        }
 
-        PrintLeadSummary(outDir);
-        PrintEvaluatorSummary(outDir);
+        return requestedMode;
     }
 
-    private static void PrintLeadSummary(string outDir)
+    private static LiveCliDashboard CreateDashboard()
     {
-        var outputsPath = Path.Combine(outDir, "outputs.json");
-        if (!File.Exists(outputsPath))
+        if (AnsiConsole.Profile.Capabilities.Interactive)
         {
-            Console.WriteLine("[promptopt] outputs.json: missing");
+            AnsiConsole.Clear();
+        }
+
+        return new LiveCliDashboard();
+    }
+
+    private static void RegisterAgentObserver(IServiceCollection services, LiveCliDashboard? dashboard)
+    {
+        if (dashboard is not null)
+        {
+            services.AddSingleton(dashboard);
+            services.AddSingleton<IAgentObserver, LiveCliDashboardObserver>();
             return;
         }
 
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(outputsPath));
-            if (!doc.RootElement.TryGetProperty("lead", out var leadElement))
-            {
-                Console.WriteLine("[promptopt] lead output: missing");
-                return;
-            }
+        services.AddSingleton<IAgentObserver, NoOpAgentObserver>();
+    }
 
-            var selected = ExtractLeadSelections(leadElement);
-            var selectedCsv = selected.Length == 0 ? "(none)" : string.Join(", ", selected);
-            Console.WriteLine($"[promptopt] lead.selected_practices: {selectedCsv}");
-        }
-        catch (Exception ex)
+    private static async Task ExecuteFlowAsync(
+        LiveCliDashboard? dashboard,
+        string modelSummary,
+        string runId,
+        string runDir,
+        string goal,
+        bool verbose,
+        bool includeLeadSummary,
+        Func<IPromptOptCliStatusSink, Task> executeAsync)
+    {
+        ArgumentNullException.ThrowIfNull(executeAsync);
+
+        if (dashboard is null)
         {
-            Console.WriteLine($"[promptopt] outputs.json parse error: {ex.Message}");
+            await executeAsync(new PlainPromptOptCliStatusSink(verbose));
+            return;
+        }
+
+        dashboard.Initialize(new LiveCliDashboardOptions(
+            ModelSummary: modelSummary,
+            RunId: runId,
+            RunDir: runDir,
+            Goal: goal,
+            ShowEvaluationPanel: true));
+
+        var sink = new LivePromptOptCliStatusSink(dashboard);
+        sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(runDir, includeLeadSummary));
+
+        await dashboard.RunWithLiveAsync(async () =>
+        {
+            try
+            {
+                await executeAsync(sink);
+                dashboard.MarkSuccess();
+            }
+            catch (Exception ex)
+            {
+                var message = BuildErrorMessage(ex);
+                sink.SetEvaluationSummary(PromptOptEvaluationSummary.Failed(runDir, message, includeLeadSummary));
+                dashboard.MarkError(message);
+                throw;
+            }
+        });
+    }
+
+    private static async Task RunStubModeAsync(
+        RunCommandSettings settings,
+        string outputDirectory,
+        IPromptOptCliStatusSink sink)
+    {
+        Directory.CreateDirectory(outputDirectory);
+        var targetPath = Path.Combine(outputDirectory, "evaluator.json");
+
+        sink.SetStatus("Writing evaluator.json");
+        sink.SetEvaluationState(EvaluationPanelState.Running);
+
+        var jsonText = File.ReadAllText(settings.StubEvalJson!);
+        var node = JsonNode.Parse(jsonText) as JsonObject ?? new JsonObject();
+
+        if (node.TryGetPropertyValue("score_if_contains", out var ruleNode) && ruleNode is JsonObject rule)
+        {
+            var file = rule["file"]?.GetValue<string>();
+            var needle = rule["needle"]?.GetValue<string>();
+            var score = rule["score"]?.GetValue<double>();
+
+            if (!string.IsNullOrWhiteSpace(file) && !string.IsNullOrWhiteSpace(needle) && score.HasValue)
+            {
+                if (!string.IsNullOrWhiteSpace(settings.Bundle))
+                {
+                    var practicePath = Path.Combine(settings.Bundle, "practices", file);
+                    if (File.Exists(practicePath))
+                    {
+                        var content = File.ReadAllText(practicePath);
+                        if (content.Contains(needle, StringComparison.Ordinal))
+                        {
+                            node["score"] = score.Value;
+                            node["pass"] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        node.Remove("score_if_contains");
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        await File.WriteAllTextAsync(targetPath, node.ToJsonString(options));
+        sink.SetStatus("evaluator.json written");
+        if (settings.Verbose)
+        {
+            sink.AddVerboseDetail($"Wrote evaluator: {targetPath}");
         }
     }
 
-    private static string[] ExtractLeadSelections(JsonElement leadElement)
+    private static string ResolveRunDirectory(string runId)
     {
+        return Path.GetFullPath(Path.Combine(
+            Directory.GetCurrentDirectory(),
+            ".bendover",
+            "promptopt",
+            "runs",
+            runId.Trim()));
+    }
+
+    private static string ResolvePath(string path)
+    {
+        return Path.IsPathRooted(path)
+            ? path
+            : Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
+    }
+
+    private static string GetRunLabelFromPath(string path)
+    {
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fileName = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(fileName) ? "<unset-run-id>" : fileName;
+    }
+
+    private static string LoadReplayGoal(string taskPath)
+    {
+        var taskFilePath = Path.Combine(taskPath, "task.md");
+        if (!File.Exists(taskFilePath))
+        {
+            return "Replay bundle evaluation";
+        }
+
+        var goal = File.ReadAllText(taskFilePath).Trim();
+        return string.IsNullOrWhiteSpace(goal) ? "Replay bundle evaluation" : goal;
+    }
+
+    private static void WriteVerboseSummaryIfNeeded(
+        LiveCliDashboard? dashboard,
+        bool verbose,
+        PromptOptSummaryReader summaryReader,
+        string outDir,
+        bool includeLeadSummary = true)
+    {
+        if (dashboard is not null || !verbose)
+        {
+            return;
+        }
+
+        foreach (var line in summaryReader.GetVerboseSummaryLines(outDir, includeLeadSummary))
+        {
+            global::System.Console.WriteLine(line);
+        }
+    }
+
+    private static string BuildLmSummary(AgentOptions options)
+    {
+        var hasChatGptSession = false;
         try
         {
-            if (leadElement.ValueKind == JsonValueKind.Array)
-            {
-                return leadElement.EnumerateArray()
-                    .Where(x => x.ValueKind == JsonValueKind.String)
-                    .Select(x => x.GetString())
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Select(x => x!.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-            }
-
-            if (leadElement.ValueKind == JsonValueKind.String)
-            {
-                var text = leadElement.GetString();
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    return Array.Empty<string>();
-                }
-
-                using var leadDoc = JsonDocument.Parse(text);
-                if (leadDoc.RootElement.ValueKind != JsonValueKind.Array)
-                {
-                    return Array.Empty<string>();
-                }
-
-                return leadDoc.RootElement.EnumerateArray()
-                    .Where(x => x.ValueKind == JsonValueKind.String)
-                    .Select(x => x.GetString())
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Select(x => x!.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-            }
+            hasChatGptSession = new ChatGptAuthStore().Load() is not null;
         }
         catch
         {
-            // Keep verbose diagnostics resilient. We print "(none)" when parsing fails.
+            hasChatGptSession = false;
         }
 
-        return Array.Empty<string>();
+        var useChatGptSubscription = string.IsNullOrWhiteSpace(options.ApiKey) && hasChatGptSession;
+        var model = !string.IsNullOrWhiteSpace(options.Model)
+            ? options.Model
+            : useChatGptSubscription
+                ? ChatGptDefaults.DefaultModel
+                : "<unset-model>";
+
+        if (useChatGptSubscription)
+        {
+            return $"ChatGPT subscription ({model})";
+        }
+
+        var endpoint = string.IsNullOrWhiteSpace(options.Endpoint) ? "<unset-endpoint>" : options.Endpoint;
+        return $"endpoint mode ({model} @ {endpoint})";
     }
 
-    private static void PrintEvaluatorSummary(string outDir)
+    private static string BuildErrorMessage(Exception ex)
     {
-        var evaluatorPath = Path.Combine(outDir, "evaluator.json");
-        if (!File.Exists(evaluatorPath))
-        {
-            Console.WriteLine("[promptopt] evaluator.json: missing");
-            return;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(evaluatorPath));
-            var root = doc.RootElement;
-
-            var pass = root.TryGetProperty("pass", out var passElement)
-                && passElement.ValueKind is JsonValueKind.True or JsonValueKind.False
-                ? passElement.GetBoolean()
-                : false;
-
-            var score = root.TryGetProperty("score", out var scoreElement)
-                && scoreElement.ValueKind == JsonValueKind.Number
-                ? scoreElement.GetDouble()
-                : 0;
-
-            Console.WriteLine($"[promptopt] evaluator.pass={pass} score={score:0.###}");
-
-            if (!root.TryGetProperty("practice_attribution", out var practice)
-                || practice.ValueKind != JsonValueKind.Object)
-            {
-                Console.WriteLine("[promptopt] evaluator.practice_attribution: missing");
-                return;
-            }
-
-            var selected = ExtractStringArray(practice, "selected_practices");
-            var offending = ExtractStringArray(practice, "offending_practices");
-            Console.WriteLine($"[promptopt] evaluator.selected_practices: {(selected.Length == 0 ? "(none)" : string.Join(", ", selected))}");
-            Console.WriteLine($"[promptopt] evaluator.offending_practices: {(offending.Length == 0 ? "(none)" : string.Join(", ", offending))}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[promptopt] evaluator.json parse error: {ex.Message}");
-        }
-    }
-
-    private static string[] ExtractStringArray(JsonElement parent, string propertyName)
-    {
-        if (!parent.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.Array)
-        {
-            return Array.Empty<string>();
-        }
-
-        return element.EnumerateArray()
-            .Where(x => x.ValueKind == JsonValueKind.String)
-            .Select(x => x.GetString())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x!.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        return string.IsNullOrWhiteSpace(ex.Message) ? ex.ToString() : ex.Message;
     }
 }
 
@@ -335,7 +424,37 @@ public class RunCommandSettings : CommandSettings
     [Description("Write evaluator.json from a stub file and exit")]
     public string? StubEvalJson { get; init; }
 
+    [CommandOption("-u|--ui <MODE>")]
+    [Description("Console UI mode: live or plain.")]
+    public string Ui { get; init; } = "live";
+
     [CommandOption("--verbose")]
     [Description("Print lead/evaluator summary for manual inspection.")]
     public bool Verbose { get; init; }
+
+    public override ValidationResult Validate()
+    {
+        return TryParseUiMode(Ui, out _)
+            ? ValidationResult.Success()
+            : ValidationResult.Error("--ui must be either 'live' or 'plain'.");
+    }
+
+    public PromptOptUiMode GetUiMode()
+    {
+        return TryParseUiMode(Ui, out var mode)
+            ? mode
+            : PromptOptUiMode.Live;
+    }
+
+    private static bool TryParseUiMode(string? value, out PromptOptUiMode mode)
+    {
+        if (Enum.TryParse(value, ignoreCase: true, out mode)
+            && Enum.IsDefined(mode))
+        {
+            return true;
+        }
+
+        mode = PromptOptUiMode.Live;
+        return false;
+    }
 }
