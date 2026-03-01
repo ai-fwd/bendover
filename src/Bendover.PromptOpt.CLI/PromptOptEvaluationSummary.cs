@@ -4,6 +4,7 @@ namespace Bendover.PromptOpt.CLI;
 
 public sealed record PromptOptEvaluationSummary(
     EvaluationPanelState State,
+    string BundleDirectory,
     string OutputDirectory,
     string[] LeadSelectedPractices,
     bool? Pass,
@@ -13,10 +14,11 @@ public sealed record PromptOptEvaluationSummary(
     string? ErrorMessage,
     bool IncludeLeadSummary = true)
 {
-    public static PromptOptEvaluationSummary Pending(string outputDirectory, bool includeLeadSummary = true)
+    public static PromptOptEvaluationSummary Pending(string outputDirectory, string bundleDirectory = "(pending)", bool includeLeadSummary = true)
     {
         return new PromptOptEvaluationSummary(
             State: EvaluationPanelState.Pending,
+            BundleDirectory: bundleDirectory,
             OutputDirectory: outputDirectory,
             LeadSelectedPractices: Array.Empty<string>(),
             Pass: null,
@@ -27,10 +29,15 @@ public sealed record PromptOptEvaluationSummary(
             IncludeLeadSummary: includeLeadSummary);
     }
 
-    public static PromptOptEvaluationSummary Failed(string outputDirectory, string errorMessage, bool includeLeadSummary = true)
+    public static PromptOptEvaluationSummary Failed(
+        string outputDirectory,
+        string errorMessage,
+        string bundleDirectory = "(pending)",
+        bool includeLeadSummary = true)
     {
         return new PromptOptEvaluationSummary(
             State: EvaluationPanelState.Failed,
+            BundleDirectory: bundleDirectory,
             OutputDirectory: outputDirectory,
             LeadSelectedPractices: Array.Empty<string>(),
             Pass: null,
@@ -45,6 +52,7 @@ public sealed record PromptOptEvaluationSummary(
     {
         return new EvaluationPanelSnapshot(
             State: State,
+            BundleDirectory: string.IsNullOrWhiteSpace(BundleDirectory) ? "(pending)" : BundleDirectory,
             OutputDirectory: string.IsNullOrWhiteSpace(OutputDirectory) ? "(pending)" : OutputDirectory,
             LeadSelectedPracticesText: IncludeLeadSummary
                 ? FormatArray(LeadSelectedPractices, State)
@@ -59,9 +67,14 @@ public sealed record PromptOptEvaluationSummary(
     {
         if (Pass.HasValue || Score.HasValue)
         {
-            var passText = Pass.HasValue ? Pass.Value.ToString() : "(unknown)";
+            var passText = Pass switch
+            {
+                true => "✅",
+                false => "❌",
+                _ => "(unknown)"
+            };
             var scoreText = Score.HasValue ? Score.Value.ToString("0.###") : "(unknown)";
-            return $"pass={passText} score={scoreText}";
+            return $"{passText} / {scoreText}";
         }
 
         return State switch
