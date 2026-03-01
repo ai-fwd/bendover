@@ -97,7 +97,8 @@ public class LocalAgentRunner : IAgentRunner
             RunId: runId,
             RunDir: outDir,
             Goal: goal,
-            ShowEvaluationPanel: false));
+            ShowEvaluationPanel: false,
+            ShowExecutionPanel: true));
 
         if (interactive)
         {

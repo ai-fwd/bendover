@@ -6,6 +6,8 @@ namespace Bendover.PromptOpt.CLI;
 
 public class RunScoringOrchestrator
 {
+    public sealed record ScoreResult(string RunDirectory, string BundlePath);
+
     private readonly IOAbstractions.IFileSystem _fileSystem;
     private readonly IPromptOptRunEvaluator _runEvaluator;
 
@@ -17,12 +19,13 @@ public class RunScoringOrchestrator
         _runEvaluator = runEvaluator;
     }
 
-    public Task<string> ScoreAsync(string runId, string? bundleOverridePath, bool verbose = false)
+    public async Task<string> ScoreAsync(string runId, string? bundleOverridePath, bool verbose = false)
     {
-        return ScoreAsync(runId, bundleOverridePath, verbose, statusSink: null);
+        var result = await ScoreAsyncDetailed(runId, bundleOverridePath, verbose, statusSink: null);
+        return result.RunDirectory;
     }
 
-    public async Task<string> ScoreAsync(
+    public async Task<ScoreResult> ScoreAsyncDetailed(
         string runId,
         string? bundleOverridePath,
         bool verbose,
@@ -62,7 +65,7 @@ public class RunScoringOrchestrator
             sink.AddVerboseDetail("Scoring completed.");
         }
 
-        return runDirectory;
+        return new ScoreResult(runDirectory, bundlePath);
     }
 
     private string ResolveBundlePath(string repoRoot, string runDirectory, string? bundleOverridePath)

@@ -20,6 +20,7 @@ public class LiveCliDashboardTests
             ShowEvaluationPanel: true));
         dashboard.UpdateEvaluation(new EvaluationPanelSnapshot(
             State: EvaluationPanelState.Completed,
+            BundleDirectory: ".bendover/promptopt/bundles/manual_6ecd74aa",
             OutputDirectory: ".bendover/promptopt/runs/run-1",
             LeadSelectedPracticesText: "coding_style",
             EvaluatorPassScoreText: "pass=True score=0.7",

@@ -26,27 +26,30 @@ public sealed record LiveCliDashboardOptions(
     string RunId,
     string RunDir,
     string Goal,
-    bool ShowEvaluationPanel);
+    bool ShowEvaluationPanel,
+    bool ShowExecutionPanel = true,
+    string? Subtitle = null);
 
 public sealed record EvaluationPanelSnapshot(
     EvaluationPanelState State,
+    string BundleDirectory,
     string OutputDirectory,
     string LeadSelectedPracticesText,
     string EvaluatorPassScoreText,
     string EvaluatorSelectedPracticesText,
     string EvaluatorOffendingPracticesText,
-    string? ErrorMessage)
+    string? ErrorMessage = null)
 {
-    public static EvaluationPanelSnapshot Pending(string? outputDirectory = null)
+    public static EvaluationPanelSnapshot Pending(string? outputDirectory = null, string? bundleDirectory = null)
     {
         return new EvaluationPanelSnapshot(
             State: EvaluationPanelState.Pending,
+            BundleDirectory: string.IsNullOrWhiteSpace(bundleDirectory) ? "(pending)" : bundleDirectory,
             OutputDirectory: string.IsNullOrWhiteSpace(outputDirectory) ? "(pending)" : outputDirectory,
             LeadSelectedPracticesText: "(pending)",
             EvaluatorPassScoreText: "(pending)",
             EvaluatorSelectedPracticesText: "(pending)",
-            EvaluatorOffendingPracticesText: "(pending)",
-            ErrorMessage: null);
+            EvaluatorOffendingPracticesText: "(pending)");
     }
 }
 
@@ -62,9 +65,11 @@ public sealed class LiveCliDashboard
     private string _runId = "<unset-run-id>";
     private string _runDir = ".";
     private string _goal = "(not provided)";
+    private string? _subtitle;
     private string _latestInfoMessage = "Waiting for updates...";
     private string? _errorMessage;
     private bool _showEvaluationPanel;
+    private bool _showExecutionPanel;
     private EvaluationPanelSnapshot _evaluationSnapshot = EvaluationPanelSnapshot.Pending();
     private int _spinnerIndex;
     private DashboardStatus _status = DashboardStatus.Running;
@@ -74,9 +79,11 @@ public sealed class LiveCliDashboard
         string RunId,
         string RunDir,
         string Goal,
+        string? Subtitle,
         string LatestInfoMessage,
         string? ErrorMessage,
         bool ShowEvaluationPanel,
+        bool ShowExecutionPanel,
         EvaluationPanelSnapshot EvaluationSnapshot,
         int SpinnerIndex,
         DashboardStatus Status,
@@ -92,9 +99,11 @@ public sealed class LiveCliDashboard
             _runId = string.IsNullOrWhiteSpace(options.RunId) ? "<unset-run-id>" : options.RunId;
             _runDir = string.IsNullOrWhiteSpace(options.RunDir) ? "." : options.RunDir;
             _goal = string.IsNullOrWhiteSpace(options.Goal) ? "(not provided)" : options.Goal.Trim();
+            _subtitle = string.IsNullOrWhiteSpace(options.Subtitle) ? null : options.Subtitle.Trim();
             _latestInfoMessage = "Waiting for updates...";
             _errorMessage = null;
             _showEvaluationPanel = options.ShowEvaluationPanel;
+            _showExecutionPanel = options.ShowExecutionPanel;
             _evaluationSnapshot = EvaluationPanelSnapshot.Pending(options.RunDir);
             _spinnerIndex = 0;
             _status = DashboardStatus.Running;
@@ -176,7 +185,7 @@ public sealed class LiveCliDashboard
 
         await AnsiConsole
             .Live(BuildLayout())
-            .AutoClear(false)
+            .AutoClear(true)
             .Overflow(VerticalOverflow.Visible)
             .StartAsync(async context =>
             {
@@ -193,6 +202,11 @@ public sealed class LiveCliDashboard
             });
 
         await executionTask;
+        if (AnsiConsole.Profile.Capabilities.Interactive)
+        {
+            AnsiConsole.Clear();
+        }
+        AnsiConsole.Write(BuildLayout());
     }
 
     public static IRenderable BuildPromptStatusPanel(string modelSummary)
@@ -243,9 +257,11 @@ public sealed class LiveCliDashboard
                 _runId,
                 _runDir,
                 _goal,
+                _subtitle,
                 _latestInfoMessage,
                 _errorMessage,
                 _showEvaluationPanel,
+                _showExecutionPanel,
                 _evaluationSnapshot,
                 _spinnerIndex,
                 _status,
@@ -258,7 +274,7 @@ public sealed class LiveCliDashboard
         var snapshot = Snapshot();
         var rows = new List<IRenderable>
         {
-            BuildBranding(),
+            BuildBranding(snapshot),
             BuildHeaderPanel(snapshot),
             BuildGoalPanel(snapshot)
         };
@@ -268,7 +284,10 @@ public sealed class LiveCliDashboard
             rows.Add(BuildEvaluationPanel(snapshot));
         }
 
-        rows.Add(BuildMainPanel(snapshot));
+        if (snapshot.ShowExecutionPanel)
+        {
+            rows.Add(BuildMainPanel(snapshot));
+        }
         return new Rows(rows);
     }
 
@@ -286,11 +305,25 @@ public sealed class LiveCliDashboard
             snapshot.RunId,
             snapshot.RunDir,
             statusText,
-            snapshot.LatestInfoMessage);
+            snapshot.LatestInfoMessage,
+            snapshot.ShowEvaluationPanel ? StripMarkup(StateMarkup(snapshot.EvaluationSnapshot.State)) : null);
     }
 
-    private static IRenderable BuildBranding()
+    private static IRenderable BuildBranding(DashboardSnapshot snapshot)
     {
+        if (!string.IsNullOrWhiteSpace(snapshot.Subtitle))
+        {
+            return new Rows(
+                new FigletText("BENDOVER")
+                {
+                    Color = Color.Orange1,
+                    Justification = Justify.Center
+                },
+                new Align(
+                    new Markup($"[bold #ffb000]{Markup.Escape(snapshot.Subtitle)}[/]"),
+                    HorizontalAlignment.Center));
+        }
+
         return new FigletText("BENDOVER")
         {
             Color = Color.Orange1,
@@ -303,25 +336,13 @@ public sealed class LiveCliDashboard
         string runId,
         string runDir,
         string statusText,
-        string latestInfoMessage)
+        string latestInfoMessage,
+        string? evaluationStateText)
     {
-        var runDirPath = new TextPath(runDir)
-        {
-            Justification = Justify.Left,
-            RootStyle = new Style(Color.Grey),
-            SeparatorStyle = new Style(Color.Grey),
-            StemStyle = new Style(Color.Silver),
-            LeafStyle = new Style(Color.Yellow)
-        };
-
-        var selectedModel = new Rows(
-            new Markup("[bold]Selected Model[/]"),
-            new Markup(Markup.Escape(modelSummary)));
-
         var runDetails = new Rows(
+            new Markup($"[bold]Selected Model:[/] {Markup.Escape(modelSummary)}"),
             new Markup($"[bold]Run Id:[/] {Markup.Escape(runId)}"),
-            new Markup("[bold]Run Dir:[/]"),
-            runDirPath);
+            new Markup($"[bold]Run Dir:[/] {Markup.Escape(runDir)}"));
 
         var statusRows = new List<IRenderable>();
         if (!string.IsNullOrWhiteSpace(statusText))
@@ -330,14 +351,17 @@ public sealed class LiveCliDashboard
         }
 
         statusRows.Add(new Markup($"[grey]Info:[/] {Markup.Escape(latestInfoMessage)}"));
+        if (!string.IsNullOrWhiteSpace(evaluationStateText))
+        {
+            statusRows.Add(new Markup($"[grey]Evaluation:[/] {Markup.Escape(evaluationStateText)}"));
+        }
         var status = new Rows(statusRows);
 
         var grid = new Grid();
         grid.Expand();
-        grid.AddColumn(new GridColumn { Width = 30 });
-        grid.AddColumn(new GridColumn { Width = 42, NoWrap = true });
         grid.AddColumn(new GridColumn());
-        grid.AddRow(selectedModel, runDetails, status);
+        grid.AddColumn(new GridColumn());
+        grid.AddRow(runDetails, status);
 
         return new Panel(grid)
         {
@@ -358,26 +382,42 @@ public sealed class LiveCliDashboard
     private static IRenderable BuildEvaluationPanel(DashboardSnapshot snapshot)
     {
         var evaluation = snapshot.EvaluationSnapshot;
-        var rows = new List<IRenderable>
-        {
-            new Markup($"[bold]State:[/] {StateMarkup(evaluation.State)}"),
-            new Markup($"[bold]Output:[/] {Markup.Escape(DisplayOrDefault(evaluation.OutputDirectory, "(pending)"))}"),
-            new Markup($"[bold]Lead Selected:[/] {Markup.Escape(DisplayOrDefault(evaluation.LeadSelectedPracticesText, "(pending)"))}"),
-            new Markup($"[bold]Pass / Score:[/] {Markup.Escape(DisplayOrDefault(evaluation.EvaluatorPassScoreText, "(pending)"))}"),
-            new Markup($"[bold]Evaluator Selected:[/] {Markup.Escape(DisplayOrDefault(evaluation.EvaluatorSelectedPracticesText, "(pending)"))}"),
-            new Markup($"[bold]Evaluator Offending:[/] {Markup.Escape(DisplayOrDefault(evaluation.EvaluatorOffendingPracticesText, "(pending)"))}")
-        };
+        var grid = new Grid();
+        grid.Expand();
+        grid.AddColumn(new GridColumn { Width = 20, NoWrap = true });
+        grid.AddColumn(new GridColumn());
+        grid.AddRow(new Markup("[bold]State:[/]"), new Markup(StateMarkup(evaluation.State)));
+        grid.AddRow(new Markup("[bold]Bundle:[/]"), BuildPathValue(evaluation.BundleDirectory));
+        grid.AddRow(new Markup("[bold]Output:[/]"), BuildPathValue(evaluation.OutputDirectory));
+        grid.AddRow(new Markup("[bold]Selected Practices:[/]"), new Markup(Markup.Escape(DisplayOrDefault(evaluation.LeadSelectedPracticesText, "(pending)"))));
+        grid.AddRow(new Markup("[bold]Evaluator Selected:[/]"), new Markup(Markup.Escape(DisplayOrDefault(evaluation.EvaluatorSelectedPracticesText, "(pending)"))));
+        grid.AddRow(new Markup("[bold]Evaluator Offending:[/]"), new Markup(Markup.Escape(DisplayOrDefault(evaluation.EvaluatorOffendingPracticesText, "(pending)"))));
+        grid.AddRow(new Markup("[bold]Pass / Score:[/]"), new Markup(Markup.Escape(DisplayOrDefault(evaluation.EvaluatorPassScoreText, "(pending)"))));
 
         if (!string.IsNullOrWhiteSpace(evaluation.ErrorMessage))
         {
-            rows.Add(new Markup($"[bold red]Error:[/] {Markup.Escape(evaluation.ErrorMessage)}"));
+            grid.AddRow(new Markup("[bold red]Error:[/]"), new Markup(Markup.Escape(evaluation.ErrorMessage)));
         }
 
-        return new Panel(new Rows(rows))
+        return new Panel(grid)
         {
             Header = new PanelHeader("Evaluation", Justify.Left),
             Expand = true
         };
+    }
+
+    private static IRenderable BuildPathValue(string? path)
+    {
+        var displayPath = DisplayOrDefault(path, "(pending)");
+        if (displayPath == "(pending)")
+        {
+            return new Markup("(pending)");
+        }
+
+        var absolutePath = Path.IsPathRooted(displayPath)
+            ? displayPath
+            : Path.GetFullPath(displayPath);
+        return new Markup(Markup.Escape(absolutePath));
     }
 
     private static string StateMarkup(EvaluationPanelState state)
@@ -395,6 +435,11 @@ public sealed class LiveCliDashboard
         return text;
     }
 
+    private static string StripMarkup(string value)
+    {
+        return Markup.Remove(value);
+    }
+
     private static string DisplayOrDefault(string? value, string fallback)
     {
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
@@ -410,9 +455,9 @@ public sealed class LiveCliDashboard
         }
         else
         {
-            for (var index = 0; index < snapshot.Steps.Length; index++)
+            for (var index = snapshot.Steps.Length - 1; index >= 0; index--)
             {
-                if (index > 0)
+                if (index < snapshot.Steps.Length - 1)
                 {
                     rows.Add(new Rule());
                 }
@@ -446,7 +491,7 @@ public sealed class LiveCliDashboard
     private static IRenderable BuildStepPanel(AgentStepEvent step)
     {
         var plan = string.IsNullOrWhiteSpace(step.Plan) ? "(not provided)" : step.Plan;
-        var tool = string.IsNullOrWhiteSpace(step.Tool) ? "(unknown)" : step.Tool;
+        var tool = string.IsNullOrWhiteSpace(step.Tool) ? "(unknown)" : Truncate(step.Tool, 1000);
         var observation = string.IsNullOrWhiteSpace(step.Observation) ? "(none)" : step.Observation;
 
         return new Rows(
@@ -454,6 +499,16 @@ public sealed class LiveCliDashboard
             new Markup($"[#ff8800]Plan:[/] {Markup.Escape(plan)}"),
             new Markup($"[yellow]Tool:[/] {Markup.Escape(tool)}"),
             new Markup($"[green]Observation:[/] {Markup.Escape(observation)}"));
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return $"{value[..maxLength]}...";
     }
 
     private string CurrentSpinnerFrame(int spinnerIndex)

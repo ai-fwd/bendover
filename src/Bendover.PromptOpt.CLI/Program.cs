@@ -70,23 +70,31 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             }
 
             var outputDirectory = ResolvePath(settings.Out);
-            await ExecuteFlowAsync(
+            var stubSucceeded = await ExecuteFlowAsync(
                 dashboard,
                 modelSummary,
                 GetRunLabelFromPath(outputDirectory),
                 outputDirectory,
                 "Write evaluator.json from stub",
                 settings.Verbose,
+                bundleDir: settings.Bundle is null ? "(pending)" : ResolvePath(settings.Bundle),
+                showExecutionPanel: false,
                 includeLeadSummary: false,
                 async sink =>
                 {
-                    sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(outputDirectory, includeLeadSummary: false));
+                    sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(
+                        outputDirectory,
+                        settings.Bundle is null ? "(pending)" : ResolvePath(settings.Bundle),
+                        includeLeadSummary: false));
                     await RunStubModeAsync(settings, outputDirectory, sink);
-                    var summary = summaryReader.Read(outputDirectory, includeLeadSummary: false);
+                    var summary = summaryReader.Read(
+                        outputDirectory,
+                        settings.Bundle is null ? "(pending)" : ResolvePath(settings.Bundle),
+                        includeLeadSummary: false);
                     sink.SetEvaluationSummary(summary);
                     WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, outputDirectory, includeLeadSummary: false);
                 });
-            return 0;
+            return stubSucceeded ? 0 : 1;
         }
 
         var services = new ServiceCollection();
@@ -126,28 +134,33 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             }
 
             var runDirectory = ResolveRunDirectory(settings.RunId);
-            await ExecuteFlowAsync(
+            var scoreGoal = LoadScoreGoal(runDirectory);
+            var scoreSucceeded = await ExecuteFlowAsync(
                 dashboard,
                 modelSummary,
                 settings.RunId.Trim(),
                 runDirectory,
-                "Score existing run",
+                scoreGoal,
                 settings.Verbose,
+                bundleDir: string.IsNullOrWhiteSpace(settings.Bundle) ? "(pending)" : ResolvePath(settings.Bundle),
+                showExecutionPanel: false,
                 includeLeadSummary: true,
                 async sink =>
                 {
-                    sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(runDirectory));
-                    var outDir = await runScorer.ScoreAsync(
+                    sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(
+                        runDirectory,
+                        string.IsNullOrWhiteSpace(settings.Bundle) ? "(pending)" : ResolvePath(settings.Bundle)));
+                    var result = await runScorer.ScoreAsyncDetailed(
                         settings.RunId,
                         settings.Bundle,
                         settings.Verbose,
                         sink);
 
-                    var summary = summaryReader.Read(outDir);
+                    var summary = summaryReader.Read(result.RunDirectory, result.BundlePath);
                     sink.SetEvaluationSummary(summary);
-                    WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, outDir);
+                    WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, result.RunDirectory);
                 });
-            return 0;
+            return scoreSucceeded ? 0 : 1;
         }
 
         if (string.IsNullOrWhiteSpace(settings.Bundle) || string.IsNullOrWhiteSpace(settings.Task))
@@ -163,17 +176,20 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
         var replayOutputDirectory = ResolvePath(settings.Out);
         var replayGoal = LoadReplayGoal(settings.Task);
 
-        await ExecuteFlowAsync(
+        var replayBundleDirectory = ResolvePath(settings.Bundle);
+        var replaySucceeded = await ExecuteFlowAsync(
             dashboard,
             modelSummary,
             GetRunLabelFromPath(replayOutputDirectory),
             replayOutputDirectory,
             replayGoal,
             settings.Verbose,
+            bundleDir: replayBundleDirectory,
+            showExecutionPanel: true,
             includeLeadSummary: true,
             async sink =>
             {
-                sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(replayOutputDirectory));
+                sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(replayOutputDirectory, replayBundleDirectory));
                 await orchestrator.RunAsync(
                     settings.Bundle,
                     settings.Task,
@@ -181,12 +197,12 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
                     settings.Verbose,
                     sink);
 
-                var summary = summaryReader.Read(replayOutputDirectory);
+                var summary = summaryReader.Read(replayOutputDirectory, replayBundleDirectory);
                 sink.SetEvaluationSummary(summary);
                 WriteVerboseSummaryIfNeeded(dashboard, settings.Verbose, summaryReader, replayOutputDirectory);
             });
 
-        return 0;
+        return replaySucceeded ? 0 : 1;
     }
 
     private static PromptOptUiMode ResolveEffectiveUiMode(PromptOptUiMode requestedMode)
@@ -221,13 +237,15 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
         services.AddSingleton<IAgentObserver, NoOpAgentObserver>();
     }
 
-    private static async Task ExecuteFlowAsync(
+    private static async Task<bool> ExecuteFlowAsync(
         LiveCliDashboard? dashboard,
         string modelSummary,
         string runId,
         string runDir,
         string goal,
         bool verbose,
+        string bundleDir,
+        bool showExecutionPanel,
         bool includeLeadSummary,
         Func<IPromptOptCliStatusSink, Task> executeAsync)
     {
@@ -236,7 +254,7 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
         if (dashboard is null)
         {
             await executeAsync(new PlainPromptOptCliStatusSink(verbose));
-            return;
+            return true;
         }
 
         dashboard.Initialize(new LiveCliDashboardOptions(
@@ -244,10 +262,13 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             RunId: runId,
             RunDir: runDir,
             Goal: goal,
-            ShowEvaluationPanel: true));
+            ShowEvaluationPanel: true,
+            ShowExecutionPanel: showExecutionPanel,
+            Subtitle: "Replay & Evaluate"));
 
         var sink = new LivePromptOptCliStatusSink(dashboard);
-        sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(runDir, includeLeadSummary));
+        sink.SetEvaluationSummary(PromptOptEvaluationSummary.Pending(runDir, bundleDir, includeLeadSummary));
+        var succeeded = true;
 
         await dashboard.RunWithLiveAsync(async () =>
         {
@@ -258,12 +279,14 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
             }
             catch (Exception ex)
             {
+                succeeded = false;
                 var message = BuildErrorMessage(ex);
-                sink.SetEvaluationSummary(PromptOptEvaluationSummary.Failed(runDir, message, includeLeadSummary));
+                sink.SetEvaluationSummary(PromptOptEvaluationSummary.Failed(runDir, message, bundleDir, includeLeadSummary));
                 dashboard.MarkError(message);
-                throw;
             }
         });
+
+        return succeeded;
     }
 
     private static async Task RunStubModeAsync(
@@ -348,6 +371,20 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
 
         var goal = File.ReadAllText(taskFilePath).Trim();
         return string.IsNullOrWhiteSpace(goal) ? "Replay bundle evaluation" : goal;
+    }
+
+    private static string LoadScoreGoal(string runDirectory)
+    {
+        var taskFilePath = Path.Combine(runDirectory, "task.md");
+        if (!File.Exists(taskFilePath))
+        {
+            return "Score existing run";
+        }
+
+        var goal = File.ReadAllText(taskFilePath).Trim();
+        return string.IsNullOrWhiteSpace(goal)
+            ? "Score existing run"
+            : $"Score existing run: {goal}";
     }
 
     private static void WriteVerboseSummaryIfNeeded(

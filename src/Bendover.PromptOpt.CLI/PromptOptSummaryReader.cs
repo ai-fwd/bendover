@@ -5,7 +5,7 @@ namespace Bendover.PromptOpt.CLI;
 
 public sealed class PromptOptSummaryReader
 {
-    public PromptOptEvaluationSummary Read(string outDir, bool includeLeadSummary = true)
+    public PromptOptEvaluationSummary Read(string outDir, string bundleDirectory = "(pending)", bool includeLeadSummary = true)
     {
         var lead = includeLeadSummary ? ReadLead(outDir) : LeadReadResult.NotApplicable();
         var evaluator = ReadEvaluator(outDir);
@@ -15,6 +15,7 @@ public sealed class PromptOptSummaryReader
 
         return new PromptOptEvaluationSummary(
             State: state,
+            BundleDirectory: bundleDirectory,
             OutputDirectory: outDir,
             LeadSelectedPractices: lead.SelectedPractices,
             Pass: evaluator.Pass,
