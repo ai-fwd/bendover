@@ -46,21 +46,34 @@ public class BenchmarkRunOrchestrator
 
     public async Task RunAsync(string bundlePath, string taskPath, string outputPath)
     {
-        await RunAsync(bundlePath, taskPath, outputPath, verbose: false);
+        await RunAsync(bundlePath, taskPath, outputPath, verbose: false, statusSink: null);
     }
 
-    public async Task RunAsync(string bundlePath, string taskPath, string outputPath, bool verbose)
+    public async Task RunAsync(
+        string bundlePath,
+        string taskPath,
+        string outputPath,
+        bool verbose,
+        IPromptOptCliStatusSink? statusSink)
     {
+        var sink = statusSink ?? NoOpPromptOptCliStatusSink.Instance;
         var invocationDirectory = Directory.GetCurrentDirectory();
         var resolvedOutputPath = Path.IsPathRooted(outputPath)
             ? outputPath
             : Path.GetFullPath(Path.Combine(invocationDirectory, outputPath));
 
-        Log(verbose, $"Starting run. bundle={bundlePath} task={taskPath} out={resolvedOutputPath}");
+        sink.SetStatus("Starting run");
+        if (verbose)
+        {
+            sink.AddVerboseDetail($"Starting run. bundle={bundlePath} task={taskPath} out={resolvedOutputPath}");
+        }
         var workingDirectory = _fileSystem.Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         _fileSystem.Directory.CreateDirectory(workingDirectory);
         Directory.CreateDirectory(workingDirectory);
-        Log(verbose, $"Working directory: {workingDirectory}");
+        if (verbose)
+        {
+            sink.AddVerboseDetail($"Working directory: {workingDirectory}");
+        }
 
         try
         {
@@ -72,18 +85,23 @@ public class BenchmarkRunOrchestrator
 
             var commitHash = await _fileSystem.File.ReadAllTextAsync(commitPath);
             commitHash = commitHash.Trim();
-            Log(verbose, $"Using base commit: {commitHash}");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Using base commit: {commitHash}");
+            }
 
-            Log(verbose, "Cloning repository...");
+            sink.SetStatus("Cloning repository");
             await _gitRunner.RunAsync($"clone . \"{workingDirectory}\"");
-            Log(verbose, "Clone completed.");
-            Log(verbose, $"Checking out commit {commitHash}...");
+            sink.SetStatus("Checking out base commit");
             await _gitRunner.RunAsync($"checkout {commitHash}", workingDirectory);
-            Log(verbose, "Checkout completed.");
 
             var bundleId = _fileSystem.Path.GetFileName(bundlePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             var sourcePracticesPath = _bundleResolver.Resolve(bundlePath);
-            Log(verbose, $"Resolved source practices path: {sourcePracticesPath}");
+            sink.SetStatus("Copying bundle practices");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Resolved source practices path: {sourcePracticesPath}");
+            }
             var sourceBundleRoot = _fileSystem.Path.GetDirectoryName(sourcePracticesPath)
                 ?? throw new InvalidOperationException($"Could not resolve bundle root from practices path: {sourcePracticesPath}");
             var sourceAgentsPath = _fileSystem.Path.Combine(sourceBundleRoot, "agents");
@@ -93,7 +111,10 @@ public class BenchmarkRunOrchestrator
             var bundleAgentsRootRelativePath = _fileSystem.Path.Combine(bundleRootRelativePath, "agents");
             var workspacePracticesPath = _fileSystem.Path.Combine(workingDirectory, bundlePracticesRootRelativePath);
             CopyDirectory(sourcePracticesPath, workspacePracticesPath);
-            Log(verbose, $"Copied practices into workspace: {workspacePracticesPath}");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Copied practices into workspace: {workspacePracticesPath}");
+            }
 
             if (!_fileSystem.Directory.Exists(sourceAgentsPath))
             {
@@ -101,35 +122,56 @@ public class BenchmarkRunOrchestrator
                     $"Agents directory is required for prompt optimization bundles but was not found: {sourceAgentsPath}");
             }
 
+            sink.SetStatus("Copying bundle agents");
             var workspaceAgentsPath = _fileSystem.Path.Combine(workingDirectory, bundleAgentsRootRelativePath);
             CopyDirectory(sourceAgentsPath, workspaceAgentsPath);
-            Log(verbose, $"Copied agents into workspace: {workspaceAgentsPath}");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Copied agents into workspace: {workspaceAgentsPath}");
+            }
             ValidateRequiredAgentFiles(workspaceAgentsPath);
-            Log(verbose, $"Validated required agent prompt files in: {workspaceAgentsPath}");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Validated required agent prompt files in: {workspaceAgentsPath}");
+            }
 
             var practiceService = new PracticeService(_fileService, workspacePracticesPath);
             var practices = (await practiceService.GetPracticesAsync()).ToList();
-            Log(verbose, $"Loaded {practices.Count} practices.");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Loaded {practices.Count} practices.");
+            }
 
             var taskFilePath = _fileSystem.Path.Combine(taskPath, "task.md");
             var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
-            Log(verbose, $"Loaded task file: {taskFilePath}");
+            sink.SetStatus("Loading task");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Loaded task file: {taskFilePath}");
+            }
 
             if (!_fileSystem.Directory.Exists(resolvedOutputPath))
             {
                 _fileSystem.Directory.CreateDirectory(resolvedOutputPath);
-                Log(verbose, $"Created output directory: {resolvedOutputPath}");
+                if (verbose)
+                {
+                    sink.AddVerboseDetail($"Created output directory: {resolvedOutputPath}");
+                }
             }
             else
             {
-                Log(verbose, $"Using existing output directory: {resolvedOutputPath}");
+                if (verbose)
+                {
+                    sink.AddVerboseDetail($"Using existing output directory: {resolvedOutputPath}");
+                }
             }
 
             CopyOptionalTaskArtifact(
                 taskPath: taskPath,
                 outDir: resolvedOutputPath,
                 artifactName: "previous_run_results.json",
-                verbose: verbose);
+                verbose: verbose,
+                statusSink: sink);
 
             _runContextAccessor.Current = new PromptOptRunContext(
                 resolvedOutputPath,
@@ -137,21 +179,33 @@ public class BenchmarkRunOrchestrator
                 BundleId: bundleId,
                 ApplySandboxPatchToSource: false
             );
-            Log(verbose, $"Set run context. bundleId={bundleId}");
+            if (verbose)
+            {
+                sink.AddVerboseDetail($"Set run context. bundleId={bundleId}");
+            }
 
             var currentDir = Directory.GetCurrentDirectory();
             try
             {
-                Log(verbose, $"Switching current directory: {currentDir} -> {workingDirectory}");
+                if (verbose)
+                {
+                    sink.AddVerboseDetail($"Switching current directory: {currentDir} -> {workingDirectory}");
+                }
                 Directory.SetCurrentDirectory(workingDirectory);
-                Log(verbose, "Running agent orchestrator...");
+                sink.SetStatus("Running agent orchestrator");
                 await _agentOrchestrator.RunAsync(taskText, practices, bundleAgentsRootRelativePath);
-                Log(verbose, "Agent orchestrator completed.");
+                if (verbose)
+                {
+                    sink.AddVerboseDetail("Agent orchestrator completed.");
+                }
             }
             finally
             {
                 Directory.SetCurrentDirectory(currentDir);
-                Log(verbose, $"Restored current directory: {currentDir}");
+                if (verbose)
+                {
+                    sink.AddVerboseDetail($"Restored current directory: {currentDir}");
+                }
             }
         }
         finally
@@ -161,18 +215,25 @@ public class BenchmarkRunOrchestrator
                 if (_fileSystem.Directory.Exists(workingDirectory))
                 {
                     _fileSystem.Directory.Delete(workingDirectory, recursive: true);
-                    Log(verbose, $"Cleaned up working directory: {workingDirectory}");
+                    if (verbose)
+                    {
+                        sink.AddVerboseDetail($"Cleaned up working directory: {workingDirectory}");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Log(verbose, $"Failed to clean working directory '{workingDirectory}': {ex.Message}");
+                if (verbose)
+                {
+                    sink.AddVerboseDetail($"Failed to clean working directory '{workingDirectory}': {ex.Message}");
+                }
             }
         }
 
-        Log(verbose, "Running evaluation...");
+        sink.SetStatus("Running evaluation");
+        sink.SetEvaluationState(Bendover.Presentation.Console.EvaluationPanelState.Running);
         await _runEvaluator.EvaluateAsync(resolvedOutputPath, bundlePath);
-        Log(verbose, "Evaluation completed.");
+        sink.SetStatus("Evaluation completed");
     }
 
     private void CopyDirectory(string sourcePath, string targetPath)
@@ -210,12 +271,16 @@ public class BenchmarkRunOrchestrator
         string taskPath,
         string outDir,
         string artifactName,
-        bool verbose)
+        bool verbose,
+        IPromptOptCliStatusSink statusSink)
     {
         var sourcePath = _fileSystem.Path.Combine(taskPath, artifactName);
         if (!_fileSystem.File.Exists(sourcePath))
         {
-            Log(verbose, $"Optional task artifact not found: {sourcePath}");
+            if (verbose)
+            {
+                statusSink.AddVerboseDetail($"Optional task artifact not found: {sourcePath}");
+            }
             return;
         }
 
@@ -223,11 +288,17 @@ public class BenchmarkRunOrchestrator
         try
         {
             _fileSystem.File.Copy(sourcePath, destinationPath, overwrite: true);
-            Log(verbose, $"Copied optional task artifact: {sourcePath} -> {destinationPath}");
+            if (verbose)
+            {
+                statusSink.AddVerboseDetail($"Copied optional task artifact: {sourcePath} -> {destinationPath}");
+            }
         }
         catch (Exception ex)
         {
-            Log(verbose, $"Failed to copy optional task artifact '{sourcePath}' to '{destinationPath}': {ex.Message}");
+            if (verbose)
+            {
+                statusSink.AddVerboseDetail($"Failed to copy optional task artifact '{sourcePath}' to '{destinationPath}': {ex.Message}");
+            }
         }
     }
 
@@ -243,15 +314,5 @@ public class BenchmarkRunOrchestrator
                     filePath);
             }
         }
-    }
-
-    private static void Log(bool verbose, string message)
-    {
-        if (!verbose)
-        {
-            return;
-        }
-
-        Console.WriteLine($"[promptopt][{DateTime.UtcNow:O}] {message}");
     }
 }

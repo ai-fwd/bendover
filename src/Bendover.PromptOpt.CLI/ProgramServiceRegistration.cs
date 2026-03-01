@@ -23,7 +23,6 @@ public static class ProgramServiceRegistration
         services.AddSingleton<IAgenticTurnService, AgenticTurnService>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
-        services.AddSingleton<IAgentObserver, NoOpAgentObserver>();
         services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
         services.AddSingleton<IFileService, FileService>();
         services.AddSingleton<ILeadAgent, LeadAgent>();

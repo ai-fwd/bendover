@@ -13,6 +13,18 @@ HEARTBEAT_SECONDS = 15
 POLL_INTERVAL_SECONDS = 0.25
 
 
+def _ensure_plain_ui(cli_command: str) -> list[str]:
+    """Append `--ui plain` unless the command already specifies UI mode."""
+    tokens = shlex.split(cli_command)
+    for index, token in enumerate(tokens):
+        if token in ("--ui", "-u"):
+            if index + 1 < len(tokens):
+                return tokens
+        if token.startswith("--ui="):
+            return tokens
+    return tokens + ["--ui", "plain"]
+
+
 def _get_ci(data: dict, key: str, default=None):
     """Case-insensitive lookup helper for evaluator.json fields."""
     for candidate in (key, key.lower(), key.upper()):
@@ -84,7 +96,7 @@ def evaluate_bundle(
     out_dir = log_dir / candidate_id / task_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = shlex.split(cli_command) + [
+    cmd = _ensure_plain_ui(cli_command) + [
         "--bundle",
         str(bundle_path),
         "--task",

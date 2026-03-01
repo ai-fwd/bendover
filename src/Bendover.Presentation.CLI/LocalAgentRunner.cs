@@ -8,6 +8,7 @@ using Bendover.Infrastructure;
 using Bendover.Infrastructure.Configuration;
 using Bendover.Infrastructure.Services;
 using Bendover.Infrastructure.ChatGpt;
+using Bendover.Presentation.Console;
 using DotNetEnv;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -48,8 +49,8 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IAgenticTurnService, AgenticTurnService>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
         services.AddSingleton<ScriptGenerator>();
-        services.AddSingleton<CliDashboard>();
-        services.AddSingleton<IAgentObserver, ConsoleAgentObserver>();
+        services.AddSingleton<LiveCliDashboard>();
+        services.AddSingleton<IAgentObserver, LiveCliDashboardObserver>();
         services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
         services.AddSingleton<IFileService, FileService>();
         services.AddSingleton<ILeadAgent, LeadAgent>();
@@ -73,7 +74,7 @@ public class LocalAgentRunner : IAgentRunner
         var orchestrator = serviceProvider.GetRequiredService<IAgentOrchestrator>();
         var practiceService = serviceProvider.GetRequiredService<IPracticeService>();
         var runContextAccessor = serviceProvider.GetRequiredService<IPromptOptRunContextAccessor>();
-        var dashboard = serviceProvider.GetRequiredService<CliDashboard>();
+        var dashboard = serviceProvider.GetRequiredService<LiveCliDashboard>();
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
         var runId = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
@@ -91,7 +92,12 @@ public class LocalAgentRunner : IAgentRunner
             StreamTranscript: streamTranscript
         );
 
-        dashboard.Initialize(lmSummary, runId, outDir, goal);
+        dashboard.Initialize(new LiveCliDashboardOptions(
+            ModelSummary: lmSummary,
+            RunId: runId,
+            RunDir: outDir,
+            Goal: goal,
+            ShowEvaluationPanel: false));
 
         if (interactive)
         {
@@ -119,7 +125,7 @@ public class LocalAgentRunner : IAgentRunner
         {
             if (!AnsiConsole.Profile.Capabilities.Interactive)
             {
-                Console.Error.WriteLine(BuildErrorMessage(ex));
+                System.Console.Error.WriteLine(BuildErrorMessage(ex));
             }
 
             Environment.Exit(1);
@@ -213,7 +219,7 @@ public class LocalAgentRunner : IAgentRunner
             return;
         }
 
-        AnsiConsole.Write(CliDashboard.BuildPromptStatusPanel(modelSummary));
+        AnsiConsole.Write(LiveCliDashboard.BuildPromptStatusPanel(modelSummary));
     }
 
     private static string BuildErrorMessage(Exception ex)
