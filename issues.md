@@ -77,8 +77,8 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 ## SDK
 - [x] Need to provide this context to the agent otherwise it has no visibility
 - [x] Context is generated on the ScriptRunner but it should be on the SDK project not the ScriptRunner
-- [ ] Add a delete file tool
-- [ ] SDK has gotten away from me...Git can't be used (b/c of validator) others require return value usage. Shell is auto surfaced to output but is this a good pattern?
+- [x] Add a delete file tool
+- [x] SDK has gotten away from me...Git can't be used (b/c of validator) others require return value usage. Shell is auto surfaced to output but is this a good pattern?
 - [x] LocateFile should ignore script_body.csx
 
 
@@ -91,6 +91,7 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 - [x] Needs to use ChatGPT Pro/Plus subscription like CLI
 - [ ] Only sends the offending practices to the reflection LM but I think it should send them all and only provide mutations for the offending ones. Need to investigate.
 - [ ] It's possible that when running optimization you actually get the intended result because it's non-deterministic. There should be some retry logic to get a failure and if not then abort. 
+- [x] A better dashboard
 
 ## Infrastructure (PromptOpt artifacts)
 - [x] Capture `dotnet_build.txt` / `dotnet_build_error.txt` in PromptOpt run recorder
