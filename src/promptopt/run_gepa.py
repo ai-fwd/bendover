@@ -1,10 +1,11 @@
 import os
 import json
 import shutil
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Any
 
@@ -27,9 +28,19 @@ from promptopt.bundle_store import (
 )
 from promptopt.cache import EvaluationCache
 from promptopt.evaluator_client import evaluate_bundle
+from promptopt.gepa_runtime import compile_gepa_with_status
 from promptopt.gepa_driver import load_split
 from promptopt.models import Bundle, EvaluationResult, PracticeFile, RunArtifact
 from promptopt.run_store import load_run_artifact
+from promptopt.status import (
+    CompositePromptOptStatusSink,
+    JsonlPromptOptStatusSink,
+    PlainPromptOptStatusSink,
+    PromptOptUiMode,
+    emit_status_event,
+    set_current_status_sink,
+)
+from promptopt.ui import LivePromptOptStatusSink
 
 # Load env automatically (finds .env in root)
 load_dotenv()
@@ -42,11 +53,22 @@ TRANSCRIPT_PREVIEW_LIMIT = 240
 
 
 def _utc_timestamp() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _status(message: str) -> None:
-    print(f"[promptopt][{_utc_timestamp()}] {message}", flush=True)
+def _resolve_ui_mode(requested_ui: PromptOptUiMode | None) -> PromptOptUiMode:
+    if requested_ui is not None:
+        if requested_ui == PromptOptUiMode.LIVE and not sys.stdout.isatty():
+            return PromptOptUiMode.PLAIN
+        return requested_ui
+    return PromptOptUiMode.LIVE if sys.stdout.isatty() else PromptOptUiMode.PLAIN
+
+
+def _build_status_sink(ui_mode: PromptOptUiMode, logs_root: Path) -> tuple[CompositePromptOptStatusSink, Path]:
+    events_path = logs_root / "events.jsonl"
+    journal_sink = JsonlPromptOptStatusSink(events_path)
+    screen_sink = LivePromptOptStatusSink() if ui_mode == PromptOptUiMode.LIVE else PlainPromptOptStatusSink()
+    return CompositePromptOptStatusSink(screen_sink, journal_sink), events_path
 
 
 def _compact_single_line(text: str | None, limit: int = TRANSCRIPT_PREVIEW_LIMIT) -> str:
@@ -142,8 +164,12 @@ class ReflectionTranscriptRecorder:
         self._started_monotonic_by_call_id[call_id] = time.monotonic()
 
         input_text = _extract_reflection_input(prompt, messages)
-        _status(
-            f"[reflection][prompt] call={event.index} chars={len(input_text)} preview={_compact_single_line(input_text)}"
+        emit_status_event(
+            "reflection_prompt",
+            summary=f"reflection prompt call={event.index}",
+            call_index=event.index,
+            char_count=len(input_text),
+            preview=_compact_single_line(input_text),
         )
 
     def end(self, call_id: str, outputs: Any, exception: Exception | None = None) -> None:
@@ -167,12 +193,21 @@ class ReflectionTranscriptRecorder:
             event.exception = f"{type(exception).__name__}: {exception}"
 
         output_text = _stringify_outputs(outputs)
-        _status(
-            f"[reflection][output] call={event.index} chars={len(output_text)} duration_ms={duration_ms} "
-            f"preview={_compact_single_line(output_text)}"
+        emit_status_event(
+            "reflection_output",
+            summary=f"reflection output call={event.index}",
+            call_index=event.index,
+            char_count=len(output_text),
+            duration_ms=duration_ms,
+            preview=_compact_single_line(output_text),
         )
         if event.exception:
-            _status(f"[reflection][failure] call={event.index} detail={_compact_single_line(event.exception)}")
+            emit_status_event(
+                "warning",
+                summary=f"warning: reflection call {event.index} failed",
+                message=_compact_single_line(event.exception),
+                call_index=event.index,
+            )
 
     def write_markdown(self, path: Path) -> None:
         if not self.enabled:
@@ -228,7 +263,13 @@ class ReflectionTranscriptRecorder:
             lines.append("")
 
         path.write_text("\n".join(lines))
-        _status(f"reflection-transcript written path={path} calls={len(self._events)}")
+        emit_status_event(
+            "artifact_ready",
+            summary=f"reflection transcript written {path}",
+            artifact_type="reflection_transcript",
+            path=str(path),
+            calls=len(self._events),
+        )
 
 
 class ReflectionLMTranscriptCallback(BaseCallback):
@@ -348,6 +389,7 @@ class BundleProgram(dspy.Module):
             file_name: practice.body for file_name, practice in seed_bundle.practices.items()
         }
         self._mutable_files: set[str] = set(seed_bundle.practices.keys())
+        self._rollout_index = 0
 
         for idx, practice in enumerate(seed_bundle.practices.values()):
             pred_name = f"practice_{idx}"
@@ -376,7 +418,12 @@ class BundleProgram(dspy.Module):
         attribution_names = list(attribution.notes_by_practice.keys())
 
         if not attribution_names:
-            print(f"[GEPA] No practice notes for run {run_id}; skipping mutations for this run.")
+            emit_status_event(
+                "warning",
+                summary=f"warning: no practice notes for run {run_id}; skipping mutations",
+                message=f"No practice notes for run {run_id}; skipping mutations for this run.",
+                run_id=run_id,
+            )
             return set()
 
         targeted: set[str] = set()
@@ -385,7 +432,13 @@ class BundleProgram(dspy.Module):
             if resolved:
                 targeted.add(resolved)
             else:
-                print(f"[GEPA] Unrecognized practice attribution '{name}' for run {run_id}; ignoring.")
+                emit_status_event(
+                    "warning",
+                    summary=f"warning: unrecognized practice attribution {name}",
+                    message=f"Unrecognized practice attribution '{name}' for run {run_id}; ignoring.",
+                    run_id=run_id,
+                    practice_name=name,
+                )
         return targeted
 
     def _collect_targeted_files(self, evaluations_by_run: list[tuple[str, EvaluationResult]]) -> set[str]:
@@ -452,6 +505,8 @@ class BundleProgram(dspy.Module):
         if not batch_ids:
             return dspy.Prediction(score=0.0, feedback="No runs provided", feedback_by_pred={})
 
+        self._rollout_index += 1
+
         # Build a candidate bundle from the latest predictor instructions.
         updates = self._current_practice_updates()
         candidate_bundle = build_bundle_from_seed(self.seed_bundle, updates)
@@ -466,17 +521,30 @@ class BundleProgram(dspy.Module):
             metadata={},
             exist_ok=True,
         )
+        emit_status_event(
+            "gepa_rollout_started",
+            phase="evaluation",
+            summary=f"rollout {self._rollout_index} started",
+            rollout_index=self._rollout_index,
+            bundle_id=written_bundle.bundle_id,
+            run_ids=list(batch_ids),
+        )
 
         evaluations_by_run: list[tuple[str, EvaluationResult]] = []
         for run_id in batch_ids:
             cached = self.cache.get(run_id, bundle_hash)
             if cached:
-                _status(f"replay-eval cache-hit run={run_id} score={cached.score}")
+                emit_status_event(
+                    "eval_cache_hit",
+                    summary=f"eval run={run_id} cache-hit score={cached.score}",
+                    run_label=run_id,
+                    candidate_id=written_bundle.bundle_id,
+                    task_id=run_id,
+                    score=cached.score,
+                )
                 evaluations_by_run.append((run_id, cached))
                 continue
 
-            # Replay the run using the external evaluator (PromptOpt.CLI).
-            _status(f"replay-eval start run={run_id} bundle={written_bundle.bundle_id}")
             run = self.runs_by_id[run_id]
             result = evaluate_run_replay(
                 bundle_path=written_bundle.path,
@@ -486,7 +554,6 @@ class BundleProgram(dspy.Module):
                 timeout_seconds=self.timeout,
                 run_label=run_id,
             )
-            _status(f"replay-eval done run={run_id} pass={result.passed} score={result.score}")
             self.cache.set(run_id, bundle_hash, result)
             evaluations_by_run.append((run_id, result))
 
@@ -512,6 +579,15 @@ class BundleProgram(dspy.Module):
             if file_name in updates:
                 self._fixed_updates[file_name] = updates[file_name]
         self._mutable_files = targeted_files
+
+        emit_status_event(
+            "gepa_rollout_completed",
+            phase="gepa_compile",
+            summary=f"rollout {self._rollout_index} completed",
+            rollout_index=self._rollout_index,
+            bundle_id=written_bundle.bundle_id,
+            score=score,
+        )
 
         return dspy.Prediction(
             score=score,
@@ -828,6 +904,8 @@ def _run_optimization(
     max_full_evals: int = typer.Option(10, help="GEPA max full evals"),
     batch_size: int = typer.Option(0, help="Batch size for training"),
     disable_dspy_cache: bool = typer.Option(False, help="Disable DSPy memory/disk caches"),
+    ui: PromptOptUiMode | None = typer.Option(None, help="UI mode: live for TTY dashboard, plain for line output"),
+    num_threads: int | None = typer.Option(None, help="GEPA/DSPy evaluation threads"),
 ):
     """
     Entry point for GEPA prompt optimization.
@@ -890,19 +968,35 @@ def _run_optimization(
         valset = [dspy.Example(run_ids=batch).with_inputs("run_ids") for batch in val_batches]
 
     cache_enabled = not disable_dspy_cache
-    _status(
-        f"optimization-start root={root} run_count={len(run_ids)} "
-        f"reflection_transcript_enabled={REFLECTION_TRANSCRIPT_ENABLED} heartbeat_seconds={EVAL_HEARTBEAT_SECONDS}"
-    )
-
-    # DSPy cache can be disabled for deterministic integration tests.
-    if disable_dspy_cache:
-        configure_cache(enable_disk_cache=False, enable_memory_cache=False)
-
+    effective_ui = _resolve_ui_mode(ui)
+    status_sink, events_path = _build_status_sink(effective_ui, logs_root)
+    previous_sink = set_current_status_sink(status_sink)
     reflection_transcript_recorder = ReflectionTranscriptRecorder(enabled=REFLECTION_TRANSCRIPT_ENABLED)
     reflection_transcript_path = logs_root / "reflection_transcript.md"
+    raw_log_path = logs_root / "gepa_raw.log"
+    completion_payload: dict[str, Any] | None = None
 
     try:
+        emit_status_event(
+            "startup",
+            phase="startup",
+            summary=f"startup root={root} runs={len(run_ids)}",
+            root=str(root),
+            run_count=len(run_ids),
+            reflection_transcript_enabled=REFLECTION_TRANSCRIPT_ENABLED,
+            heartbeat_seconds=EVAL_HEARTBEAT_SECONDS,
+            events_path=str(events_path),
+            raw_log_path=str(raw_log_path),
+        )
+        emit_status_event(
+            "artifact_ready",
+            artifact_type="events",
+            path=str(events_path),
+        )
+
+        if disable_dspy_cache:
+            configure_cache(enable_disk_cache=False, enable_memory_cache=False)
+
         configure_base_lm()
         reflection_lm_instance = configure_reflection_lm(
             reflection_lm,
@@ -911,7 +1005,6 @@ def _run_optimization(
         )
 
         cache = EvaluationCache(cache_root)
-
         program = BundleProgram(
             seed_bundle=seed_bundle,
             runs_by_id=runs,
@@ -922,17 +1015,20 @@ def _run_optimization(
             timeout=timeout_seconds,
         )
 
-        _status("attribution-preflight start")
+        emit_status_event("preflight_started", phase="preflight", summary="preflight started")
         try:
             run_attribution_preflight(program, trainset)
         except RuntimeError as exc:
+            emit_status_event(
+                "error",
+                summary=f"error: {exc}",
+                message=str(exc),
+            )
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1)
-        _status("attribution-preflight done")
+        emit_status_event("preflight_done", phase="preflight", summary="preflight ok")
 
         reflection_minibatch_size = min(3, max(len(trainset), 1))
-
-        # GEPA uses the reflection LM + traces from the base LM to propose new instructions.
         teleprompter = GEPA(
             metric=metric_fn,
             max_full_evals=max_full_evals,
@@ -941,18 +1037,27 @@ def _run_optimization(
             component_selector=select_feedback_targeted_components,
             log_dir=str(logs_root),
             track_stats=True,
+            num_threads=num_threads,
         )
 
-        _status(
-            f"gepa-compile start train_batches={len(trainset)} "
-            f"dev_batches={0 if valset is None else len(valset)} max_full_evals={max_full_evals}"
+        emit_status_event(
+            "gepa_compile_started",
+            phase="gepa_compile",
+            summary=(
+                f"gepa compile start train={len(trainset)} "
+                f"dev={0 if valset is None else len(valset)}"
+            ),
+            train_batches=len(trainset),
+            dev_batches=0 if valset is None else len(valset),
+            max_full_evals=max_full_evals,
         )
-        compiled_program = teleprompter.compile(
+        compiled_program = compile_gepa_with_status(
+            teleprompter,
             program,
             trainset=trainset,
             valset=valset,
+            raw_log_path=raw_log_path,
         )
-        _status("gepa-compile done")
 
         seed_updates = {name: practice.body for name, practice in seed_bundle.practices.items()}
         best_program = compiled_program
@@ -963,12 +1068,11 @@ def _run_optimization(
                 if not hasattr(candidate, "get_practice_updates"):
                     continue
                 candidate_updates = candidate.get_practice_updates()
-                if any(candidate_updates.get(k) != seed_updates.get(k) for k in seed_updates.keys()):
+                if any(candidate_updates.get(key) != seed_updates.get(key) for key in seed_updates.keys()):
                     best_program = candidate
                     break
 
         best_updates = best_program.get_practice_updates()
-
         best_bundle = build_bundle_from_seed(seed_bundle, best_updates)
         best_hash = hash_bundle(best_bundle.practices, best_bundle.passthrough_files)
 
@@ -983,17 +1087,29 @@ def _run_optimization(
             },
             exist_ok=True,
         )
+        emit_status_event(
+            "final_bundle_written",
+            summary=f"final bundle={written_bundle.bundle_id}",
+            bundle_id=written_bundle.bundle_id,
+        )
 
-        # Final score across all runs (cached if already evaluated)
+        emit_status_event("final_scoring_started", phase="final_scoring", summary="final scoring started")
         evaluations = []
         for run_id in run_ids:
             cached = cache.get(run_id, best_hash)
             if cached:
-                _status(f"final-score cache-hit run={run_id} score={cached.score}")
+                emit_status_event(
+                    "eval_cache_hit",
+                    summary=f"eval run={run_id} cache-hit score={cached.score}",
+                    run_label=run_id,
+                    candidate_id=written_bundle.bundle_id,
+                    task_id=run_id,
+                    score=cached.score,
+                )
                 evaluations.append(cached)
                 continue
+
             run = runs[run_id]
-            _status(f"final-score start run={run_id}")
             result = evaluate_run_replay(
                 bundle_path=written_bundle.path,
                 run=run,
@@ -1002,33 +1118,61 @@ def _run_optimization(
                 timeout_seconds=timeout_seconds,
                 run_label=run_id,
             )
-            _status(f"final-score done run={run_id} pass={result.passed} score={result.score}")
             cache.set(run_id, best_hash, result)
             evaluations.append(result)
 
-        final_score = sum(e.score for e in evaluations) / max(len(evaluations), 1)
-        _status(f"optimization-final-score score={final_score}")
+        final_score = sum(evaluation.score for evaluation in evaluations) / max(len(evaluations), 1)
+        emit_status_event(
+            "final_score",
+            summary=f"best score={final_score}",
+            score=final_score,
+        )
 
         update_active_json(
             active_json,
             written_bundle.bundle_id,
             {
-                "updatedAt": datetime.utcnow().isoformat() + "Z",
+                "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "parentBundleId": seed_bundle.bundle_id,
                 "score": final_score,
                 "trainRunIds": train_ids,
                 "devRunIds": dev_ids,
             },
         )
-
-        print("Optimization Complete.")
-        print(f"Best bundle: {written_bundle.bundle_id}")
-        print(f"Final score: {final_score}")
+        completion_payload = {
+            "best_bundle": written_bundle.bundle_id,
+            "final_score": final_score,
+        }
+    except Exception as exc:
+        if not isinstance(exc, typer.Exit):
+            emit_status_event(
+                "error",
+                summary=f"error: {exc}",
+                message=str(exc),
+            )
+        raise
     finally:
         try:
             reflection_transcript_recorder.write_markdown(reflection_transcript_path)
         except Exception as exc:
-            _status(f"reflection-transcript write failed path={reflection_transcript_path} error={exc}")
+            emit_status_event(
+                "warning",
+                summary="warning: failed to write reflection transcript",
+                message=f"reflection transcript write failed: {exc}",
+            )
+
+        if completion_payload is not None:
+            emit_status_event(
+                "optimization_completed",
+                best_bundle=completion_payload["best_bundle"],
+                final_score=completion_payload["final_score"],
+                events_path=str(events_path),
+                raw_log_path=str(raw_log_path),
+                reflection_transcript_path=str(reflection_transcript_path),
+            )
+
+        status_sink.close()
+        set_current_status_sink(previous_sink)
 
 
 def _safe_remove_path(path: Path) -> None:
@@ -1081,6 +1225,8 @@ def main(
     max_full_evals: int = typer.Option(10, help="GEPA max full evals"),
     batch_size: int = typer.Option(0, help="Batch size for training"),
     disable_dspy_cache: bool = typer.Option(False, help="Disable DSPy memory/disk caches"),
+    ui: PromptOptUiMode | None = typer.Option(None, help="UI mode: live for TTY dashboard, plain for line output"),
+    num_threads: int | None = typer.Option(None, help="GEPA/DSPy evaluation threads"),
 ):
     if ctx.invoked_subcommand is not None:
         return
@@ -1094,6 +1240,8 @@ def main(
         max_full_evals=max_full_evals,
         batch_size=batch_size,
         disable_dspy_cache=disable_dspy_cache,
+        ui=ui,
+        num_threads=num_threads,
     )
 
 

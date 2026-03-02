@@ -1,8 +1,11 @@
 import shutil
 from unittest.mock import patch
 import pytest
+import dspy
 from promptopt.models import EvaluationResult, RunArtifact
+from promptopt.status import PromptOptStatusEvent, PromptOptRunState, apply_event, set_current_status_sink
 from promptopt.run_gepa import (
+    BundleProgram,
     evaluate_run_replay,
     metric_fn,
     prepare_task_dir,
@@ -12,6 +15,18 @@ from promptopt.run_gepa import (
     ReflectionTranscriptRecorder,
 )
 from dspy import Prediction
+
+
+class RecordingStatusSink:
+    def __init__(self):
+        self.events: list[PromptOptStatusEvent] = []
+
+    def emit(self, event: PromptOptStatusEvent) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        return None
+
 
 def test_metric_fn_signature():
     """
@@ -230,3 +245,62 @@ def test_reflection_transcript_markdown_preserves_call_order(tmp_path):
     assert call_1_index < call_2_index
     assert "first prompt" in transcript
     assert "second output" in transcript
+
+
+def test_bundle_program_emits_rollout_progress_events(tmp_path):
+    from dspy.utils import DummyLM
+    from promptopt.models import Bundle, PracticeAttribution, PracticeFile
+
+    dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
+
+    practice = PracticeFile(
+        file_name="simple.md",
+        name="simple",
+        frontmatter="Name: simple",
+        body="Hello",
+    )
+    seed_bundle = Bundle(
+        bundle_id="seed",
+        path=tmp_path / "seed",
+        practices={"simple.md": practice},
+        meta={},
+    )
+    run = RunArtifact(
+        run_id="run-1",
+        run_dir=tmp_path / "run-1",
+        goal="Do it",
+        base_commit="abc",
+    )
+
+    cache = type("Cache", (), {"get": lambda *args, **kwargs: None, "set": lambda *args, **kwargs: None})()
+    program = BundleProgram(
+        seed_bundle=seed_bundle,
+        runs_by_id={"run-1": run},
+        bundle_root=tmp_path / "bundles",
+        log_dir=tmp_path / "logs",
+        cache=cache,
+        cli_command="cli",
+        timeout=5,
+    )
+    eval_result = EvaluationResult(
+        passed=True,
+        score=0.9,
+        practice_attribution=PracticeAttribution(notes_by_practice={"simple": ["ADD_LINE: x"]}),
+    )
+
+    sink = RecordingStatusSink()
+    previous_sink = set_current_status_sink(sink)
+    try:
+        with patch("promptopt.run_gepa.evaluate_bundle", return_value=eval_result):
+            program.forward(["run-1"])
+    finally:
+        set_current_status_sink(previous_sink)
+
+    state = PromptOptRunState()
+    for event in sink.events:
+        apply_event(state, event)
+
+    kinds = [event.kind for event in sink.events]
+    assert "gepa_rollout_started" in kinds
+    assert "gepa_rollout_completed" in kinds
+    assert state.gepa.rollouts_completed == 1

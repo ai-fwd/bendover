@@ -4,7 +4,8 @@ version = "0.1.0"
 dependencies = [
     "typer",
     "dspy-ai",
-    "python-dotenv"
+    "python-dotenv",
+    "rich",
 ]
 
 [project.optional-dependencies]
