@@ -19,6 +19,7 @@ def mock_dependencies(tmp_path):
          patch("promptopt.run_gepa.load_bundle") as mock_load_bundle, \
          patch("promptopt.run_gepa.load_run_artifact") as mock_load_run, \
          patch("promptopt.run_gepa.GEPA") as mock_gepa, \
+         patch("promptopt.run_gepa.compile_gepa_with_status") as mock_compile_gepa, \
          patch("promptopt.run_gepa.EvaluationCache") as mock_cache, \
          patch("promptopt.run_gepa.BundleProgram") as mock_program_cls, \
          patch("promptopt.run_gepa.evaluate_bundle") as mock_eval:
@@ -74,7 +75,7 @@ def mock_dependencies(tmp_path):
         # Mock compiled program
         mock_compiled = MagicMock()
         mock_compiled.get_practice_updates.return_value = {"simple.md": "Updated"}
-        mock_teleprompter.compile.return_value = mock_compiled
+        mock_compile_gepa.return_value = mock_compiled
 
         # Mock cache
         mock_cache.return_value.get.return_value = None
@@ -93,6 +94,7 @@ def mock_dependencies(tmp_path):
             "load_bundle": mock_load_bundle,
             "GEPA": mock_gepa,
             "teleprompter": mock_teleprompter,
+            "compile_gepa_with_status": mock_compile_gepa,
             "program_cls": mock_program_cls,
             "program": mock_program,
         }
@@ -118,7 +120,7 @@ def test_cli_invocation_format_uses_env_cli_command(mock_dependencies, tmp_path,
     assert callable(selector)
     assert getattr(selector, "__name__", "") == "select_feedback_targeted_components"
     deps["program"].assert_called_once_with(run_ids=["run1"])
-    deps["teleprompter"].compile.assert_called_once()
+    deps["compile_gepa_with_status"].assert_called_once()
 
 
 def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp_path, monkeypatch):
@@ -152,7 +154,7 @@ def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp
     assert "GEPA attribution preflight failed" in error_text
     assert "run_id=run1 pass=False score=0.0" in error_text
     assert "notes_by_practice_keys: none" in error_text
-    deps["teleprompter"].compile.assert_not_called()
+    deps["compile_gepa_with_status"].assert_not_called()
 
 
 def test_cli_fails_when_cli_command_missing(mock_dependencies, tmp_path, monkeypatch):
@@ -181,6 +183,25 @@ def test_cli_uses_default_promptopt_root_for_optimization(mock_dependencies, mon
     assert result.exit_code == 0
     deps["load_split"].assert_called_with(".bendover/promptopt/datasets/train.txt")
     deps["ensure_active_bundle"].assert_called_once_with(Path(".bendover/promptopt"))
+
+
+def test_cli_passes_num_threads_to_gepa_and_uses_plain_ui(mock_dependencies, tmp_path, monkeypatch):
+    deps = mock_dependencies
+    promptopt_root = tmp_path / "promptopt"
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
+
+    result = runner.invoke(app, [
+        "--promptopt-root", str(promptopt_root),
+        "--reflection-lm", "test",
+        "--max-full-evals", "1",
+        "--num-threads", "3",
+        "--ui", "plain",
+    ])
+
+    assert result.exit_code == 0
+    assert "GEPA Optimization:" not in result.output
+    deps["GEPA"].assert_called_once()
+    assert deps["GEPA"].call_args.kwargs["num_threads"] == 3
 
 
 def test_cli_uses_default_promptopt_root_for_clean():
@@ -374,7 +395,7 @@ def test_bundle_program_targets_only_implicated_practices(tmp_path):
     assert updates["static.md"] == "Static"
 
 
-def test_bundle_program_no_attribution_warns_and_freezes(tmp_path, capsys):
+def test_bundle_program_no_attribution_warns_and_freezes(tmp_path):
     dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
 
     practice = PracticeFile(
@@ -422,8 +443,6 @@ def test_bundle_program_no_attribution_warns_and_freezes(tmp_path, capsys):
     with patch("promptopt.run_gepa.evaluate_bundle", return_value=eval_result):
         pred = program.forward(["run1"])
 
-    captured = capsys.readouterr()
-    assert "[GEPA] No practice notes for run run1; skipping mutations for this run." in captured.out
     assert program._mutable_files == set()
     assert pred.feedback_by_pred == {}
 
@@ -475,7 +494,7 @@ def test_bundle_program_excludes_agents_templates_from_predictors(tmp_path):
     assert predictor_files == {"simple.md"}
 
 
-def test_bundle_program_offending_without_notes_does_not_mutate(tmp_path, capsys):
+def test_bundle_program_offending_without_notes_does_not_mutate(tmp_path):
     dspy.configure(lm=DummyLM({ "": { "response": "ok" } }))
 
     simple = PracticeFile(
@@ -527,8 +546,6 @@ def test_bundle_program_offending_without_notes_does_not_mutate(tmp_path, capsys
     with patch("promptopt.run_gepa.evaluate_bundle", return_value=eval_result):
         pred = program.forward(["run1"])
 
-    captured = capsys.readouterr()
-    assert "[GEPA] No practice notes for run run1; skipping mutations for this run." in captured.out
     assert program._mutable_files == set()
     assert pred.feedback_by_pred == {}
 

@@ -4,10 +4,10 @@ import json
 import shlex
 import subprocess
 import time
-from datetime import datetime
 from pathlib import Path
 
 from promptopt.models import EvaluationResult, PracticeAttribution
+from promptopt.status import emit_status_event, utc_timestamp
 
 HEARTBEAT_SECONDS = 15
 POLL_INTERVAL_SECONDS = 0.25
@@ -106,12 +106,26 @@ def evaluate_bundle(
     ]
 
     label = (run_label or f"{candidate_id}/{task_id}").strip() or f"{candidate_id}/{task_id}"
+    
+    def _event_key(attempt: int) -> str:
+        return f"{candidate_id}:{task_id}:attempt{attempt}"
 
-    def status(message: str) -> None:
-        timestamp = datetime.utcnow().isoformat() + "Z"
-        print(f"[promptopt][{timestamp}] {message}", flush=True)
-
-    def run_eval_once() -> int:
+    def run_eval_once(attempt: int) -> int:
+        key = _event_key(attempt)
+        started_at_utc = utc_timestamp()
+        emit_status_event(
+            "eval_started",
+            summary=f"eval run={label} candidate={candidate_id} started",
+            run_label=label,
+            candidate_id=candidate_id,
+            task_id=task_id,
+            attempt=attempt,
+            out_dir=str(out_dir),
+            key=key,
+            status="running",
+            started_at_utc=started_at_utc,
+            elapsed_seconds=0,
+        )
         process = subprocess.Popen(cmd, text=True)
         started = time.monotonic()
         next_heartbeat = started + HEARTBEAT_SECONDS
@@ -126,43 +140,118 @@ def evaluate_bundle(
             if elapsed >= timeout_seconds:
                 process.kill()
                 process.wait()
+                emit_status_event(
+                    "eval_timeout",
+                    summary=f"eval run={label} timeout after {timeout_seconds}s",
+                    run_label=label,
+                    candidate_id=candidate_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    out_dir=str(out_dir),
+                    key=key,
+                    timeout_seconds=timeout_seconds,
+                    retry=attempt == 1,
+                )
                 raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout_seconds)
 
             if now >= next_heartbeat:
-                status(f"eval-running run={label} elapsed={int(elapsed)}s out={out_dir}")
+                emit_status_event(
+                    "eval_heartbeat",
+                    summary=f"eval run={label} elapsed={int(elapsed)}s",
+                    run_label=label,
+                    candidate_id=candidate_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    out_dir=str(out_dir),
+                    key=key,
+                    elapsed_seconds=int(elapsed),
+                    status="running",
+                )
                 next_heartbeat = now + HEARTBEAT_SECONDS
 
             time.sleep(POLL_INTERVAL_SECONDS)
 
-    status(f"eval-start run={label} candidate={candidate_id} task={task_id} timeout={timeout_seconds}s")
-
     try:
-        returncode = run_eval_once()
+        returncode = run_eval_once(attempt=1)
+        attempt_used = 1
     except subprocess.TimeoutExpired:
-        status(f"eval-timeout run={label} attempt=1 timeout={timeout_seconds}s retry=true")
         try:
-            returncode = run_eval_once()
+            returncode = run_eval_once(attempt=2)
+            attempt_used = 2
         except subprocess.TimeoutExpired:
-            status(f"eval-timeout run={label} attempt=2 timeout={timeout_seconds}s retry=false")
+            emit_status_event(
+                "eval_finished",
+                summary=f"eval run={label} pass=False score=0.0",
+                run_label=label,
+                candidate_id=candidate_id,
+                task_id=task_id,
+                attempt=2,
+                out_dir=str(out_dir),
+                key=_event_key(2),
+                passed=False,
+                score=0.0,
+                returncode=None,
+            )
             return EvaluationResult(passed=False, score=0.0)
-
-    status(f"eval-exit run={label} returncode={returncode}")
 
     evaluator_json = out_dir / "evaluator.json"
 
     if returncode != 0 and not evaluator_json.exists():
-        status(f"eval-nonzero run={label} returncode={returncode} evaluator_missing=true retry=true")
-        evaluator_json = out_dir / "evaluator.json"
+        emit_status_event(
+            "eval_finished",
+            summary=f"eval run={label} pass=False score=0.0",
+            run_label=label,
+            candidate_id=candidate_id,
+            task_id=task_id,
+            attempt=attempt_used,
+            out_dir=str(out_dir),
+            key=_event_key(attempt_used),
+            passed=False,
+            score=0.0,
+            returncode=returncode,
+        )
         try:
-            returncode = run_eval_once()
-            status(f"eval-exit run={label} returncode={returncode} retry=true")
+            emit_status_event(
+                "warning",
+                summary=f"warning: eval run={label} exited {returncode}; retrying because evaluator.json is missing",
+                message=f"eval run={label} exited {returncode}; retrying because evaluator.json is missing",
+            )
+            returncode = run_eval_once(attempt=attempt_used + 1)
+            attempt_used += 1
         except subprocess.TimeoutExpired:
-            status(f"eval-timeout run={label} retry_after_nonzero=true timeout={timeout_seconds}s")
-
-    if evaluator_json.exists():
-        try:
-            return parse_evaluator_json(evaluator_json)
-        except (json.JSONDecodeError, ValueError):
+            emit_status_event(
+                "eval_finished",
+                summary=f"eval run={label} pass=False score=0.0",
+                run_label=label,
+                candidate_id=candidate_id,
+                task_id=task_id,
+                attempt=attempt_used,
+                out_dir=str(out_dir),
+                key=_event_key(attempt_used),
+                passed=False,
+                score=0.0,
+                returncode=None,
+            )
             return EvaluationResult(passed=False, score=0.0)
 
-    return EvaluationResult(passed=False, score=0.0)
+    result = EvaluationResult(passed=False, score=0.0)
+    if evaluator_json.exists():
+        try:
+            result = parse_evaluator_json(evaluator_json)
+        except (json.JSONDecodeError, ValueError):
+            result = EvaluationResult(passed=False, score=0.0)
+
+    emit_status_event(
+        "eval_finished",
+        summary=f"eval run={label} pass={result.passed} score={result.score}",
+        run_label=label,
+        candidate_id=candidate_id,
+        task_id=task_id,
+        attempt=attempt_used,
+        out_dir=str(out_dir),
+        key=_event_key(attempt_used),
+        passed=result.passed,
+        score=result.score,
+        returncode=returncode,
+    )
+    return result

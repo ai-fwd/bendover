@@ -4,6 +4,18 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 from promptopt.gepa_driver import load_split, create_candidate_bundle, evaluate_bundle
+from promptopt.status import PromptOptStatusEvent, set_current_status_sink
+
+
+class RecordingStatusSink:
+    def __init__(self):
+        self.events: list[PromptOptStatusEvent] = []
+
+    def emit(self, event: PromptOptStatusEvent) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        return None
 
 @pytest.fixture
 def temp_workspace(tmp_path):
@@ -315,9 +327,9 @@ def test_evaluate_bundle_no_retry_if_evaluator_exists(mock_popen, temp_workspace
 
 
 @patch("promptopt.evaluator_client.time.sleep", return_value=None)
-@patch("promptopt.evaluator_client.time.monotonic", side_effect=[0.0, 15.1])
+@patch("promptopt.evaluator_client.time.monotonic", side_effect=[0.0, 15.1, 15.1])
 @patch("promptopt.evaluator_client.subprocess.Popen")
-def test_evaluate_bundle_emits_heartbeat(mock_popen, _mock_monotonic, _mock_sleep, temp_workspace, capsys):
+def test_evaluate_bundle_emits_heartbeat(mock_popen, _mock_monotonic, _mock_sleep, temp_workspace):
     log_dir = temp_workspace["root"] / "logs_heartbeat"
     log_dir.mkdir()
 
@@ -344,15 +356,22 @@ def test_evaluate_bundle_emits_heartbeat(mock_popen, _mock_monotonic, _mock_slee
 
     mock_popen.side_effect = side_effect
 
-    success, score = evaluate_bundle(
-        bundle_path=Path("bundle_x"),
-        task_path=Path("task_y"),
-        cli_command="bendover-cli",
-        log_dir=log_dir,
-        timeout_seconds=30,
-    )
+    sink = RecordingStatusSink()
+    previous_sink = set_current_status_sink(sink)
+    try:
+        success, score = evaluate_bundle(
+            bundle_path=Path("bundle_x"),
+            task_path=Path("task_y"),
+            cli_command="bendover-cli",
+            log_dir=log_dir,
+            timeout_seconds=30,
+        )
+    finally:
+        set_current_status_sink(previous_sink)
 
-    output = capsys.readouterr().out
-    assert "eval-running" in output
     assert success is True
     assert score == 1.0
+    kinds = [event.kind for event in sink.events]
+    assert "eval_started" in kinds
+    assert "eval_heartbeat" in kinds
+    assert "eval_finished" in kinds
