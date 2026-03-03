@@ -2,6 +2,8 @@
 
 Bendover is an opinionated, self improving coding agent.
 
+![Bendover cli](assets/bendover.png)
+
 It’s an experiment in building an agentic system that can learn and apply a specific coding policy aka judgment when ambiguity shows up, instead of falling back to generic pre training led reasoning that doesn’t align.
 
 _The name bendover is inspired by a soca song that goes a little something like this 🎵[...] take it easy I will do the work, you don't have to [...]🎵_
@@ -215,6 +217,8 @@ Score a recorded run without rerunning agents:
 dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
 ```
 
+![Bendover evaluator](assets/bendover-evaluator.png)
+
 PromptOpt console behavior:
 
 - Direct `PromptOpt.CLI` invocations default to `--ui live`.
@@ -272,6 +276,8 @@ python -m venv .venv
 ```bash
 ./.venv/bin/promptopt --max-full-evals 3
 ```
+
+![Bendover evaluator](assets/bendover-promptopt.png)
 
 If `PROMPTOPT_CLI_COMMAND` is not set in environment or `.env`, pass `--cli-command` explicitly.
 
