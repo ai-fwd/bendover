@@ -4,4 +4,7 @@ TargetRole: Engineer
 AreaOfConcern: Code Quality
 ---
 
-- Do not use chained `||` equality comparisons for membership checks. Instead model them as static readonly sets, and prefer `HashSet<T>` when value belongs to a fixed group
+Core requirements to enforce:
+1. Never use chained `||` equality comparisons to represent membership in a fixed group (e.g., `x == "a" || x == "b"`).
+2. Model fixed membership lists as `static readonly` sets, preferring `HashSet<T>`, and use `Contains(...)`.
+3. Keep comparisons case-insensitive where behavior requires it (e.g., use an appropriate comparer like `StringComparer.OrdinalIgnoreCase` in the set).
