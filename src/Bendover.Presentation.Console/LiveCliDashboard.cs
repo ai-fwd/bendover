@@ -185,7 +185,7 @@ public sealed class LiveCliDashboard
 
         await AnsiConsole
             .Live(BuildLayout())
-            .AutoClear(true)
+            .AutoClear(false)
             .Overflow(VerticalOverflow.Visible)
             .StartAsync(async context =>
             {
@@ -202,11 +202,6 @@ public sealed class LiveCliDashboard
             });
 
         await executionTask;
-        if (AnsiConsole.Profile.Capabilities.Interactive)
-        {
-            AnsiConsole.Clear();
-        }
-        AnsiConsole.Write(BuildLayout());
     }
 
     public static IRenderable BuildPromptStatusPanel(string modelSummary)

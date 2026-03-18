@@ -193,40 +193,40 @@ public class AgentOrchestrator : IAgentOrchestrator
                 {
                     var stepNumber = stepIndex + 1;
                     await NotifyProgressAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
-
-                    var engineerMessages = BuildEngineerMessages(
-                        engineerPromptTemplate,
-                        practicesContext,
-                        plan ?? string.Empty,
-                        stepHistory);
                     var engineerPhase = BuildStepPhase("engineer_step", stepNumber);
-                    await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
-                    await EmitTranscriptPromptAsync(
-                        context.StreamTranscript,
-                        engineerPhase,
-                        engineerMessages,
-                        selectedPracticeNames);
-
-                    var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
-                    var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
-                    await _runRecorder.RecordOutputAsync(engineerPhase, actorCode);
-                    await EmitTranscriptOutputAsync(context.StreamTranscript, engineerPhase, actorCode);
-
-                    // Reviewer phase is temporarily disabled to keep the loop to Lead + Engineer only.
-                    // await NotifyAsync("Reviewer Critiquing Code...");
-                    // var reviewerMessages = new List<ChatMessage>
-                    // {
-                    //     new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
-                    //     new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
-                    // };
-                    // var reviewerPhase = BuildStepPhase("reviewer_step", stepNumber);
-                    // await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
-                    // var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
-                    // var critique = critiqueResponse.Message.Text;
-                    // await _runRecorder.RecordOutputAsync(reviewerPhase, critique ?? "");
 
                     try
                     {
+                        var engineerMessages = BuildEngineerMessages(
+                            engineerPromptTemplate,
+                            practicesContext,
+                            plan ?? string.Empty,
+                            stepHistory);
+                        await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
+                        await EmitTranscriptPromptAsync(
+                            context.StreamTranscript,
+                            engineerPhase,
+                            engineerMessages,
+                            selectedPracticeNames);
+
+                        var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
+                        var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
+                        await _runRecorder.RecordOutputAsync(engineerPhase, actorCode);
+                        await EmitTranscriptOutputAsync(context.StreamTranscript, engineerPhase, actorCode);
+
+                        // Reviewer phase is temporarily disabled to keep the loop to Lead + Engineer only.
+                        // await NotifyAsync("Reviewer Critiquing Code...");
+                        // var reviewerMessages = new List<ChatMessage>
+                        // {
+                        //     new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
+                        //     new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
+                        // };
+                        // var reviewerPhase = BuildStepPhase("reviewer_step", stepNumber);
+                        // await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
+                        // var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
+                        // var critique = critiqueResponse.Message.Text;
+                        // await _runRecorder.RecordOutputAsync(reviewerPhase, critique ?? "");
+
                         var turnObservation = await _agenticTurnService.ExecuteAgenticTurnAsync(actorCode, turnSettings);
                         var observationPhase = BuildStepPhase("agentic_step_observation", stepNumber);
                         var serializedObservation = JsonSerializer.Serialize(turnObservation);
@@ -278,6 +278,17 @@ public class AgentOrchestrator : IAgentOrchestrator
                             BuildExceptionObservationContext(ex),
                             lastFailureDigestForRunResult);
                         await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
+                        await RecordRunResultAsync(
+                            status: "failed_exception",
+                            completionStep: null,
+                            completionSignaled: false,
+                            hasCodeChanges: false,
+                            gitDiffBytes: 0,
+                            lastScriptExitCode: lastScriptExitCode,
+                            lastFailureDigest: lastFailureDigestForRunResult);
+                        throw new InvalidOperationException(
+                            $"Engineer step {stepNumber} failed.\n{lastFailureDigestForRunResult}",
+                            ex);
                     }
                 }
 

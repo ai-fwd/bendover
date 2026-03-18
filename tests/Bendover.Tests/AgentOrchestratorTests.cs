@@ -379,6 +379,40 @@ public class AgentOrchestratorTests
     }
 
     [Fact]
+    public async Task RunAsync_ShouldRecordFailureAndFailFast_WhenEngineerCompletionThrows()
+    {
+        SetupRunContext();
+        SetupLeadSelection("Build feature");
+        _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("ChatGPT request failed (413): payload too large"));
+        _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+            .ReturnsAsync("abc123");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
+
+        Assert.Contains("Engineer step 1 failed", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("payload too large", exception.Message, StringComparison.Ordinal);
+        _runRecorderMock.Verify(
+            x => x.RecordOutputAsync(
+                "engineer_step_failure_1",
+                It.Is<string>(text => text.Contains("payload too large", StringComparison.Ordinal))),
+            Times.Once);
+        _runRecorderMock.Verify(
+            x => x.RecordArtifactAsync(
+                "run_result.json",
+                It.Is<string>(text =>
+                    text.Contains("\"status\":\"failed_exception\"", StringComparison.Ordinal) &&
+                    text.Contains("payload too large", StringComparison.Ordinal))),
+            Times.Once);
+        _engineerClientMock.Verify(
+            x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        _agenticTurnServiceMock.Verify(
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task RunAsync_ShouldRecordHostApplyCheckFailure_AndThrow()
     {
         SetupRunContext(applySandboxPatchToSource: true);
