@@ -25,6 +25,7 @@ public sealed class ChatGptChatClient : IChatClient
         _modelId = modelId;
         _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? new HttpClient();
+        _httpClient.Timeout = TimeSpan.FromSeconds(ChatGptDefaults.ChatRequestTimeoutSeconds);
         _metadata = new ChatClientMetadata("chatgpt-subscription", new Uri(ChatGptDefaults.CodexResponsesEndpoint), modelId);
     }
 

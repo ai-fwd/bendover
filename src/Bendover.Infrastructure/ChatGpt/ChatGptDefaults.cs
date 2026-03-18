@@ -9,4 +9,5 @@ public static class ChatGptDefaults
     public const string DefaultModel = "gpt-5.3-codex";
     public const string CodexResponsesEndpoint = "https://chatgpt.com/backend-api/codex/responses";
     public const string ModelsUrl = "https://chatgpt.com/backend-api/models";
+    public const int ChatRequestTimeoutSeconds = 240;
 }
