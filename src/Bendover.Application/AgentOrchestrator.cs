@@ -10,7 +10,7 @@ namespace Bendover.Application;
 
 public class AgentOrchestrator : IAgentOrchestrator
 {
-    private const int MaxActionSteps = 24;
+    private const int MaxActionSteps = 100;
     private const int TranscriptPreviewLimit = 320;
     private const int PromptHistoryDepth = 5;
 
