@@ -1,6 +1,6 @@
 using Microsoft.Extensions.AI;
 
-namespace Bendover.Application.Turn;
+namespace Bendover.Application.Interfaces;
 
 public interface ITranscriptWriter
 {

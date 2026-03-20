@@ -1,3 +1,5 @@
+using Bendover.Application.Interfaces;
+
 namespace Bendover.Application.Turn;
 
 public sealed class TurnCapabilities

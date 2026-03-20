@@ -1,5 +1,5 @@
 using Bendover.Application.Turn;
-using Microsoft.Extensions.AI;
+using Bendover.Application.Interfaces;
 
 namespace Bendover.Tests.Turn;
 
@@ -9,11 +9,13 @@ public class TurnBuilderTests
     public async Task Build_ShouldUseNoOpTranscriptWriter_ByDefault()
     {
         FakeStep? capturedStep = null;
-        var builder = new TurnBuilder((type, capabilities) =>
-        {
-            capturedStep = new FakeStep(capabilities);
-            return capturedStep;
-        });
+        var builder = new TurnBuilder(
+            (type, capabilities) =>
+            {
+                capturedStep = new FakeStep(capabilities);
+                return capturedStep;
+            },
+            _ => Task.CompletedTask);
 
         var pipeline = builder
             .Add<FakeStep>()
@@ -26,26 +28,32 @@ public class TurnBuilderTests
     }
 
     [Fact]
-    public async Task Build_ShouldUseConfiguredTranscriptWriter_WhenEnabled()
+    public async Task Build_ShouldUseStreamingTranscriptWriter_WhenEnabled()
     {
-        var transcriptWriter = new FakeTranscriptWriter();
+        var transcriptMessages = new List<string>();
         FakeStep? capturedStep = null;
-        var builder = new TurnBuilder((type, capabilities) =>
-        {
-            capturedStep = new FakeStep(capabilities);
-            return capturedStep;
-        });
+        var builder = new TurnBuilder(
+            (type, capabilities) =>
+            {
+                capturedStep = new FakeStep(capabilities);
+                return capturedStep;
+            },
+            message =>
+            {
+                transcriptMessages.Add(message);
+                return Task.CompletedTask;
+            });
 
         var pipeline = builder
-            .WithTranscript(transcriptWriter)
+            .WithTranscript(enabled: true, selectedPractices: new[] { "practice" })
             .Add<FakeStep>()
             .Build();
 
         await pipeline(CreateContext());
 
         Assert.NotNull(capturedStep);
-        Assert.Same(transcriptWriter, capturedStep!.TranscriptWriter);
-        Assert.Single(transcriptWriter.Outputs);
+        Assert.IsType<StreamingTranscriptWriter>(capturedStep!.TranscriptWriter);
+        Assert.Single(transcriptMessages);
     }
 
     private static TurnContext CreateContext()
@@ -53,12 +61,14 @@ public class TurnBuilderTests
         return new TurnContext
         {
             StepNumber = 1,
-            EngineerPromptTemplate = "template",
+            Run = new TurnRunContext
+            {
+                StepHistory = new List<TurnHistoryEntry>(),
+                TurnSettings = new Domain.Entities.AgenticTurnSettings()
+            },
             PracticesContext = "practice",
             Plan = "plan",
-            SelectedPracticeNames = new[] { "practice" },
-            StepHistory = new List<TurnHistoryEntry>(),
-            TurnSettings = new Domain.Entities.AgenticTurnSettings()
+            SelectedPractices = new[] { "practice" }
         };
     }
 
@@ -76,22 +86,5 @@ public class TurnBuilderTests
             await TranscriptWriter.WriteOutputAsync("phase", "output");
             await next(context);
         }
-    }
-
-    private sealed class FakeTranscriptWriter : ITranscriptWriter
-    {
-        public List<string> Outputs { get; } = new();
-
-        public Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages, IReadOnlyCollection<string> selectedPractices)
-            => Task.CompletedTask;
-
-        public Task WriteOutputAsync(string phase, string output)
-        {
-            Outputs.Add($"{phase}:{output}");
-            return Task.CompletedTask;
-        }
-
-        public Task WriteFailureAsync(string phase, string failureDigest)
-            => Task.CompletedTask;
     }
 }

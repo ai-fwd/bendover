@@ -3,17 +3,24 @@ namespace Bendover.Application.Turn;
 public sealed class TurnBuilder
 {
     private readonly Func<Type, TurnCapabilities, TurnStep> _activator;
+    private readonly Func<string, Task> _notifyProgressAsync;
     private readonly List<Type> _stepTypes = new();
     private readonly TurnCapabilities _capabilities = new();
 
-    public TurnBuilder(Func<Type, TurnCapabilities, TurnStep> activator)
+    public TurnBuilder(
+        Func<Type, TurnCapabilities, TurnStep> activator,
+        Func<string, Task> notifyProgressAsync)
     {
-        _activator = activator;
+        _activator = activator ?? throw new ArgumentNullException(nameof(activator));
+        _notifyProgressAsync = notifyProgressAsync ?? throw new ArgumentNullException(nameof(notifyProgressAsync));
     }
 
-    public TurnBuilder WithTranscript(ITranscriptWriter transcriptWriter)
+    public TurnBuilder WithTranscript(bool enabled, IReadOnlyCollection<string> selectedPractices)
     {
-        _capabilities.TranscriptWriter = transcriptWriter ?? new NoOpTranscriptWriter();
+        selectedPractices ??= Array.Empty<string>();
+        _capabilities.TranscriptWriter = enabled
+            ? new StreamingTranscriptWriter(_notifyProgressAsync, selectedPractices)
+            : new NoOpTranscriptWriter();
         return this;
     }
 

@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Bendover.Application.Interfaces;
 using Bendover.Application.Turn;
@@ -12,8 +11,6 @@ namespace Bendover.Application;
 public class AgentOrchestrator : IAgentOrchestrator
 {
     private const int MaxActionSteps = 100;
-    private const int TranscriptPreviewLimit = 320;
-    private const int PromptHistoryDepth = 5;
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
@@ -149,14 +146,15 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             try
             {
-                string? lastFailureDigestForRunResult = null;
-                var stepHistory = new List<TurnHistoryEntry>();
+                var runContext = new TurnRunContext
+                {
+                    StepHistory = new List<TurnHistoryEntry>(),
+                    TurnSettings = new AgenticTurnSettings()
+                };
+
                 var completed = false;
                 var completionStep = 0;
-                var lastScriptExitCode = (int?)null;
-                var turnSettings = new AgenticTurnSettings();
-
-                var turnPipeline = BuildTurnPipeline(
+                var runTurn = BuildTurnPipeline(
                     engineerClient,
                     engineerPromptTemplate,
                     context.StreamTranscript,
@@ -170,48 +168,41 @@ public class AgentOrchestrator : IAgentOrchestrator
                     var turnContext = new TurnContext
                     {
                         StepNumber = stepNumber,
-                        EngineerPromptTemplate = engineerPromptTemplate,
-                        PracticesContext = practicesContext,
+                        Run = runContext,
                         Plan = plan ?? string.Empty,
-                        SelectedPracticeNames = selectedPracticeNames,
-                        StepHistory = stepHistory,
-                        TurnSettings = turnSettings
+                        SelectedPractices = selectedPracticeNames,
+                        PracticesContext = practicesContext
                     };
 
-                    await turnPipeline(turnContext);
-                    lastScriptExitCode = turnContext.LastScriptExitCode;
+                    await runTurn(turnContext);
 
-                    if (turnContext.UnhandledException is not null)
+                    if (turnContext.Result.Kind == TurnResultKind.FailedRetryable)
                     {
-                        lastFailureDigestForRunResult = turnContext.FailureDigest;
+                        continue;
+                    }
+
+                    if (turnContext.Result.Kind == TurnResultKind.Completed)
+                    {
+                        completed = true;
+                        completionStep = stepNumber;
+                        break;
+                    }
+
+                    if (turnContext.Result.Kind == TurnResultKind.FailedTerminal)
+                    {
+                        var failureDigest = turnContext.Result.FailureDigest ?? runContext.LastFailureDigest;
                         await RecordRunResultAsync(
                             status: "failed_exception",
                             completionStep: null,
                             completionSignaled: false,
                             hasCodeChanges: false,
                             gitDiffBytes: 0,
-                            lastScriptExitCode: lastScriptExitCode,
-                            lastFailureDigest: lastFailureDigestForRunResult);
+                            lastScriptExitCode: runContext.LastScriptExitCode,
+                            lastFailureDigest: failureDigest);
                         throw new InvalidOperationException(
-                            $"Engineer step {stepNumber} failed.\n{lastFailureDigestForRunResult}",
-                            turnContext.UnhandledException);
+                            $"Engineer step {stepNumber} failed.\n{failureDigest}",
+                            turnContext.Result.Exception);
                     }
-
-                    if (turnContext.StepFailed)
-                    {
-                        lastFailureDigestForRunResult = turnContext.FailureDigest;
-                        continue;
-                    }
-
-                    if (turnContext.CompletionSignaled)
-                    {
-                        lastFailureDigestForRunResult = null;
-                        completed = true;
-                        completionStep = stepNumber;
-                        break;
-                    }
-
-                    lastFailureDigestForRunResult = null;
                 }
 
                 if (!completed)
@@ -222,9 +213,9 @@ public class AgentOrchestrator : IAgentOrchestrator
                         completionSignaled: false,
                         hasCodeChanges: false,
                         gitDiffBytes: 0,
-                        lastScriptExitCode: lastScriptExitCode,
-                        lastFailureDigest: lastFailureDigestForRunResult);
-                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{lastFailureDigestForRunResult}");
+                        lastScriptExitCode: runContext.LastScriptExitCode,
+                        lastFailureDigest: runContext.LastFailureDigest);
+                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{runContext.LastFailureDigest}");
                 }
 
                 var gitDiffContent = await PersistSandboxArtifactsAsync();
@@ -234,8 +225,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                     completionSignaled: true,
                     hasCodeChanges: !string.IsNullOrWhiteSpace(gitDiffContent),
                     gitDiffBytes: gitDiffContent.Length,
-                    lastScriptExitCode: lastScriptExitCode,
-                    lastFailureDigest: lastFailureDigestForRunResult);
+                    lastScriptExitCode: runContext.LastScriptExitCode,
+                    lastFailureDigest: runContext.LastFailureDigest);
                 await ApplySandboxPatchToSourceAsync(context, gitDiffContent);
             }
             finally
@@ -257,26 +248,24 @@ public class AgentOrchestrator : IAgentOrchestrator
         bool streamTranscript,
         IReadOnlyCollection<string> selectedPracticeNames)
     {
-        ITranscriptWriter transcriptWriter = streamTranscript
-            ? new OrchestratorTranscriptWriter(this, selectedPracticeNames)
-            : new NoOpTranscriptWriter();
-
-        return new TurnBuilder((type, capabilities) => CreateTurnStep(
-                type,
-                capabilities,
-                engineerClient,
-                engineerPromptTemplate))
-            .WithTranscript(transcriptWriter)
+        return new TurnBuilder(
+                (type, capabilities) => CreateTurnStep(
+                    type,
+                    capabilities,
+                    engineerClient,
+                    engineerPromptTemplate),
+                NotifyProgressAsync)
+            .WithTranscript(streamTranscript, selectedPracticeNames)
             .WithRunRecording(new RunRecordingOptions(
                 RecordPrompt: true,
                 RecordOutput: true,
-                RecordArtifacts: false))
-            .Add<TurnGuard>()
-            .Add<BuildContext>()
-            .Add<BuildPrompt>()
-            .Add<AgentInvoke>()
-            .Add<TurnExecute>()
-            .Add<FinalizeTurn>()
+                RecordArtifacts: true))
+            .Add<GuardTurnStep>()
+            .Add<BuildContextStep>()
+            .Add<BuildPromptStep>()
+            .Add<InvokeAgentStep>()
+            .Add<ExecuteTurnStep>()
+            .Add<FinalizeTurnStep>()
             .Build();
     }
 
@@ -286,281 +275,37 @@ public class AgentOrchestrator : IAgentOrchestrator
         IChatClient engineerClient,
         string engineerPromptTemplate)
     {
-        if (type == typeof(TurnGuard))
+        if (type == typeof(GuardTurnStep))
         {
-            return new TurnGuard(this, capabilities);
+            return new GuardTurnStep(capabilities, _runRecorder);
         }
 
-        if (type == typeof(BuildContext))
+        if (type == typeof(BuildContextStep))
         {
-            return new BuildContext(this);
+            return new BuildContextStep();
         }
 
-        if (type == typeof(BuildPrompt))
+        if (type == typeof(BuildPromptStep))
         {
-            return new BuildPrompt(this, engineerPromptTemplate);
+            return new BuildPromptStep(engineerPromptTemplate);
         }
 
-        if (type == typeof(AgentInvoke))
+        if (type == typeof(InvokeAgentStep))
         {
-            return new AgentInvoke(this, capabilities, engineerClient);
+            return new InvokeAgentStep(capabilities, _runRecorder, engineerClient);
         }
 
-        if (type == typeof(TurnExecute))
+        if (type == typeof(ExecuteTurnStep))
         {
-            return new TurnExecute(_agenticTurnService);
+            return new ExecuteTurnStep(_agenticTurnService);
         }
 
-        if (type == typeof(FinalizeTurn))
+        if (type == typeof(FinalizeTurnStep))
         {
-            return new FinalizeTurn(this, capabilities);
+            return new FinalizeTurnStep(capabilities, _runRecorder, NotifyStepAsync);
         }
 
         throw new InvalidOperationException($"Unsupported turn step type: {type.FullName}");
-    }
-
-    private static List<ChatMessage> BuildEngineerMessages(
-        string engineerPromptTemplate,
-        string practicesContext,
-        string plan,
-        string contextBlock)
-    {
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.System,
-                $"{engineerPromptTemplate}\n\n" +
-                $"Selected Practices:\n{practicesContext}"),
-            new(ChatRole.User, $"Plan: {plan}")
-        };
-
-        if (!string.IsNullOrWhiteSpace(contextBlock))
-        {
-            messages.Add(new ChatMessage(ChatRole.User, contextBlock));
-        }
-
-        return messages;
-    }
-
-    private static string BuildContextBlock(IReadOnlyList<TurnHistoryEntry> history)
-    {
-        if (history.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var historyBuilder = new StringBuilder();
-        historyBuilder.AppendLine($"Recent step history (oldest to newest, last {PromptHistoryDepth}):");
-        foreach (var entry in history)
-        {
-            historyBuilder.AppendLine($"Step {entry.StepNumber} observation (raw):");
-            historyBuilder.AppendLine(entry.ObservationContext);
-            if (!string.IsNullOrWhiteSpace(entry.FailureContext))
-            {
-                historyBuilder.AppendLine($"Step {entry.StepNumber} failure (raw):");
-                historyBuilder.AppendLine(entry.FailureContext);
-            }
-
-            historyBuilder.AppendLine();
-        }
-
-        return historyBuilder.ToString().TrimEnd();
-    }
-
-    private async Task RecordStepFailureAsync(int stepNumber, string failureDigest)
-    {
-        var failurePhase = BuildStepPhase("engineer_step_failure", stepNumber);
-        await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
-    }
-
-    private async Task EmitTranscriptPromptAsync(
-        string phase,
-        IReadOnlyList<ChatMessage> messages,
-        IReadOnlyCollection<string> selectedPractices)
-    {
-        var roles = string.Join(",", messages.Select(m => m.Role.Value));
-        var userPrompt = messages
-            .Where(m => string.Equals(m.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
-            .Select(m => ToCompactSingleLine(m.Text))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToArray();
-        var userSummary = userPrompt.Length == 0 ? "(none)" : string.Join(" | ", userPrompt);
-
-        var systemPrompt = messages
-            .FirstOrDefault(m => string.Equals(m.Role.Value, ChatRole.System.Value, StringComparison.OrdinalIgnoreCase))
-            ?.Text ?? string.Empty;
-        var deliveredPractices = ExtractPracticesFromSystemPrompt(systemPrompt);
-        var deliveredCsv = deliveredPractices.Count == 0
-            ? "(none)"
-            : string.Join(", ", deliveredPractices.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-
-        await NotifyProgressAsync($"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}");
-
-        foreach (var practice in selectedPractices
-                     .Where(x => !string.IsNullOrWhiteSpace(x))
-                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-        {
-            var delivered = deliveredPractices.Contains(practice) ? "yes" : "no";
-            await NotifyProgressAsync($"[transcript][audit] phase={phase} practice={practice} delivered={delivered}");
-        }
-    }
-
-    private async Task EmitTranscriptOutputAsync(string phase, string output)
-    {
-        var preview = ToCompactSingleLine(output);
-        await NotifyProgressAsync($"[transcript][output] phase={phase} chars={output.Length} preview={preview}");
-    }
-
-    private async Task EmitTranscriptFailureAsync(string phase, string failureDigest)
-    {
-        await NotifyProgressAsync($"[transcript][failure] phase={phase}\n{failureDigest}");
-    }
-
-    private static HashSet<string> ExtractPracticesFromSystemPrompt(string systemPrompt)
-    {
-        var delivered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(systemPrompt))
-        {
-            return delivered;
-        }
-
-        const string marker = "Selected Practices:";
-        var markerIndex = systemPrompt.IndexOf(marker, StringComparison.Ordinal);
-        if (markerIndex < 0)
-        {
-            return delivered;
-        }
-
-        var lines = systemPrompt
-            .Substring(markerIndex + marker.Length)
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Split('\n', StringSplitOptions.None);
-
-        foreach (var rawLine in lines)
-        {
-            var line = rawLine.Trim();
-            if (!line.StartsWith("- [", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var endBracket = line.IndexOf(']', 3);
-            if (endBracket <= 3)
-            {
-                continue;
-            }
-
-            var name = line.Substring(3, endBracket - 3).Trim();
-            if (!string.IsNullOrWhiteSpace(name))
-            {
-                delivered.Add(name);
-            }
-        }
-
-        return delivered;
-    }
-
-    private static string ToCompactSingleLine(string? text, int maxLength = TranscriptPreviewLimit)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return "(none)";
-        }
-
-        var singleLine = text
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace("\r", "\n", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal)
-            .Trim();
-
-        if (singleLine.Length <= maxLength)
-        {
-            return singleLine;
-        }
-
-        return $"{singleLine[..maxLength]}...(truncated)";
-    }
-
-    private static void AppendStepHistory(
-        List<TurnHistoryEntry> stepHistory,
-        int stepNumber,
-        string observationContext,
-        string? failureContext)
-    {
-        stepHistory.Add(new TurnHistoryEntry(stepNumber, observationContext, failureContext));
-        var overflow = stepHistory.Count - PromptHistoryDepth;
-        if (overflow > 0)
-        {
-            stepHistory.RemoveRange(0, overflow);
-        }
-    }
-
-    private static string BuildExceptionObservationContext(Exception exception)
-    {
-        return $"exception_type={exception.GetType().FullName ?? "n/a"}\n" +
-               $"exception_message={exception.Message}\n" +
-               $"exception:\n{exception}";
-    }
-
-    private static string BuildTurnFailureDigest(
-        AgenticTurnObservation observation,
-        IReadOnlyCollection<string> failedChecks)
-    {
-        var gateSummary = failedChecks.Count == 0
-            ? "(none)"
-            : string.Join(", ", failedChecks);
-        var scriptTail = GetLastLines(observation.ScriptExecution.CombinedOutput, 40);
-        var diffTail = GetLastLines(observation.DiffExecution.CombinedOutput, 40);
-
-        return $"failed_checks={gateSummary}\n" +
-               $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}\n" +
-               $"tool_call={observation.ToolCall ?? "(none)"}\n" +
-               $"script_exit_code={observation.ScriptExecution.ExitCode}\n" +
-               $"diff_exit_code={observation.DiffExecution.ExitCode}\n" +
-               $"script_output_tail:\n{scriptTail}\n\n" +
-               $"diff_output_tail:\n{diffTail}";
-    }
-
-    private static string BuildStepTool(AgenticTurnObservation observation)
-    {
-        if (!string.IsNullOrWhiteSpace(observation.ToolCall))
-        {
-            return observation.ToolCall!;
-        }
-
-        if (observation.CompletionSignaled)
-        {
-            return "sdk.Done()";
-        }
-
-        return "(none)";
-    }
-
-    private static string BuildStepObservationSummary(AgenticTurnObservation observation)
-    {
-        return $"completion_signaled={ToBoolLiteral(observation.CompletionSignaled)}; " +
-               $"script_exit={observation.ScriptExecution.ExitCode}; " +
-               $"has_changes={observation.HasChanges}; " +
-               $"diff_exit={observation.DiffExecution.ExitCode}; " +
-               $"is_done={ToBoolLiteral(observation.CompletionSignaled)}";
-    }
-
-    private static string BuildFailureDigest(int exitCode, Exception? exception, string combinedOutput)
-    {
-        var exceptionType = exception?.GetType().FullName ?? "n/a";
-        var exceptionMessage = exception?.Message ?? "n/a";
-        var tail = GetLastLines(combinedOutput, 40);
-        return $"exit_code={exitCode}\nexception_type={exceptionType}\nexception_message={exceptionMessage}\noutput_tail:\n{tail}";
-    }
-
-    private static string BuildStepPhase(string basePhase, int stepNumber)
-    {
-        return $"{basePhase}_{stepNumber}";
-    }
-
-    private static string ToBoolLiteral(bool value)
-    {
-        return value ? "true" : "false";
     }
 
     private async Task RecordRunResultAsync(
@@ -586,20 +331,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         await _runRecorder.RecordArtifactAsync(
             "run_result.json",
             JsonSerializer.Serialize(runResult));
-    }
-
-    private static string GetLastLines(string text, int maxLines)
-    {
-        var lines = text
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Split('\n', StringSplitOptions.None);
-
-        if (lines.Length <= maxLines)
-        {
-            return text;
-        }
-
-        return string.Join('\n', lines.Skip(lines.Length - maxLines));
     }
 
     private async Task<string> PersistSandboxArtifactsAsync()
@@ -667,235 +398,6 @@ public class AgentOrchestrator : IAgentOrchestrator
             throw new InvalidOperationException(
                 $"Host patch apply failed at apply stage.\n{ex.Message}",
                 ex);
-        }
-    }
-
-    private sealed class OrchestratorTranscriptWriter : ITranscriptWriter
-    {
-        private readonly AgentOrchestrator _owner;
-        private readonly IReadOnlyCollection<string> _selectedPractices;
-
-        public OrchestratorTranscriptWriter(AgentOrchestrator owner, IReadOnlyCollection<string> selectedPractices)
-        {
-            _owner = owner;
-            _selectedPractices = selectedPractices;
-        }
-
-        public Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages, IReadOnlyCollection<string> selectedPractices)
-        {
-            return _owner.EmitTranscriptPromptAsync(phase, messages, selectedPractices.Count == 0 ? _selectedPractices : selectedPractices);
-        }
-
-        public Task WriteOutputAsync(string phase, string output)
-        {
-            return _owner.EmitTranscriptOutputAsync(phase, output);
-        }
-
-        public Task WriteFailureAsync(string phase, string failureDigest)
-        {
-            return _owner.EmitTranscriptFailureAsync(phase, failureDigest);
-        }
-    }
-
-    private sealed class TurnGuard : TurnStep
-    {
-        private readonly AgentOrchestrator _owner;
-        private readonly TurnCapabilities _capabilities;
-
-        public TurnGuard(AgentOrchestrator owner, TurnCapabilities capabilities)
-        {
-            _owner = owner;
-            _capabilities = capabilities;
-        }
-
-        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            try
-            {
-                await next(context);
-            }
-            catch (Exception ex)
-            {
-                context.UnhandledException = ex;
-                context.FailureDigest = BuildFailureDigest(
-                    exitCode: 1,
-                    exception: ex,
-                    combinedOutput: ex.ToString());
-
-                if (_capabilities.RunRecording.RecordOutput)
-                {
-                    await _owner.RecordStepFailureAsync(context.StepNumber, context.FailureDigest);
-                }
-
-                await _capabilities.TranscriptWriter.WriteFailureAsync(context.FailurePhase, context.FailureDigest);
-            }
-        }
-    }
-
-    private sealed class BuildContext : TurnStep
-    {
-        public BuildContext(AgentOrchestrator owner)
-        {
-        }
-
-        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            context.ContextBlock = BuildContextBlock(context.StepHistory);
-            await next(context);
-
-            if (context.UnhandledException is not null)
-            {
-                AppendStepHistory(
-                    context.StepHistory,
-                    context.StepNumber,
-                    BuildExceptionObservationContext(context.UnhandledException),
-                    context.FailureDigest);
-                return;
-            }
-
-            if (context.StepFailed)
-            {
-                AppendStepHistory(
-                    context.StepHistory,
-                    context.StepNumber,
-                    context.SerializedObservation,
-                    context.FailureDigest);
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(context.SerializedObservation))
-            {
-                AppendStepHistory(
-                    context.StepHistory,
-                    context.StepNumber,
-                    context.SerializedObservation,
-                    failureContext: null);
-            }
-        }
-    }
-
-    private sealed class BuildPrompt : TurnStep
-    {
-        private readonly string _engineerPromptTemplate;
-
-        public BuildPrompt(AgentOrchestrator owner, string engineerPromptTemplate)
-        {
-            _engineerPromptTemplate = engineerPromptTemplate;
-        }
-
-        public override Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            context.EngineerMessages = BuildEngineerMessages(
-                _engineerPromptTemplate,
-                context.PracticesContext,
-                context.Plan,
-                context.ContextBlock);
-
-            return next(context);
-        }
-    }
-
-    private sealed class AgentInvoke : TurnStep
-    {
-        private readonly AgentOrchestrator _owner;
-        private readonly TurnCapabilities _capabilities;
-        private readonly IChatClient _engineerClient;
-
-        public AgentInvoke(AgentOrchestrator owner, TurnCapabilities capabilities, IChatClient engineerClient)
-        {
-            _owner = owner;
-            _capabilities = capabilities;
-            _engineerClient = engineerClient;
-        }
-
-        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            if (_capabilities.RunRecording.RecordPrompt)
-            {
-                await _owner._runRecorder.RecordPromptAsync(context.EngineerPhase, context.EngineerMessages);
-            }
-
-            await _capabilities.TranscriptWriter.WritePromptAsync(
-                context.EngineerPhase,
-                context.EngineerMessages,
-                context.SelectedPracticeNames);
-
-            var actorCodeResponse = await _engineerClient.CompleteAsync(context.EngineerMessages);
-            context.ActorCode = actorCodeResponse.Message.Text ?? string.Empty;
-
-            if (_capabilities.RunRecording.RecordOutput)
-            {
-                await _owner._runRecorder.RecordOutputAsync(context.EngineerPhase, context.ActorCode);
-            }
-
-            await _capabilities.TranscriptWriter.WriteOutputAsync(context.EngineerPhase, context.ActorCode);
-            await next(context);
-        }
-    }
-
-    private sealed class TurnExecute : TurnStep
-    {
-        private readonly IAgenticTurnService _agenticTurnService;
-
-        public TurnExecute(IAgenticTurnService agenticTurnService)
-        {
-            _agenticTurnService = agenticTurnService;
-        }
-
-        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            context.Observation = await _agenticTurnService.ExecuteAgenticTurnAsync(context.ActorCode, context.TurnSettings);
-            context.LastScriptExitCode = context.Observation.ScriptExecution.ExitCode;
-            await next(context);
-        }
-    }
-
-    private sealed class FinalizeTurn : TurnStep
-    {
-        private readonly AgentOrchestrator _owner;
-        private readonly TurnCapabilities _capabilities;
-        public FinalizeTurn(AgentOrchestrator owner, TurnCapabilities capabilities)
-        {
-            _owner = owner;
-            _capabilities = capabilities;
-        }
-
-        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            var observation = context.Observation
-                ?? throw new InvalidOperationException("Turn observation was not produced.");
-
-            context.SerializedObservation = JsonSerializer.Serialize(observation);
-
-            if (_capabilities.RunRecording.RecordOutput)
-            {
-                await _owner._runRecorder.RecordOutputAsync(context.ObservationPhase, context.SerializedObservation);
-            }
-
-            await _capabilities.TranscriptWriter.WriteOutputAsync(context.ObservationPhase, context.SerializedObservation);
-            await _owner.NotifyStepAsync(new AgentStepEvent(
-                StepNumber: context.StepNumber,
-                Plan: observation.StepPlan,
-                Tool: BuildStepTool(observation),
-                Observation: BuildStepObservationSummary(observation),
-                IsCompletion: observation.CompletionSignaled));
-
-            if (observation.ScriptExecution.ExitCode != 0)
-            {
-                context.FailureDigest = BuildTurnFailureDigest(observation, new[] { "script_exit_non_zero" });
-                context.StepFailed = true;
-
-                if (_capabilities.RunRecording.RecordOutput)
-                {
-                    await _owner.RecordStepFailureAsync(context.StepNumber, context.FailureDigest);
-                }
-
-                await _capabilities.TranscriptWriter.WriteFailureAsync(context.FailurePhase, context.FailureDigest);
-                return;
-            }
-
-            context.CompletionSignaled = observation.CompletionSignaled;
-            await next(context);
         }
     }
 }

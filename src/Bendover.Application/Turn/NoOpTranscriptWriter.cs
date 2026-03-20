@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using Bendover.Application.Interfaces;
 
 namespace Bendover.Application.Turn;
 
