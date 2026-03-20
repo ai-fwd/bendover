@@ -2,7 +2,7 @@ using Bendover.Domain.Entities;
 
 namespace Bendover.Application.Turn;
 
-public sealed class TurnRunContext
+public sealed class TurnRunState
 {
     public required List<TurnHistoryEntry> StepHistory { get; init; }
     public required AgenticTurnSettings TurnSettings { get; init; }

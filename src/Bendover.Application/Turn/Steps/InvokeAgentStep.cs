@@ -1,42 +1,25 @@
-using Bendover.Application.Interfaces;
-using Microsoft.Extensions.AI;
-
 namespace Bendover.Application.Turn;
 
 public sealed class InvokeAgentStep : TurnStep
 {
-    private readonly TurnCapabilities _capabilities;
-    private readonly IPromptOptRunRecorder _runRecorder;
-    private readonly IChatClient _engineerClient;
-
-    public InvokeAgentStep(TurnCapabilities capabilities, IPromptOptRunRecorder runRecorder, IChatClient engineerClient)
-    {
-        _capabilities = capabilities;
-        _runRecorder = runRecorder;
-        _engineerClient = engineerClient;
-    }
-
     public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
     {
-        if (_capabilities.RunRecording.RecordPrompt)
+        if (context.Run.RunRecording.RecordPrompt)
         {
-            await _runRecorder.RecordPromptAsync(context.EngineerPhase, context.EngineerMessages);
+            await context.Run.RunRecorder.RecordPromptAsync(context.EngineerPhase, context.EngineerMessages);
         }
 
-        await _capabilities.TranscriptWriter.WritePromptAsync(
-            context.EngineerPhase,
-            context.EngineerMessages,
-            context.SelectedPractices);
+        await context.Run.TranscriptWriter.WritePromptAsync(context.EngineerPhase, context.EngineerMessages);
 
-        var actorCodeResponse = await _engineerClient.CompleteAsync(context.EngineerMessages);
+        var actorCodeResponse = await context.Run.EngineerClient.CompleteAsync(context.EngineerMessages);
         context.ActorCode = actorCodeResponse.Message.Text ?? string.Empty;
 
-        if (_capabilities.RunRecording.RecordOutput)
+        if (context.Run.RunRecording.RecordOutput)
         {
-            await _runRecorder.RecordOutputAsync(context.EngineerPhase, context.ActorCode);
+            await context.Run.RunRecorder.RecordOutputAsync(context.EngineerPhase, context.ActorCode);
         }
 
-        await _capabilities.TranscriptWriter.WriteOutputAsync(context.EngineerPhase, context.ActorCode);
+        await context.Run.TranscriptWriter.WriteOutputAsync(context.EngineerPhase, context.ActorCode);
         await next(context);
     }
 }

@@ -6,10 +6,10 @@ namespace Bendover.Application.Turn;
 public sealed class TurnContext
 {
     public required int StepNumber { get; init; }
-    public required TurnRunContext Run { get; init; }
+    public required RunContext Run { get; init; }
+    public required TurnRunState RunState { get; init; }
     public required string PracticesContext { get; init; }
     public required string Plan { get; init; }
-    public required IReadOnlyCollection<string> SelectedPractices { get; init; }
 
     public string EngineerPhase => $"engineer_step_{StepNumber}";
     public string ObservationPhase => $"agentic_step_observation_{StepNumber}";

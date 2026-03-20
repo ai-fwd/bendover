@@ -5,7 +5,7 @@ namespace Bendover.Application.Turn;
 
 public sealed class NoOpTranscriptWriter : ITranscriptWriter
 {
-    public Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages, IReadOnlyCollection<string> selectedPractices)
+    public Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages)
         => Task.CompletedTask;
 
     public Task WriteOutputAsync(string phase, string output)

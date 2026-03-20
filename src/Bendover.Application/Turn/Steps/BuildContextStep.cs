@@ -8,13 +8,13 @@ public sealed class BuildContextStep : TurnStep
 
     public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
     {
-        context.ContextBlock = BuildContextBlock(context.Run.StepHistory);
+        context.ContextBlock = BuildContextBlock(context.RunState.StepHistory);
         await next(context);
 
         if (context.Result.Kind == TurnResultKind.FailedTerminal && context.Result.Exception is not null)
         {
             AppendStepHistory(
-                context.Run.StepHistory,
+                context.RunState.StepHistory,
                 context.StepNumber,
                 TurnContent.BuildExceptionObservationContext(context.Result.Exception),
                 context.Result.FailureDigest);
@@ -24,7 +24,7 @@ public sealed class BuildContextStep : TurnStep
         if (context.Result.Kind == TurnResultKind.FailedRetryable)
         {
             AppendStepHistory(
-                context.Run.StepHistory,
+                context.RunState.StepHistory,
                 context.StepNumber,
                 context.SerializedObservation,
                 context.Result.FailureDigest);
@@ -34,7 +34,7 @@ public sealed class BuildContextStep : TurnStep
         if (!string.IsNullOrWhiteSpace(context.SerializedObservation))
         {
             AppendStepHistory(
-                context.Run.StepHistory,
+                context.RunState.StepHistory,
                 context.StepNumber,
                 context.SerializedObservation,
                 failureContext: null);

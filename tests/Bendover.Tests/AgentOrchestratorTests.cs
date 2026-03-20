@@ -326,6 +326,12 @@ public class AgentOrchestratorTests
 
         await _sut.RunAsync("Build feature", CreatePractices());
 
+        var runTranscriptEvent = events
+            .OfType<AgentProgressEvent>()
+            .FirstOrDefault(x => x.Message.Contains("[transcript][run] selected_practices=", StringComparison.Ordinal));
+        Assert.NotNull(runTranscriptEvent);
+        Assert.Contains("tdd_spirit", runTranscriptEvent!.Message, StringComparison.Ordinal);
+
         var outputTranscriptEvent = events
             .OfType<AgentProgressEvent>()
             .FirstOrDefault(x => x.Message.Contains("[transcript][output] phase=engineer_step_1", StringComparison.Ordinal));

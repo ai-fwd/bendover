@@ -149,23 +149,38 @@ public class AgentOrchestrator : IAgentOrchestrator
                 var completed = false;
                 var completionStep = 0;
 
-                var runContext = new TurnRunContext
+                ITranscriptWriter transcriptWriter = context.StreamTranscript
+                    ? new StreamingTranscriptWriter(NotifyProgressAsync, selectedPracticeNames)
+                    : new NoOpTranscriptWriter();
+                if (context.StreamTranscript)
+                {
+                    var selectedCsv = selectedPracticeNames.Length == 0
+                        ? "(none)"
+                        : string.Join(", ", selectedPracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+                    await NotifyProgressAsync($"[transcript][run] selected_practices={selectedCsv}");
+                }
+
+                var run = new RunContext
+                {
+                    TranscriptWriter = transcriptWriter,
+                    RunRecording = new RunRecordingOptions(
+                        RecordPrompt: true,
+                        RecordOutput: true),
+                    RunRecorder = _runRecorder,
+                    EngineerClient = engineerClient,
+                    AgenticTurnService = _agenticTurnService,
+                    NotifyStepAsync = NotifyStepAsync,
+                    EngineerPromptTemplate = engineerPromptTemplate,
+                    SelectedPractices = selectedPracticeNames
+                };
+
+                var runState = new TurnRunState
                 {
                     StepHistory = new List<TurnHistoryEntry>(),
                     TurnSettings = new AgenticTurnSettings()
                 };
 
-                var turn = TurnBuilder.Create(
-                    NotifyProgressAsync,
-                    NotifyStepAsync,
-                    engineerClient,
-                    _agenticTurnService,
-                    _runRecorder,
-                    engineerPromptTemplate)
-                    .WithTranscript(context.StreamTranscript, selectedPracticeNames)
-                    .WithRunRecording(new RunRecordingOptions(
-                        RecordPrompt: true,
-                        RecordOutput: true))
+                var turn = TurnBuilder.Create(run)
                     .Add<GuardTurnStep>()
                     .Add<BuildContextStep>()
                     .Add<BuildPromptStep>()
@@ -182,9 +197,9 @@ public class AgentOrchestrator : IAgentOrchestrator
                     var turnContext = new TurnContext
                     {
                         StepNumber = stepNumber,
-                        Run = runContext,
+                        Run = run,
+                        RunState = runState,
                         Plan = plan ?? string.Empty,
-                        SelectedPractices = selectedPracticeNames,
                         PracticesContext = practicesContext
                     };
 
@@ -204,14 +219,14 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                     if (turnContext.Result.Kind == TurnResultKind.FailedTerminal)
                     {
-                        var failureDigest = turnContext.Result.FailureDigest ?? runContext.LastFailureDigest;
+                        var failureDigest = turnContext.Result.FailureDigest ?? runState.LastFailureDigest;
                         await RecordRunResultAsync(
                             status: "failed_exception",
                             completionStep: null,
                             completionSignaled: false,
                             hasCodeChanges: false,
                             gitDiffBytes: 0,
-                            lastScriptExitCode: runContext.LastScriptExitCode,
+                            lastScriptExitCode: runState.LastScriptExitCode,
                             lastFailureDigest: failureDigest);
                         throw new InvalidOperationException(
                             $"Engineer step {stepNumber} failed.\n{failureDigest}",
@@ -227,9 +242,9 @@ public class AgentOrchestrator : IAgentOrchestrator
                         completionSignaled: false,
                         hasCodeChanges: false,
                         gitDiffBytes: 0,
-                        lastScriptExitCode: runContext.LastScriptExitCode,
-                        lastFailureDigest: runContext.LastFailureDigest);
-                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{runContext.LastFailureDigest}");
+                        lastScriptExitCode: runState.LastScriptExitCode,
+                        lastFailureDigest: runState.LastFailureDigest);
+                    throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{runState.LastFailureDigest}");
                 }
 
                 var gitDiffContent = await PersistSandboxArtifactsAsync();
@@ -239,8 +254,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                     completionSignaled: true,
                     hasCodeChanges: !string.IsNullOrWhiteSpace(gitDiffContent),
                     gitDiffBytes: gitDiffContent.Length,
-                    lastScriptExitCode: runContext.LastScriptExitCode,
-                    lastFailureDigest: runContext.LastFailureDigest);
+                    lastScriptExitCode: runState.LastScriptExitCode,
+                    lastFailureDigest: runState.LastFailureDigest);
                 await ApplySandboxPatchToSourceAsync(context, gitDiffContent);
             }
             finally

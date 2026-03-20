@@ -13,24 +13,18 @@ public class TurnBuilderTests
         var transcriptMessages = new List<string>();
         var recorder = CreateRecorderMock();
         var engineerClient = CreateEngineerClientMock();
-
-        var builder = TurnBuilder.Create(
-            message =>
-            {
-                transcriptMessages.Add(message);
-                return Task.CompletedTask;
-            },
-            _ => Task.CompletedTask,
-            engineerClient.Object,
-            new Mock<IAgenticTurnService>().Object,
+        var run = CreateRunContext(
+            new NoOpTranscriptWriter(),
             recorder.Object,
-            engineerPromptTemplate: "template");
+            engineerClient.Object);
+
+        var builder = TurnBuilder.Create(run);
 
         var pipeline = builder
             .Add<InvokeAgentStep>()
             .Build();
 
-        await pipeline(CreateContext());
+        await pipeline(CreateContext(run));
 
         Assert.Empty(transcriptMessages);
     }
@@ -41,41 +35,58 @@ public class TurnBuilderTests
         var transcriptMessages = new List<string>();
         var recorder = CreateRecorderMock();
         var engineerClient = CreateEngineerClientMock();
-        var builder = TurnBuilder.Create(
-            message =>
-            {
-                transcriptMessages.Add(message);
-                return Task.CompletedTask;
-            },
-            _ => Task.CompletedTask,
-            engineerClient.Object,
-            new Mock<IAgenticTurnService>().Object,
+        var run = CreateRunContext(
+            new StreamingTranscriptWriter(
+                message =>
+                {
+                    transcriptMessages.Add(message);
+                    return Task.CompletedTask;
+                },
+                new[] { "practice" }),
             recorder.Object,
-            engineerPromptTemplate: "template");
+            engineerClient.Object);
+        var builder = TurnBuilder.Create(run);
 
         var pipeline = builder
-            .WithTranscript(enabled: true, selectedPractices: new[] { "practice" })
             .Add<InvokeAgentStep>()
             .Build();
 
-        await pipeline(CreateContext());
+        await pipeline(CreateContext(run));
 
         Assert.NotEmpty(transcriptMessages);
     }
 
-    private static TurnContext CreateContext()
+    private static RunContext CreateRunContext(
+        ITranscriptWriter transcriptWriter,
+        IPromptOptRunRecorder recorder,
+        IChatClient engineerClient)
+    {
+        return new RunContext
+        {
+            TranscriptWriter = transcriptWriter,
+            RunRecording = new RunRecordingOptions(RecordPrompt: true, RecordOutput: true),
+            RunRecorder = recorder,
+            EngineerClient = engineerClient,
+            AgenticTurnService = new Mock<IAgenticTurnService>().Object,
+            NotifyStepAsync = _ => Task.CompletedTask,
+            EngineerPromptTemplate = "template",
+            SelectedPractices = new[] { "practice" }
+        };
+    }
+
+    private static TurnContext CreateContext(RunContext run)
     {
         return new TurnContext
         {
             StepNumber = 1,
-            Run = new TurnRunContext
+            Run = run,
+            RunState = new TurnRunState
             {
                 StepHistory = new List<TurnHistoryEntry>(),
                 TurnSettings = new Domain.Entities.AgenticTurnSettings()
             },
             PracticesContext = "practice",
-            Plan = "plan",
-            SelectedPractices = new[] { "practice" }
+            Plan = "plan"
         };
     }
 

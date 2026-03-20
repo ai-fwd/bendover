@@ -13,15 +13,11 @@ public sealed class StreamingTranscriptWriter : ITranscriptWriter
     public StreamingTranscriptWriter(Func<string, Task> notifyProgressAsync, IReadOnlyCollection<string> selectedPractices)
     {
         _notifyProgressAsync = notifyProgressAsync;
-        _selectedPractices = selectedPractices;
+        _selectedPractices = selectedPractices ?? Array.Empty<string>();
     }
 
-    public async Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages, IReadOnlyCollection<string> selectedPractices)
+    public async Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages)
     {
-        var effectiveSelectedPractices = selectedPractices.Count == 0
-            ? _selectedPractices
-            : selectedPractices;
-
         var roles = string.Join(",", messages.Select(m => m.Role.Value));
         var userPrompt = messages
             .Where(m => string.Equals(m.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
@@ -40,7 +36,7 @@ public sealed class StreamingTranscriptWriter : ITranscriptWriter
 
         await _notifyProgressAsync($"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}");
 
-        foreach (var practice in effectiveSelectedPractices
+        foreach (var practice in _selectedPractices
                      .Where(x => !string.IsNullOrWhiteSpace(x))
                      .Distinct(StringComparer.OrdinalIgnoreCase)
                      .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
