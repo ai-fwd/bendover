@@ -7,7 +7,6 @@ namespace Bendover.Application.Turn;
 public sealed class RunContext
 {
     public required ITranscriptWriter TranscriptWriter { get; init; }
-    public required RunRecordingOptions RunRecording { get; init; }
     public required IPromptOptRunRecorder RunRecorder { get; init; }
     public required IChatClient EngineerClient { get; init; }
     public required IAgenticTurnService AgenticTurnService { get; init; }

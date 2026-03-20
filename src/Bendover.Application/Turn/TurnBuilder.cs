@@ -15,7 +15,6 @@ public sealed class TurnBuilder
     {
         ArgumentNullException.ThrowIfNull(runContext);
         ArgumentNullException.ThrowIfNull(runContext.TranscriptWriter);
-        ArgumentNullException.ThrowIfNull(runContext.RunRecording);
         ArgumentNullException.ThrowIfNull(runContext.RunRecorder);
         ArgumentNullException.ThrowIfNull(runContext.EngineerClient);
         ArgumentNullException.ThrowIfNull(runContext.AgenticTurnService);

@@ -44,7 +44,7 @@ public class Story6ArtifactFlowTests
 
             containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
                 .Returns(Task.CompletedTask);
-            agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
                 .ReturnsAsync(new AgenticTurnObservation(
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
@@ -152,7 +152,7 @@ public class Story6ArtifactFlowTests
 
             containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
                 .Returns(Task.CompletedTask);
-            agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+            agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
                 .ReturnsAsync(new AgenticTurnObservation(
                     ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
                     DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),

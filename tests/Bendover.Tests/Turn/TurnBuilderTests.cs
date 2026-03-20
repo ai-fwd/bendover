@@ -64,7 +64,6 @@ public class TurnBuilderTests
         return new RunContext
         {
             TranscriptWriter = transcriptWriter,
-            RunRecording = new RunRecordingOptions(RecordPrompt: true, RecordOutput: true),
             RunRecorder = recorder,
             EngineerClient = engineerClient,
             AgenticTurnService = new Mock<IAgenticTurnService>().Object,
@@ -82,8 +81,7 @@ public class TurnBuilderTests
             Run = run,
             RunState = new TurnRunState
             {
-                StepHistory = new List<TurnHistoryEntry>(),
-                TurnSettings = new Domain.Entities.AgenticTurnSettings()
+                StepHistory = new List<TurnHistoryEntry>()
             },
             PracticesContext = "practice",
             Plan = "plan"

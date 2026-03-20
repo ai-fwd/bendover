@@ -16,11 +16,7 @@ public sealed class GuardTurnStep : TurnStep
                 combinedOutput: ex.ToString());
             context.RunState.LastFailureDigest = failureDigest;
             context.Result = TurnResult.FailedTerminal(failureDigest, ex);
-
-            if (context.Run.RunRecording.RecordOutput)
-            {
-                await context.Run.RunRecorder.RecordOutputAsync(context.FailurePhase, failureDigest);
-            }
+            await context.Run.RunRecorder.RecordOutputAsync(context.FailurePhase, failureDigest);
 
             await context.Run.TranscriptWriter.WriteFailureAsync(context.FailurePhase, failureDigest);
         }

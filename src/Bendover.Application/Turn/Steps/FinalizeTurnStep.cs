@@ -11,11 +11,7 @@ public sealed class FinalizeTurnStep : TurnStep
             ?? throw new InvalidOperationException("Turn observation was not produced.");
 
         context.SerializedObservation = JsonSerializer.Serialize(observation);
-
-        if (context.Run.RunRecording.RecordOutput)
-        {
-            await context.Run.RunRecorder.RecordOutputAsync(context.ObservationPhase, context.SerializedObservation);
-        }
+        await context.Run.RunRecorder.RecordOutputAsync(context.ObservationPhase, context.SerializedObservation);
 
         await context.Run.TranscriptWriter.WriteOutputAsync(context.ObservationPhase, context.SerializedObservation);
         await context.Run.NotifyStepAsync(new AgentStepEvent(
@@ -30,11 +26,7 @@ public sealed class FinalizeTurnStep : TurnStep
             var failureDigest = TurnContent.BuildTurnFailureDigest(observation, new[] { "script_exit_non_zero" });
             context.RunState.LastFailureDigest = failureDigest;
             context.Result = TurnResult.FailedRetryable(failureDigest);
-
-            if (context.Run.RunRecording.RecordOutput)
-            {
-                await context.Run.RunRecorder.RecordOutputAsync(context.FailurePhase, failureDigest);
-            }
+            await context.Run.RunRecorder.RecordOutputAsync(context.FailurePhase, failureDigest);
 
             await context.Run.TranscriptWriter.WriteFailureAsync(context.FailurePhase, failureDigest);
             return;

@@ -163,9 +163,6 @@ public class AgentOrchestrator : IAgentOrchestrator
                 var run = new RunContext
                 {
                     TranscriptWriter = transcriptWriter,
-                    RunRecording = new RunRecordingOptions(
-                        RecordPrompt: true,
-                        RecordOutput: true),
                     RunRecorder = _runRecorder,
                     EngineerClient = engineerClient,
                     AgenticTurnService = _agenticTurnService,
@@ -176,8 +173,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                 var runState = new TurnRunState
                 {
-                    StepHistory = new List<TurnHistoryEntry>(),
-                    TurnSettings = new AgenticTurnSettings()
+                    StepHistory = new List<TurnHistoryEntry>()
                 };
 
                 var turn = TurnBuilder.Create(run)

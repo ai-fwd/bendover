@@ -22,10 +22,6 @@ public sealed record ScriptExecutionResult(
     string? ToolCall = null
 );
 
-public sealed record AgenticTurnSettings(
-    string DiffCommand = "cd /workspace && git diff"
-);
-
 public sealed record AgenticTurnObservation(
     SandboxExecutionResult ScriptExecution,
     SandboxExecutionResult DiffExecution,

@@ -4,5 +4,5 @@ namespace Bendover.Application.Interfaces;
 
 public interface IAgenticTurnService
 {
-    Task<AgenticTurnObservation> ExecuteAgenticTurnAsync(string scriptBody, AgenticTurnSettings settings);
+    Task<AgenticTurnObservation> ExecuteAgenticTurnAsync(string scriptBody);
 }

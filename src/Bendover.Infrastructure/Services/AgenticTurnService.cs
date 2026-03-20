@@ -6,6 +6,7 @@ namespace Bendover.Infrastructure.Services;
 
 public class AgenticTurnService : IAgenticTurnService
 {
+    private const string DiffCommand = "cd /workspace && git diff";
     private readonly IContainerService _containerService;
 
     public AgenticTurnService(IContainerService containerService)
@@ -13,10 +14,8 @@ public class AgenticTurnService : IAgenticTurnService
         _containerService = containerService;
     }
 
-    public async Task<AgenticTurnObservation> ExecuteAgenticTurnAsync(string scriptBody, AgenticTurnSettings settings)
+    public async Task<AgenticTurnObservation> ExecuteAgenticTurnAsync(string scriptBody)
     {
-        var turnSettings = settings ?? new AgenticTurnSettings();
-
         var scriptResult = await _containerService.ExecuteScriptBodyAsync(scriptBody);
         var scriptExecution = scriptResult.Execution;
         var completionSignaled = scriptResult.CompletionSignaled;
@@ -33,7 +32,7 @@ public class AgenticTurnService : IAgenticTurnService
         }
 
         var diffExecution = completionSignaled
-            ? await _containerService.ExecuteCommandAsync(turnSettings.DiffCommand)
+            ? await _containerService.ExecuteCommandAsync(DiffCommand)
             : SkippedResult("diff skipped until sdk.Done() is called");
         var hasChanges = completionSignaled && !string.IsNullOrWhiteSpace(diffExecution.CombinedOutput);
 

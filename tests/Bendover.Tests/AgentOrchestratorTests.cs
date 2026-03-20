@@ -97,7 +97,7 @@ public class AgentOrchestratorTests
         SetupRunContext();
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: false));
         _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
             .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
@@ -124,7 +124,7 @@ public class AgentOrchestratorTests
         SetupRunContext();
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateDiscoveryObservation())
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -142,7 +142,7 @@ public class AgentOrchestratorTests
         SetupRunContext();
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateScriptFailureObservation())
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -156,7 +156,7 @@ public class AgentOrchestratorTests
                 It.Is<string>(text => text.Contains("script_exit_non_zero", StringComparison.Ordinal))),
             Times.Once);
         _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()),
             Times.Exactly(2));
     }
 
@@ -170,7 +170,7 @@ public class AgentOrchestratorTests
             .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
                 capturedEngineerMessages.Add(messages.ToList()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.ReadFile(\"README.md\");") }));
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateScriptFailureObservation())
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -198,7 +198,7 @@ public class AgentOrchestratorTests
             .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
                 capturedEngineerMessages.Add(messages.ToList()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.ReadFile(\"README.md\");") }));
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateDiscoveryObservation("Bendover.sln\nREADME.md\n"))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -224,7 +224,7 @@ public class AgentOrchestratorTests
             .Callback<IList<ChatMessage>, ChatOptions, CancellationToken>((messages, _, _) =>
                 capturedEngineerMessages.Add(messages.ToList()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.ReadFile(\"README.md\");") }));
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateDiscoveryObservation("step1"))
             .ReturnsAsync(CreateDiscoveryObservation("step2"))
             .ReturnsAsync(CreateDiscoveryObservation("step3"))
@@ -260,7 +260,7 @@ public class AgentOrchestratorTests
 
         var expectedPath = "/workspace/src/Bendover.Application/AgentOrchestrator.cs";
         var longScriptOutput = $"{new string('x', 180)}\n{expectedPath}";
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateDiscoveryObservation(longScriptOutput))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
@@ -285,7 +285,7 @@ public class AgentOrchestratorTests
         _observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>()))
             .Callback<AgentEvent>(evt => events.Add(evt))
             .Returns(Task.CompletedTask);
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(new AgenticTurnObservation(
                 ScriptExecution: new SandboxExecutionResult(0, "Bendover.sln\nREADME.md\n", string.Empty, "Bendover.sln\nREADME.md\n"),
                 DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
@@ -317,7 +317,7 @@ public class AgentOrchestratorTests
             .Returns(Task.CompletedTask);
         _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, new string('a', 360)) }));
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: false));
         _containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
             .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
@@ -345,7 +345,7 @@ public class AgentOrchestratorTests
         SetupRunContext();
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
-        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateDiscoveryObservation())
             .ReturnsAsync(CreateUnknownObservation())
             .ReturnsAsync(CreateCompleteObservation(hasChanges: false));
@@ -368,7 +368,7 @@ public class AgentOrchestratorTests
         SetupLeadSelection("Build feature");
         _engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.ReadFile(\"README.md\");") }));
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateUnknownObservation());
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
@@ -389,7 +389,7 @@ public class AgentOrchestratorTests
                 It.Is<string>(text => text.Contains("\"status\":\"failed_max_turns\"", StringComparison.Ordinal))),
             Times.Once);
         _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()),
             Times.Exactly(maxActionSteps));
     }
 
@@ -423,7 +423,7 @@ public class AgentOrchestratorTests
             x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()),
             Times.Once);
         _agenticTurnServiceMock.Verify(
-            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
+            x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()),
             Times.Never);
     }
 
@@ -433,7 +433,7 @@ public class AgentOrchestratorTests
         SetupRunContext(applySandboxPatchToSource: true);
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
@@ -454,7 +454,7 @@ public class AgentOrchestratorTests
         SetupRunContext(applySandboxPatchToSource: true);
         SetupLeadSelection("Build feature");
         SetupEngineerSteps();
-        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()))
+        _agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
             .ReturnsAsync(CreateCompleteObservation(hasChanges: true));
         _gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync("abc123");
