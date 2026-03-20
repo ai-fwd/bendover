@@ -146,19 +146,34 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             try
             {
+                var completed = false;
+                var completionStep = 0;
+                
                 var runContext = new TurnRunContext
                 {
                     StepHistory = new List<TurnHistoryEntry>(),
                     TurnSettings = new AgenticTurnSettings()
                 };
 
-                var completed = false;
-                var completionStep = 0;
-                var runTurn = BuildTurnPipeline(
-                    engineerClient,
-                    engineerPromptTemplate,
-                    context.StreamTranscript,
-                    selectedPracticeNames);
+                var turn = new TurnBuilder(
+                    (type, capabilities) => CreateTurnStep(
+                        type,
+                        capabilities,
+                        engineerClient,
+                        engineerPromptTemplate),
+                    NotifyProgressAsync)
+                    .WithTranscript(context.StreamTranscript, selectedPracticeNames)
+                    .WithRunRecording(new RunRecordingOptions(
+                        RecordPrompt: true,
+                        RecordOutput: true,
+                        RecordArtifacts: true))
+                    .Add<GuardTurnStep>()
+                    .Add<BuildContextStep>()
+                    .Add<BuildPromptStep>()
+                    .Add<InvokeAgentStep>()
+                    .Add<ExecuteTurnStep>()
+                    .Add<FinalizeTurnStep>()
+                    .Build();
 
                 for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
                 {
@@ -174,7 +189,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                         PracticesContext = practicesContext
                     };
 
-                    await runTurn(turnContext);
+                    await turn(turnContext);
 
                     if (turnContext.Result.Kind == TurnResultKind.FailedRetryable)
                     {
@@ -240,33 +255,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             await _runRecorder.FinalizeRunAsync();
         }
-    }
-
-    private TurnDelegate BuildTurnPipeline(
-        IChatClient engineerClient,
-        string engineerPromptTemplate,
-        bool streamTranscript,
-        IReadOnlyCollection<string> selectedPracticeNames)
-    {
-        return new TurnBuilder(
-                (type, capabilities) => CreateTurnStep(
-                    type,
-                    capabilities,
-                    engineerClient,
-                    engineerPromptTemplate),
-                NotifyProgressAsync)
-            .WithTranscript(streamTranscript, selectedPracticeNames)
-            .WithRunRecording(new RunRecordingOptions(
-                RecordPrompt: true,
-                RecordOutput: true,
-                RecordArtifacts: true))
-            .Add<GuardTurnStep>()
-            .Add<BuildContextStep>()
-            .Add<BuildPromptStep>()
-            .Add<InvokeAgentStep>()
-            .Add<ExecuteTurnStep>()
-            .Add<FinalizeTurnStep>()
-            .Build();
     }
 
     private TurnStep CreateTurnStep(
