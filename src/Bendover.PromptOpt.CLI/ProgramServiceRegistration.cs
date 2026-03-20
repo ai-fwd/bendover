@@ -1,6 +1,7 @@
 using Bendover.Application;
 using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
@@ -35,6 +36,13 @@ public static class ProgramServiceRegistration
         services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
         services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
         services.AddSingleton<IPromptOptRunEvaluator, PromptOptRunEvaluator>();
+        services.AddSingleton<TurnStepFactory>();
+        services.AddTransient<GuardTurnStep>();
+        services.AddTransient<BuildContextStep>();
+        services.AddTransient<BuildPromptStep>();
+        services.AddTransient<InvokeAgentStep>();
+        services.AddTransient<ExecuteTurnStep>();
+        services.AddTransient<FinalizeTurnStep>();
     }
 
     private static void RegisterEvaluatorRules(IServiceCollection services)

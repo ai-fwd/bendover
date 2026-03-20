@@ -1,10 +1,12 @@
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure.Services;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using System.Text.Json;
 using Xunit;
@@ -86,7 +88,8 @@ public class Story6ArtifactFlowTests
                 leadAgentMock.Object,
                 runRecorder,
                 runContextAccessor,
-                gitRunnerMock.Object);
+                gitRunnerMock.Object,
+                CreateStepFactory());
 
             var practices = new List<Practice>
             {
@@ -188,7 +191,8 @@ public class Story6ArtifactFlowTests
                 leadAgentMock.Object,
                 runRecorder,
                 runContextAccessor,
-                gitRunnerMock.Object);
+                gitRunnerMock.Object,
+                CreateStepFactory());
 
             var practices = new List<Practice>
             {
@@ -216,5 +220,17 @@ public class Story6ArtifactFlowTests
                 Directory.Delete(outDir, recursive: true);
             }
         }
+    }
+
+    private static TurnStepFactory CreateStepFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<GuardTurnStep>();
+        services.AddTransient<BuildContextStep>();
+        services.AddTransient<BuildPromptStep>();
+        services.AddTransient<InvokeAgentStep>();
+        services.AddTransient<ExecuteTurnStep>();
+        services.AddTransient<FinalizeTurnStep>();
+        return new TurnStepFactory(services.BuildServiceProvider());
     }
 }

@@ -1,5 +1,6 @@
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Interfaces;
 using Bendover.Infrastructure;
@@ -31,6 +32,13 @@ builder.Services.AddSingleton<IGitRunner, GitRunner>();
 builder.Services.AddSingleton<IDotNetRunner, DotNetRunner>();
 builder.Services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
 builder.Services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
+builder.Services.AddSingleton<TurnStepFactory>();
+builder.Services.AddTransient<GuardTurnStep>();
+builder.Services.AddTransient<BuildContextStep>();
+builder.Services.AddTransient<BuildPromptStep>();
+builder.Services.AddTransient<InvokeAgentStep>();
+builder.Services.AddTransient<ExecuteTurnStep>();
+builder.Services.AddTransient<FinalizeTurnStep>();
 
 var app = builder.Build();
 

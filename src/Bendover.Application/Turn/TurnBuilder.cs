@@ -2,18 +2,18 @@ namespace Bendover.Application.Turn;
 
 public sealed class TurnBuilder
 {
-    private readonly Func<Type, TurnStep> _activator;
+    private readonly RunContext _runContext;
     private readonly List<Type> _stepTypes = new();
 
-    private TurnBuilder(
-        Func<Type, TurnStep> activator)
+    private TurnBuilder(RunContext runContext)
     {
-        _activator = activator ?? throw new ArgumentNullException(nameof(activator));
+        _runContext = runContext ?? throw new ArgumentNullException(nameof(runContext));
     }
 
     public static TurnBuilder Create(RunContext runContext)
     {
         ArgumentNullException.ThrowIfNull(runContext);
+        ArgumentNullException.ThrowIfNull(runContext.StepFactory);
         ArgumentNullException.ThrowIfNull(runContext.TranscriptWriter);
         ArgumentNullException.ThrowIfNull(runContext.RunRecorder);
         ArgumentNullException.ThrowIfNull(runContext.EngineerClient);
@@ -22,7 +22,7 @@ public sealed class TurnBuilder
         ArgumentException.ThrowIfNullOrWhiteSpace(runContext.EngineerPromptTemplate);
         ArgumentNullException.ThrowIfNull(runContext.SelectedPractices);
 
-        return new TurnBuilder(CreateTurnStep);
+        return new TurnBuilder(runContext);
     }
 
     public TurnBuilder Add<T>() where T : TurnStep
@@ -38,46 +38,11 @@ public sealed class TurnBuilder
         for (var i = _stepTypes.Count - 1; i >= 0; i--)
         {
             var stepType = _stepTypes[i];
-            var step = _activator(stepType);
+            var step = _runContext.StepFactory.Create(stepType, _runContext);
             var next = app;
             app = context => step.InvokeAsync(context, next);
         }
 
         return app;
-    }
-
-    private static TurnStep CreateTurnStep(Type type)
-    {
-        if (type == typeof(GuardTurnStep))
-        {
-            return new GuardTurnStep();
-        }
-
-        if (type == typeof(BuildContextStep))
-        {
-            return new BuildContextStep();
-        }
-
-        if (type == typeof(BuildPromptStep))
-        {
-            return new BuildPromptStep();
-        }
-
-        if (type == typeof(InvokeAgentStep))
-        {
-            return new InvokeAgentStep();
-        }
-
-        if (type == typeof(ExecuteTurnStep))
-        {
-            return new ExecuteTurnStep();
-        }
-
-        if (type == typeof(FinalizeTurnStep))
-        {
-            return new FinalizeTurnStep();
-        }
-
-        throw new InvalidOperationException($"Unsupported turn step type: {type.FullName}");
     }
 }

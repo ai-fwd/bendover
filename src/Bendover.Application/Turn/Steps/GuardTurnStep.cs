@@ -2,6 +2,13 @@ namespace Bendover.Application.Turn;
 
 public sealed class GuardTurnStep : TurnStep
 {
+    private readonly RunContext _run;
+
+    public GuardTurnStep(RunContext run)
+    {
+        _run = run ?? throw new ArgumentNullException(nameof(run));
+    }
+
     public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
     {
         try
@@ -16,9 +23,9 @@ public sealed class GuardTurnStep : TurnStep
                 combinedOutput: ex.ToString());
             context.RunState.LastFailureDigest = failureDigest;
             context.Result = TurnResult.FailedTerminal(failureDigest, ex);
-            await context.Run.RunRecorder.RecordOutputAsync(context.FailurePhase, failureDigest);
+            await _run.RunRecorder.RecordOutputAsync(context.FailurePhase, failureDigest);
 
-            await context.Run.TranscriptWriter.WriteFailureAsync(context.FailurePhase, failureDigest);
+            await _run.TranscriptWriter.WriteFailureAsync(context.FailurePhase, failureDigest);
         }
     }
 }

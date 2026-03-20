@@ -6,6 +6,7 @@ namespace Bendover.Application.Turn;
 
 public sealed class RunContext
 {
+    public required TurnStepFactory StepFactory { get; init; }
     public required ITranscriptWriter TranscriptWriter { get; init; }
     public required IPromptOptRunRecorder RunRecorder { get; init; }
     public required IChatClient EngineerClient { get; init; }

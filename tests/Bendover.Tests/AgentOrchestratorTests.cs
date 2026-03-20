@@ -1,9 +1,11 @@
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -88,7 +90,8 @@ public class AgentOrchestratorTests
             _leadAgentMock.Object,
             _runRecorderMock.Object,
             _runContextAccessorMock.Object,
-            _gitRunnerMock.Object);
+            _gitRunnerMock.Object,
+            CreateStepFactory());
     }
 
     [Fact]
@@ -594,5 +597,17 @@ public class AgentOrchestratorTests
             messages
                 .Where(message => string.Equals(message.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
                 .Select(message => message.Text ?? string.Empty));
+    }
+
+    private static TurnStepFactory CreateStepFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<GuardTurnStep>();
+        services.AddTransient<BuildContextStep>();
+        services.AddTransient<BuildPromptStep>();
+        services.AddTransient<InvokeAgentStep>();
+        services.AddTransient<ExecuteTurnStep>();
+        services.AddTransient<FinalizeTurnStep>();
+        return new TurnStepFactory(services.BuildServiceProvider());
     }
 }

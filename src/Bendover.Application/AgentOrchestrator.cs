@@ -21,6 +21,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IPromptOptRunRecorder _runRecorder;
     private readonly IPromptOptRunContextAccessor _runContextAccessor;
     private readonly IGitRunner _gitRunner;
+    private readonly TurnStepFactory _turnStepFactory;
 
     private readonly IEnumerable<IAgentObserver> _observers;
 
@@ -35,7 +36,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         ILeadAgent leadAgent,
         IPromptOptRunRecorder runRecorder,
         IPromptOptRunContextAccessor runContextAccessor,
-        IGitRunner gitRunner)
+        IGitRunner gitRunner,
+        TurnStepFactory turnStepFactory)
     {
         _agentPromptService = agentPromptService;
         _clientResolver = clientResolver;
@@ -47,6 +49,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _runRecorder = runRecorder;
         _runContextAccessor = runContextAccessor;
         _gitRunner = gitRunner;
+        _turnStepFactory = turnStepFactory;
     }
 
     private async Task EmitEventAsync(AgentEvent evt)
@@ -162,6 +165,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                 var run = new RunContext
                 {
+                    StepFactory = _turnStepFactory,
                     TranscriptWriter = transcriptWriter,
                     RunRecorder = _runRecorder,
                     EngineerClient = engineerClient,
@@ -193,7 +197,6 @@ public class AgentOrchestrator : IAgentOrchestrator
                     var turnContext = new TurnContext
                     {
                         StepNumber = stepNumber,
-                        Run = run,
                         RunState = runState,
                         Plan = plan ?? string.Empty,
                         PracticesContext = practicesContext

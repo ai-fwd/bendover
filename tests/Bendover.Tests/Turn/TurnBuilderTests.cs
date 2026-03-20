@@ -1,6 +1,7 @@
 using Bendover.Application.Turn;
 using Bendover.Application.Interfaces;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace Bendover.Tests.Turn;
@@ -63,6 +64,7 @@ public class TurnBuilderTests
     {
         return new RunContext
         {
+            StepFactory = CreateStepFactory(),
             TranscriptWriter = transcriptWriter,
             RunRecorder = recorder,
             EngineerClient = engineerClient,
@@ -78,7 +80,6 @@ public class TurnBuilderTests
         return new TurnContext
         {
             StepNumber = 1,
-            Run = run,
             RunState = new TurnRunState
             {
                 StepHistory = new List<TurnHistoryEntry>()
@@ -86,6 +87,13 @@ public class TurnBuilderTests
             PracticesContext = "practice",
             Plan = "plan"
         };
+    }
+
+    private static TurnStepFactory CreateStepFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<InvokeAgentStep>();
+        return new TurnStepFactory(services.BuildServiceProvider());
     }
 
     private static Mock<IPromptOptRunRecorder> CreateRecorderMock()

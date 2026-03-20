@@ -5,9 +5,16 @@ namespace Bendover.Application.Turn;
 public sealed class BuildContextStep : TurnStep
 {
     private const int PromptHistoryDepth = 5;
+    private readonly RunContext _run;
+
+    public BuildContextStep(RunContext run)
+    {
+        _run = run ?? throw new ArgumentNullException(nameof(run));
+    }
 
     public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
     {
+        _ = _run;
         context.ContextBlock = BuildContextBlock(context.RunState.StepHistory);
         await next(context);
 
