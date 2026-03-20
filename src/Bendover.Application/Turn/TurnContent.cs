@@ -1,4 +1,3 @@
-using System.Text;
 using Bendover.Domain.Entities;
 using Microsoft.Extensions.AI;
 
@@ -6,8 +5,6 @@ namespace Bendover.Application.Turn;
 
 internal static class TurnContent
 {
-    public const int PromptHistoryDepth = 5;
-
     public static List<ChatMessage> BuildEngineerMessages(
         string engineerPromptTemplate,
         string practicesContext,
@@ -28,45 +25,6 @@ internal static class TurnContent
         }
 
         return messages;
-    }
-
-    public static string BuildContextBlock(IReadOnlyList<TurnHistoryEntry> history)
-    {
-        if (history.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var historyBuilder = new StringBuilder();
-        historyBuilder.AppendLine($"Recent step history (oldest to newest, last {PromptHistoryDepth}):");
-        foreach (var entry in history)
-        {
-            historyBuilder.AppendLine($"Step {entry.StepNumber} observation (raw):");
-            historyBuilder.AppendLine(entry.ObservationContext);
-            if (!string.IsNullOrWhiteSpace(entry.FailureContext))
-            {
-                historyBuilder.AppendLine($"Step {entry.StepNumber} failure (raw):");
-                historyBuilder.AppendLine(entry.FailureContext);
-            }
-
-            historyBuilder.AppendLine();
-        }
-
-        return historyBuilder.ToString().TrimEnd();
-    }
-
-    public static void AppendStepHistory(
-        List<TurnHistoryEntry> stepHistory,
-        int stepNumber,
-        string observationContext,
-        string? failureContext)
-    {
-        stepHistory.Add(new TurnHistoryEntry(stepNumber, observationContext, failureContext));
-        var overflow = stepHistory.Count - PromptHistoryDepth;
-        if (overflow > 0)
-        {
-            stepHistory.RemoveRange(0, overflow);
-        }
     }
 
     public static string BuildExceptionObservationContext(Exception exception)
