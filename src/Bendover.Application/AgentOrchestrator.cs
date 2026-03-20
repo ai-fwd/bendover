@@ -148,25 +148,24 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 var completed = false;
                 var completionStep = 0;
-                
+
                 var runContext = new TurnRunContext
                 {
                     StepHistory = new List<TurnHistoryEntry>(),
                     TurnSettings = new AgenticTurnSettings()
                 };
 
-                var turn = new TurnBuilder(
-                    (type, capabilities) => CreateTurnStep(
-                        type,
-                        capabilities,
-                        engineerClient,
-                        engineerPromptTemplate),
-                    NotifyProgressAsync)
+                var turn = TurnBuilder.Create(
+                    NotifyProgressAsync,
+                    NotifyStepAsync,
+                    engineerClient,
+                    _agenticTurnService,
+                    _runRecorder,
+                    engineerPromptTemplate)
                     .WithTranscript(context.StreamTranscript, selectedPracticeNames)
                     .WithRunRecording(new RunRecordingOptions(
                         RecordPrompt: true,
-                        RecordOutput: true,
-                        RecordArtifacts: true))
+                        RecordOutput: true))
                     .Add<GuardTurnStep>()
                     .Add<BuildContextStep>()
                     .Add<BuildPromptStep>()
@@ -255,45 +254,6 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             await _runRecorder.FinalizeRunAsync();
         }
-    }
-
-    private TurnStep CreateTurnStep(
-        Type type,
-        TurnCapabilities capabilities,
-        IChatClient engineerClient,
-        string engineerPromptTemplate)
-    {
-        if (type == typeof(GuardTurnStep))
-        {
-            return new GuardTurnStep(capabilities, _runRecorder);
-        }
-
-        if (type == typeof(BuildContextStep))
-        {
-            return new BuildContextStep();
-        }
-
-        if (type == typeof(BuildPromptStep))
-        {
-            return new BuildPromptStep(engineerPromptTemplate);
-        }
-
-        if (type == typeof(InvokeAgentStep))
-        {
-            return new InvokeAgentStep(capabilities, _runRecorder, engineerClient);
-        }
-
-        if (type == typeof(ExecuteTurnStep))
-        {
-            return new ExecuteTurnStep(_agenticTurnService);
-        }
-
-        if (type == typeof(FinalizeTurnStep))
-        {
-            return new FinalizeTurnStep(capabilities, _runRecorder, NotifyStepAsync);
-        }
-
-        throw new InvalidOperationException($"Unsupported turn step type: {type.FullName}");
     }
 
     private async Task RecordRunResultAsync(

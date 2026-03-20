@@ -1,5 +1,7 @@
 using Bendover.Application.Turn;
 using Bendover.Application.Interfaces;
+using Microsoft.Extensions.AI;
+using Moq;
 
 namespace Bendover.Tests.Turn;
 
@@ -8,52 +10,57 @@ public class TurnBuilderTests
     [Fact]
     public async Task Build_ShouldUseNoOpTranscriptWriter_ByDefault()
     {
-        FakeStep? capturedStep = null;
-        var builder = new TurnBuilder(
-            (type, capabilities) =>
+        var transcriptMessages = new List<string>();
+        var recorder = CreateRecorderMock();
+        var engineerClient = CreateEngineerClientMock();
+
+        var builder = TurnBuilder.Create(
+            message =>
             {
-                capturedStep = new FakeStep(capabilities);
-                return capturedStep;
+                transcriptMessages.Add(message);
+                return Task.CompletedTask;
             },
-            _ => Task.CompletedTask);
+            _ => Task.CompletedTask,
+            engineerClient.Object,
+            new Mock<IAgenticTurnService>().Object,
+            recorder.Object,
+            engineerPromptTemplate: "template");
 
         var pipeline = builder
-            .Add<FakeStep>()
+            .Add<InvokeAgentStep>()
             .Build();
 
         await pipeline(CreateContext());
 
-        Assert.NotNull(capturedStep);
-        Assert.IsType<NoOpTranscriptWriter>(capturedStep!.TranscriptWriter);
+        Assert.Empty(transcriptMessages);
     }
 
     [Fact]
     public async Task Build_ShouldUseStreamingTranscriptWriter_WhenEnabled()
     {
         var transcriptMessages = new List<string>();
-        FakeStep? capturedStep = null;
-        var builder = new TurnBuilder(
-            (type, capabilities) =>
-            {
-                capturedStep = new FakeStep(capabilities);
-                return capturedStep;
-            },
+        var recorder = CreateRecorderMock();
+        var engineerClient = CreateEngineerClientMock();
+        var builder = TurnBuilder.Create(
             message =>
             {
                 transcriptMessages.Add(message);
                 return Task.CompletedTask;
-            });
+            },
+            _ => Task.CompletedTask,
+            engineerClient.Object,
+            new Mock<IAgenticTurnService>().Object,
+            recorder.Object,
+            engineerPromptTemplate: "template");
 
         var pipeline = builder
             .WithTranscript(enabled: true, selectedPractices: new[] { "practice" })
-            .Add<FakeStep>()
+            .Add<InvokeAgentStep>()
             .Build();
 
         await pipeline(CreateContext());
 
-        Assert.NotNull(capturedStep);
-        Assert.IsType<StreamingTranscriptWriter>(capturedStep!.TranscriptWriter);
-        Assert.Single(transcriptMessages);
+        Assert.NotEmpty(transcriptMessages);
     }
 
     private static TurnContext CreateContext()
@@ -72,19 +79,26 @@ public class TurnBuilderTests
         };
     }
 
-    private sealed class FakeStep : TurnStep
+    private static Mock<IPromptOptRunRecorder> CreateRecorderMock()
     {
-        public FakeStep(TurnCapabilities capabilities)
-        {
-            TranscriptWriter = capabilities.TranscriptWriter;
-        }
+        var recorder = new Mock<IPromptOptRunRecorder>();
+        recorder
+            .Setup(x => x.RecordPromptAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Returns(Task.CompletedTask);
+        recorder
+            .Setup(x => x.RecordOutputAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
 
-        public ITranscriptWriter TranscriptWriter { get; }
+        return recorder;
+    }
 
-        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
-        {
-            await TranscriptWriter.WriteOutputAsync("phase", "output");
-            await next(context);
-        }
+    private static Mock<IChatClient> CreateEngineerClientMock()
+    {
+        var client = new Mock<IChatClient>();
+        client
+            .Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "ok") }));
+
+        return client;
     }
 }
