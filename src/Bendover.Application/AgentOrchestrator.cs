@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
@@ -25,11 +26,6 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IGitRunner _gitRunner;
 
     private readonly IEnumerable<IAgentObserver> _observers;
-
-    private sealed record EngineerStepHistoryEntry(
-        int StepNumber,
-        string ObservationContext,
-        string? FailureContext);
 
     public AgentOrchestrator(
         IAgentPromptService agentPromptService,
@@ -86,7 +82,6 @@ public class AgentOrchestrator : IAgentOrchestrator
             allPractices.Select(p => p.Name),
             StringComparer.OrdinalIgnoreCase);
 
-        // Capture Run Start and enforce a reproducible sandbox baseline.
         string baseCommit;
         try
         {
@@ -111,11 +106,9 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         try
         {
-            // 0. Environment Verification
             await NotifyProgressAsync("Verifying Environment...");
             await _environmentValidator.ValidateAsync();
 
-            // 1a. Lead Phase (Practice Selection)
             await NotifyProgressAsync("Lead Agent Analyzing Request...");
             var selectedPracticeNames = (await _leadAgent.AnalyzeTaskAsync(initialGoal, allPractices, agentsPath)).ToArray();
             var unknownSelectedPractices = selectedPracticeNames
@@ -124,160 +117,73 @@ public class AgentOrchestrator : IAgentOrchestrator
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            // Record Lead Input
-            var leadMessages = new List<ChatMessage> { new ChatMessage(ChatRole.User, $"Goal: {initialGoal}") };
+            var leadMessages = new List<ChatMessage> { new(ChatRole.User, $"Goal: {initialGoal}") };
             await _runRecorder.RecordPromptAsync("lead", leadMessages);
-
-            // Output is the list of selected practices
-            // Serialization logic is implicit here but for recording output we likely want the string representation
             await _runRecorder.RecordOutputAsync("lead", JsonSerializer.Serialize(selectedPracticeNames));
 
             if (selectedPracticeNames.Length == 0)
             {
                 var availableCsv = string.Join(", ", availablePracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-                throw new InvalidOperationException(
-                    $"Lead selected no practices. Available practices: [{availableCsv}]");
+                throw new InvalidOperationException($"Lead selected no practices. Available practices: [{availableCsv}]");
             }
 
             if (unknownSelectedPractices.Length > 0)
             {
                 var unknownCsv = string.Join(", ", unknownSelectedPractices);
                 var availableCsv = string.Join(", ", availablePracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-                throw new InvalidOperationException(
-                    $"Lead selected unknown practices: [{unknownCsv}]. Available practices: [{availableCsv}]");
+                throw new InvalidOperationException($"Lead selected unknown practices: [{unknownCsv}]. Available practices: [{availableCsv}]");
             }
 
             var selectedNameSet = new HashSet<string>(selectedPracticeNames, StringComparer.OrdinalIgnoreCase);
             var selectedPractices = allPractices.Where(p => selectedNameSet.Contains(p.Name)).ToList();
-
-            // Format practices for prompt
             var practicesContext = string.Join("\n", selectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));
 
-            // Removed RecordPracticesAsync call
-
-            // 2. Planning Phase (Architect) is temporarily disabled.
-            // await NotifyAsync("Architect Planning...");
-            // var architectClient = _clientResolver.GetClient(AgentRole.Architect);
-            // var architectMessages = new List<ChatMessage>
-            // {
-            //     new ChatMessage(ChatRole.System, $"You are an Architect.\n\nSelected Practices:\n{practicesContext}"),
-            //     new ChatMessage(ChatRole.User, $"Goal: {initialGoal}")
-            // };
-            // await _runRecorder.RecordPromptAsync("architect", architectMessages);
-            // var planResponse = await architectClient.CompleteAsync(architectMessages);
-            // var plan = planResponse.Message.Text;
-            // await _runRecorder.RecordOutputAsync("architect", plan ?? "");
-
-            // Keep this as the effective plan context so Engineer still receives task direction.
             var plan = initialGoal;
-
             var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
-            // var reviewerClient = _clientResolver.GetClient(AgentRole.Reviewer);
             var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate(agentsPath);
 
-            // 3. Step-wise execution loop
             await NotifyProgressAsync("Executing in Container...");
             await _containerService.StartContainerAsync(new SandboxExecutionSettings(
                 Directory.GetCurrentDirectory(),
                 BaseCommit: baseCommit));
+
             try
             {
                 string? lastFailureDigestForRunResult = null;
-                var stepHistory = new List<EngineerStepHistoryEntry>();
+                var stepHistory = new List<TurnHistoryEntry>();
                 var completed = false;
                 var completionStep = 0;
                 var lastScriptExitCode = (int?)null;
                 var turnSettings = new AgenticTurnSettings();
 
+                var turnPipeline = BuildTurnPipeline(
+                    engineerClient,
+                    engineerPromptTemplate,
+                    context.StreamTranscript,
+                    selectedPracticeNames);
+
                 for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
                 {
                     var stepNumber = stepIndex + 1;
                     await NotifyProgressAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
-                    var engineerPhase = BuildStepPhase("engineer_step", stepNumber);
 
-                    try
+                    var turnContext = new TurnContext
                     {
-                        var engineerMessages = BuildEngineerMessages(
-                            engineerPromptTemplate,
-                            practicesContext,
-                            plan ?? string.Empty,
-                            stepHistory);
-                        await _runRecorder.RecordPromptAsync(engineerPhase, engineerMessages);
-                        await EmitTranscriptPromptAsync(
-                            context.StreamTranscript,
-                            engineerPhase,
-                            engineerMessages,
-                            selectedPracticeNames);
+                        StepNumber = stepNumber,
+                        EngineerPromptTemplate = engineerPromptTemplate,
+                        PracticesContext = practicesContext,
+                        Plan = plan ?? string.Empty,
+                        SelectedPracticeNames = selectedPracticeNames,
+                        StepHistory = stepHistory,
+                        TurnSettings = turnSettings
+                    };
 
-                        var actorCodeResponse = await engineerClient.CompleteAsync(engineerMessages);
-                        var actorCode = actorCodeResponse.Message.Text ?? string.Empty;
-                        await _runRecorder.RecordOutputAsync(engineerPhase, actorCode);
-                        await EmitTranscriptOutputAsync(context.StreamTranscript, engineerPhase, actorCode);
+                    await turnPipeline(turnContext);
+                    lastScriptExitCode = turnContext.LastScriptExitCode;
 
-                        // Reviewer phase is temporarily disabled to keep the loop to Lead + Engineer only.
-                        // await NotifyAsync("Reviewer Critiquing Code...");
-                        // var reviewerMessages = new List<ChatMessage>
-                        // {
-                        //     new ChatMessage(ChatRole.System, $"You are a Reviewer.\n\nSelected Practices:\n{practicesContext}"),
-                        //     new ChatMessage(ChatRole.User, $"Review this code: {actorCode}")
-                        // };
-                        // var reviewerPhase = BuildStepPhase("reviewer_step", stepNumber);
-                        // await _runRecorder.RecordPromptAsync(reviewerPhase, reviewerMessages);
-                        // var critiqueResponse = await reviewerClient.CompleteAsync(reviewerMessages);
-                        // var critique = critiqueResponse.Message.Text;
-                        // await _runRecorder.RecordOutputAsync(reviewerPhase, critique ?? "");
-
-                        var turnObservation = await _agenticTurnService.ExecuteAgenticTurnAsync(actorCode, turnSettings);
-                        var observationPhase = BuildStepPhase("agentic_step_observation", stepNumber);
-                        var serializedObservation = JsonSerializer.Serialize(turnObservation);
-                        await _runRecorder.RecordOutputAsync(observationPhase, serializedObservation);
-                        await EmitTranscriptOutputAsync(context.StreamTranscript, observationPhase, serializedObservation);
-                        lastScriptExitCode = turnObservation.ScriptExecution.ExitCode;
-                        await NotifyStepAsync(new AgentStepEvent(
-                            StepNumber: stepNumber,
-                            Plan: turnObservation.StepPlan,
-                            Tool: BuildStepTool(turnObservation),
-                            Observation: BuildStepObservationSummary(turnObservation),
-                            IsCompletion: turnObservation.CompletionSignaled));
-
-                        if (turnObservation.ScriptExecution.ExitCode != 0)
-                        {
-                            lastFailureDigestForRunResult = BuildTurnFailureDigest(
-                                turnObservation,
-                                new[] { "script_exit_non_zero" });
-                            AppendStepHistory(
-                                stepHistory,
-                                stepNumber,
-                                serializedObservation,
-                                lastFailureDigestForRunResult);
-                            await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
-                            continue;
-                        }
-
-                        AppendStepHistory(stepHistory, stepNumber, serializedObservation, failureContext: null);
-
-                        if (turnObservation.CompletionSignaled)
-                        {
-                            lastFailureDigestForRunResult = null;
-                            completed = true;
-                            completionStep = stepNumber;
-                            break;
-                        }
-
-                        lastFailureDigestForRunResult = null;
-                    }
-                    catch (Exception ex)
+                    if (turnContext.UnhandledException is not null)
                     {
-                        lastFailureDigestForRunResult = BuildFailureDigest(
-                            exitCode: 1,
-                            exception: ex,
-                            combinedOutput: ex.ToString());
-                        AppendStepHistory(
-                            stepHistory,
-                            stepNumber,
-                            BuildExceptionObservationContext(ex),
-                            lastFailureDigestForRunResult);
-                        await RecordStepFailureAsync(context.StreamTranscript, stepNumber, lastFailureDigestForRunResult);
+                        lastFailureDigestForRunResult = turnContext.FailureDigest;
                         await RecordRunResultAsync(
                             status: "failed_exception",
                             completionStep: null,
@@ -288,8 +194,24 @@ public class AgentOrchestrator : IAgentOrchestrator
                             lastFailureDigest: lastFailureDigestForRunResult);
                         throw new InvalidOperationException(
                             $"Engineer step {stepNumber} failed.\n{lastFailureDigestForRunResult}",
-                            ex);
+                            turnContext.UnhandledException);
                     }
+
+                    if (turnContext.StepFailed)
+                    {
+                        lastFailureDigestForRunResult = turnContext.FailureDigest;
+                        continue;
+                    }
+
+                    if (turnContext.CompletionSignaled)
+                    {
+                        lastFailureDigestForRunResult = null;
+                        completed = true;
+                        completionStep = stepNumber;
+                        break;
+                    }
+
+                    lastFailureDigestForRunResult = null;
                 }
 
                 if (!completed)
@@ -329,61 +251,132 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
+    private TurnDelegate BuildTurnPipeline(
+        IChatClient engineerClient,
+        string engineerPromptTemplate,
+        bool streamTranscript,
+        IReadOnlyCollection<string> selectedPracticeNames)
+    {
+        ITranscriptWriter transcriptWriter = streamTranscript
+            ? new OrchestratorTranscriptWriter(this, selectedPracticeNames)
+            : new NoOpTranscriptWriter();
+
+        return new TurnBuilder((type, capabilities) => CreateTurnStep(
+                type,
+                capabilities,
+                engineerClient,
+                engineerPromptTemplate))
+            .WithTranscript(transcriptWriter)
+            .WithRunRecording(new RunRecordingOptions(
+                RecordPrompt: true,
+                RecordOutput: true,
+                RecordArtifacts: false))
+            .Add<TurnGuard>()
+            .Add<BuildContext>()
+            .Add<BuildPrompt>()
+            .Add<AgentInvoke>()
+            .Add<TurnExecute>()
+            .Add<FinalizeTurn>()
+            .Build();
+    }
+
+    private TurnStep CreateTurnStep(
+        Type type,
+        TurnCapabilities capabilities,
+        IChatClient engineerClient,
+        string engineerPromptTemplate)
+    {
+        if (type == typeof(TurnGuard))
+        {
+            return new TurnGuard(this, capabilities);
+        }
+
+        if (type == typeof(BuildContext))
+        {
+            return new BuildContext(this);
+        }
+
+        if (type == typeof(BuildPrompt))
+        {
+            return new BuildPrompt(this, engineerPromptTemplate);
+        }
+
+        if (type == typeof(AgentInvoke))
+        {
+            return new AgentInvoke(this, capabilities, engineerClient);
+        }
+
+        if (type == typeof(TurnExecute))
+        {
+            return new TurnExecute(_agenticTurnService);
+        }
+
+        if (type == typeof(FinalizeTurn))
+        {
+            return new FinalizeTurn(this, capabilities);
+        }
+
+        throw new InvalidOperationException($"Unsupported turn step type: {type.FullName}");
+    }
+
     private static List<ChatMessage> BuildEngineerMessages(
         string engineerPromptTemplate,
         string practicesContext,
         string plan,
-        IReadOnlyList<EngineerStepHistoryEntry> history)
+        string contextBlock)
     {
         var messages = new List<ChatMessage>
         {
-            new ChatMessage(ChatRole.System,
+            new(ChatRole.System,
                 $"{engineerPromptTemplate}\n\n" +
                 $"Selected Practices:\n{practicesContext}"),
-            new ChatMessage(ChatRole.User, $"Plan: {plan}")
+            new(ChatRole.User, $"Plan: {plan}")
         };
 
-        if (history.Count > 0)
+        if (!string.IsNullOrWhiteSpace(contextBlock))
         {
-            var historyBuilder = new StringBuilder();
-            historyBuilder.AppendLine($"Recent step history (oldest to newest, last {PromptHistoryDepth}):");
-            foreach (var entry in history)
-            {
-                historyBuilder.AppendLine($"Step {entry.StepNumber} observation (raw):");
-                historyBuilder.AppendLine(entry.ObservationContext);
-                if (!string.IsNullOrWhiteSpace(entry.FailureContext))
-                {
-                    historyBuilder.AppendLine($"Step {entry.StepNumber} failure (raw):");
-                    historyBuilder.AppendLine(entry.FailureContext);
-                }
-
-                historyBuilder.AppendLine();
-            }
-
-            messages.Add(new ChatMessage(ChatRole.User, historyBuilder.ToString().TrimEnd()));
+            messages.Add(new ChatMessage(ChatRole.User, contextBlock));
         }
 
         return messages;
     }
 
-    private async Task RecordStepFailureAsync(bool streamTranscript, int stepNumber, string failureDigest)
+    private static string BuildContextBlock(IReadOnlyList<TurnHistoryEntry> history)
+    {
+        if (history.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var historyBuilder = new StringBuilder();
+        historyBuilder.AppendLine($"Recent step history (oldest to newest, last {PromptHistoryDepth}):");
+        foreach (var entry in history)
+        {
+            historyBuilder.AppendLine($"Step {entry.StepNumber} observation (raw):");
+            historyBuilder.AppendLine(entry.ObservationContext);
+            if (!string.IsNullOrWhiteSpace(entry.FailureContext))
+            {
+                historyBuilder.AppendLine($"Step {entry.StepNumber} failure (raw):");
+                historyBuilder.AppendLine(entry.FailureContext);
+            }
+
+            historyBuilder.AppendLine();
+        }
+
+        return historyBuilder.ToString().TrimEnd();
+    }
+
+    private async Task RecordStepFailureAsync(int stepNumber, string failureDigest)
     {
         var failurePhase = BuildStepPhase("engineer_step_failure", stepNumber);
         await _runRecorder.RecordOutputAsync(failurePhase, failureDigest);
-        await EmitTranscriptFailureAsync(streamTranscript, failurePhase, failureDigest);
     }
 
     private async Task EmitTranscriptPromptAsync(
-        bool enabled,
         string phase,
         IReadOnlyList<ChatMessage> messages,
         IReadOnlyCollection<string> selectedPractices)
     {
-        if (!enabled)
-        {
-            return;
-        }
-
         var roles = string.Join(",", messages.Select(m => m.Role.Value));
         var userPrompt = messages
             .Where(m => string.Equals(m.Role.Value, ChatRole.User.Value, StringComparison.OrdinalIgnoreCase))
@@ -412,24 +405,14 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
-    private async Task EmitTranscriptOutputAsync(bool enabled, string phase, string output)
+    private async Task EmitTranscriptOutputAsync(string phase, string output)
     {
-        if (!enabled)
-        {
-            return;
-        }
-
         var preview = ToCompactSingleLine(output);
         await NotifyProgressAsync($"[transcript][output] phase={phase} chars={output.Length} preview={preview}");
     }
 
-    private async Task EmitTranscriptFailureAsync(bool enabled, string phase, string failureDigest)
+    private async Task EmitTranscriptFailureAsync(string phase, string failureDigest)
     {
-        if (!enabled)
-        {
-            return;
-        }
-
         await NotifyProgressAsync($"[transcript][failure] phase={phase}\n{failureDigest}");
     }
 
@@ -499,12 +482,12 @@ public class AgentOrchestrator : IAgentOrchestrator
     }
 
     private static void AppendStepHistory(
-        List<EngineerStepHistoryEntry> stepHistory,
+        List<TurnHistoryEntry> stepHistory,
         int stepNumber,
         string observationContext,
         string? failureContext)
     {
-        stepHistory.Add(new EngineerStepHistoryEntry(stepNumber, observationContext, failureContext));
+        stepHistory.Add(new TurnHistoryEntry(stepNumber, observationContext, failureContext));
         var overflow = stepHistory.Count - PromptHistoryDepth;
         if (overflow > 0)
         {
@@ -684,6 +667,235 @@ public class AgentOrchestrator : IAgentOrchestrator
             throw new InvalidOperationException(
                 $"Host patch apply failed at apply stage.\n{ex.Message}",
                 ex);
+        }
+    }
+
+    private sealed class OrchestratorTranscriptWriter : ITranscriptWriter
+    {
+        private readonly AgentOrchestrator _owner;
+        private readonly IReadOnlyCollection<string> _selectedPractices;
+
+        public OrchestratorTranscriptWriter(AgentOrchestrator owner, IReadOnlyCollection<string> selectedPractices)
+        {
+            _owner = owner;
+            _selectedPractices = selectedPractices;
+        }
+
+        public Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages, IReadOnlyCollection<string> selectedPractices)
+        {
+            return _owner.EmitTranscriptPromptAsync(phase, messages, selectedPractices.Count == 0 ? _selectedPractices : selectedPractices);
+        }
+
+        public Task WriteOutputAsync(string phase, string output)
+        {
+            return _owner.EmitTranscriptOutputAsync(phase, output);
+        }
+
+        public Task WriteFailureAsync(string phase, string failureDigest)
+        {
+            return _owner.EmitTranscriptFailureAsync(phase, failureDigest);
+        }
+    }
+
+    private sealed class TurnGuard : TurnStep
+    {
+        private readonly AgentOrchestrator _owner;
+        private readonly TurnCapabilities _capabilities;
+
+        public TurnGuard(AgentOrchestrator owner, TurnCapabilities capabilities)
+        {
+            _owner = owner;
+            _capabilities = capabilities;
+        }
+
+        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
+        {
+            try
+            {
+                await next(context);
+            }
+            catch (Exception ex)
+            {
+                context.UnhandledException = ex;
+                context.FailureDigest = BuildFailureDigest(
+                    exitCode: 1,
+                    exception: ex,
+                    combinedOutput: ex.ToString());
+
+                if (_capabilities.RunRecording.RecordOutput)
+                {
+                    await _owner.RecordStepFailureAsync(context.StepNumber, context.FailureDigest);
+                }
+
+                await _capabilities.TranscriptWriter.WriteFailureAsync(context.FailurePhase, context.FailureDigest);
+            }
+        }
+    }
+
+    private sealed class BuildContext : TurnStep
+    {
+        public BuildContext(AgentOrchestrator owner)
+        {
+        }
+
+        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
+        {
+            context.ContextBlock = BuildContextBlock(context.StepHistory);
+            await next(context);
+
+            if (context.UnhandledException is not null)
+            {
+                AppendStepHistory(
+                    context.StepHistory,
+                    context.StepNumber,
+                    BuildExceptionObservationContext(context.UnhandledException),
+                    context.FailureDigest);
+                return;
+            }
+
+            if (context.StepFailed)
+            {
+                AppendStepHistory(
+                    context.StepHistory,
+                    context.StepNumber,
+                    context.SerializedObservation,
+                    context.FailureDigest);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(context.SerializedObservation))
+            {
+                AppendStepHistory(
+                    context.StepHistory,
+                    context.StepNumber,
+                    context.SerializedObservation,
+                    failureContext: null);
+            }
+        }
+    }
+
+    private sealed class BuildPrompt : TurnStep
+    {
+        private readonly string _engineerPromptTemplate;
+
+        public BuildPrompt(AgentOrchestrator owner, string engineerPromptTemplate)
+        {
+            _engineerPromptTemplate = engineerPromptTemplate;
+        }
+
+        public override Task InvokeAsync(TurnContext context, TurnDelegate next)
+        {
+            context.EngineerMessages = BuildEngineerMessages(
+                _engineerPromptTemplate,
+                context.PracticesContext,
+                context.Plan,
+                context.ContextBlock);
+
+            return next(context);
+        }
+    }
+
+    private sealed class AgentInvoke : TurnStep
+    {
+        private readonly AgentOrchestrator _owner;
+        private readonly TurnCapabilities _capabilities;
+        private readonly IChatClient _engineerClient;
+
+        public AgentInvoke(AgentOrchestrator owner, TurnCapabilities capabilities, IChatClient engineerClient)
+        {
+            _owner = owner;
+            _capabilities = capabilities;
+            _engineerClient = engineerClient;
+        }
+
+        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
+        {
+            if (_capabilities.RunRecording.RecordPrompt)
+            {
+                await _owner._runRecorder.RecordPromptAsync(context.EngineerPhase, context.EngineerMessages);
+            }
+
+            await _capabilities.TranscriptWriter.WritePromptAsync(
+                context.EngineerPhase,
+                context.EngineerMessages,
+                context.SelectedPracticeNames);
+
+            var actorCodeResponse = await _engineerClient.CompleteAsync(context.EngineerMessages);
+            context.ActorCode = actorCodeResponse.Message.Text ?? string.Empty;
+
+            if (_capabilities.RunRecording.RecordOutput)
+            {
+                await _owner._runRecorder.RecordOutputAsync(context.EngineerPhase, context.ActorCode);
+            }
+
+            await _capabilities.TranscriptWriter.WriteOutputAsync(context.EngineerPhase, context.ActorCode);
+            await next(context);
+        }
+    }
+
+    private sealed class TurnExecute : TurnStep
+    {
+        private readonly IAgenticTurnService _agenticTurnService;
+
+        public TurnExecute(IAgenticTurnService agenticTurnService)
+        {
+            _agenticTurnService = agenticTurnService;
+        }
+
+        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
+        {
+            context.Observation = await _agenticTurnService.ExecuteAgenticTurnAsync(context.ActorCode, context.TurnSettings);
+            context.LastScriptExitCode = context.Observation.ScriptExecution.ExitCode;
+            await next(context);
+        }
+    }
+
+    private sealed class FinalizeTurn : TurnStep
+    {
+        private readonly AgentOrchestrator _owner;
+        private readonly TurnCapabilities _capabilities;
+        public FinalizeTurn(AgentOrchestrator owner, TurnCapabilities capabilities)
+        {
+            _owner = owner;
+            _capabilities = capabilities;
+        }
+
+        public override async Task InvokeAsync(TurnContext context, TurnDelegate next)
+        {
+            var observation = context.Observation
+                ?? throw new InvalidOperationException("Turn observation was not produced.");
+
+            context.SerializedObservation = JsonSerializer.Serialize(observation);
+
+            if (_capabilities.RunRecording.RecordOutput)
+            {
+                await _owner._runRecorder.RecordOutputAsync(context.ObservationPhase, context.SerializedObservation);
+            }
+
+            await _capabilities.TranscriptWriter.WriteOutputAsync(context.ObservationPhase, context.SerializedObservation);
+            await _owner.NotifyStepAsync(new AgentStepEvent(
+                StepNumber: context.StepNumber,
+                Plan: observation.StepPlan,
+                Tool: BuildStepTool(observation),
+                Observation: BuildStepObservationSummary(observation),
+                IsCompletion: observation.CompletionSignaled));
+
+            if (observation.ScriptExecution.ExitCode != 0)
+            {
+                context.FailureDigest = BuildTurnFailureDigest(observation, new[] { "script_exit_non_zero" });
+                context.StepFailed = true;
+
+                if (_capabilities.RunRecording.RecordOutput)
+                {
+                    await _owner.RecordStepFailureAsync(context.StepNumber, context.FailureDigest);
+                }
+
+                await _capabilities.TranscriptWriter.WriteFailureAsync(context.FailurePhase, context.FailureDigest);
+                return;
+            }
+
+            context.CompletionSignaled = observation.CompletionSignaled;
+            await next(context);
         }
     }
 }
