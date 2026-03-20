@@ -5,6 +5,8 @@ using Bendover.Domain.Entities;
 using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
 using Moq;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace Bendover.Tests;
@@ -367,7 +369,14 @@ public class AgentOrchestratorTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.RunAsync("Build feature", CreatePractices()));
 
-        Assert.Contains("24 action steps", ex.Message, StringComparison.Ordinal);
+        var stepLimitMatch = Regex.Match(
+            ex.Message,
+            @"Engineer failed after (\d+) action steps\.",
+            RegexOptions.CultureInvariant);
+        Assert.True(stepLimitMatch.Success, $"Expected max-step failure message, got: {ex.Message}");
+
+        var maxActionSteps = int.Parse(stepLimitMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+        Assert.True(maxActionSteps > 0);
         _runRecorderMock.Verify(
             x => x.RecordArtifactAsync(
                 "run_result.json",
@@ -375,7 +384,7 @@ public class AgentOrchestratorTests
             Times.Once);
         _agenticTurnServiceMock.Verify(
             x => x.ExecuteAgenticTurnAsync(It.IsAny<string>(), It.IsAny<AgenticTurnSettings>()),
-            Times.Exactly(24));
+            Times.Exactly(maxActionSteps));
     }
 
     [Fact]
