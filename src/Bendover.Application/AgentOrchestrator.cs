@@ -11,6 +11,12 @@ namespace Bendover.Application;
 public class AgentOrchestrator : IAgentOrchestrator
 {
     private const int MaxActionSteps = 100;
+    private enum TurnHandlingAction
+    {
+        Continue,
+        Complete,
+        Fail
+    }
 
     private readonly IAgentPromptService _agentPromptService;
     private readonly IChatClientResolver _clientResolver;
@@ -75,22 +81,17 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     public async Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices, string? agentsPath = null)
     {
-        if (practices is null)
-        {
-            throw new ArgumentNullException(nameof(practices));
-        }
+        ArgumentNullException.ThrowIfNull(practices);
 
-        var context = _runContextAccessor.Current
-            ?? throw new InvalidOperationException("PromptOpt run context is not set.");
-        var bundleId = context.BundleId
-            ?? throw new InvalidOperationException("PromptOpt run context BundleId is not set.");
+        var porContext = _runContextAccessor.Current ?? throw new InvalidOperationException("PromptOpt run context is not set.");
+        var bundleId = porContext.BundleId ?? throw new InvalidOperationException("PromptOpt run context BundleId is not set.");
 
         var runStageContext = new RunStageContext
         {
             InitialGoal = initialGoal,
             Practices = practices,
             AgentsPath = agentsPath,
-            PromptOptRunContext = context,
+            PromptOptRunContext = porContext,
             BundleId = bundleId,
             SourceRepositoryPath = Directory.GetCurrentDirectory(),
             NotifyProgressAsync = NotifyProgressAsync
@@ -101,9 +102,9 @@ public class AgentOrchestrator : IAgentOrchestrator
             .Add<RecordingStage>()
             .Add<SandboxStage>()
             .Add<PracticeSelectionStage>()
-            .ConfigureTranscript(context.StreamTranscript)
+            .ConfigureTranscript(porContext.StreamTranscript)
             .Build();
-        
+
         await runPipeline(runStageContext, async runContext =>
         {
             var plan = initialGoal;
@@ -124,7 +125,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             var runState = new TurnRunState
             {
-                StepHistory = new List<TurnHistoryEntry>()
+                StepHistory = []
             };
 
             var turn = TurnBuilder.Create(run)
@@ -151,34 +152,26 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                 await turn(turnContext);
 
-                if (turnContext.Result.Kind == TurnResultKind.FailedRetryable)
-                {
-                    continue;
-                }
+                var action = HandleTurnResult(
+                    turnContext,
+                    stepNumber,
+                    runState,
+                    out var resolvedRunResult,
+                    out var exceptionToThrow);
 
-                if (turnContext.Result.Kind == TurnResultKind.Completed)
+                switch (action)
                 {
-                    var diffOutput = turnContext.Observation?.DiffExecution.CombinedOutput ?? string.Empty;
-                    runContext.RunResult = RunResult.Completed(
-                        completionStep: stepNumber,
-                        completionSignaled: true,
-                        hasCodeChanges: turnContext.Observation?.HasChanges ?? !string.IsNullOrWhiteSpace(diffOutput),
-                        gitDiffBytes: diffOutput.Length,
-                        lastScriptExitCode: runState.LastScriptExitCode,
-                        lastFailureDigest: runState.LastFailureDigest);
-                    await NotifyProgressAsync("Finished.");
-                    return;
-                }
-
-                if (turnContext.Result.Kind == TurnResultKind.FailedTerminal)
-                {
-                    var failureDigest = turnContext.Result.FailureDigest ?? runState.LastFailureDigest;
-                    runContext.RunResult = RunResult.FailedException(
-                        lastScriptExitCode: runState.LastScriptExitCode,
-                        lastFailureDigest: failureDigest);
-                    throw new InvalidOperationException(
-                        $"Engineer step {stepNumber} failed.\n{failureDigest}",
-                        turnContext.Result.Exception);
+                    case TurnHandlingAction.Continue:
+                        continue;
+                    case TurnHandlingAction.Complete:
+                        runContext.RunResult = resolvedRunResult!;
+                        await NotifyProgressAsync("Finished.");
+                        return;
+                    case TurnHandlingAction.Fail:
+                        runContext.RunResult = resolvedRunResult!;
+                        throw exceptionToThrow!;
+                    default:
+                        throw new InvalidOperationException($"Unsupported turn handling action: {action}");
                 }
             }
 
@@ -187,5 +180,44 @@ public class AgentOrchestrator : IAgentOrchestrator
                 lastFailureDigest: runState.LastFailureDigest);
             throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{runState.LastFailureDigest}");
         });
+    }
+
+    private static TurnHandlingAction HandleTurnResult(
+        TurnContext turnContext,
+        int stepNumber,
+        TurnRunState runState,
+        out RunResult? runResult,
+        out Exception? exceptionToThrow)
+    {
+        runResult = null;
+        exceptionToThrow = null;
+
+        switch (turnContext.Result.Kind)
+        {
+            case TurnResultKind.FailedRetryable:
+            case TurnResultKind.Continue:
+                return TurnHandlingAction.Continue;
+            case TurnResultKind.Completed:
+                var diffOutput = turnContext.Observation?.DiffExecution.CombinedOutput ?? string.Empty;
+                runResult = RunResult.Completed(
+                    completionStep: stepNumber,
+                    completionSignaled: true,
+                    hasCodeChanges: turnContext.Observation?.HasChanges ?? !string.IsNullOrWhiteSpace(diffOutput),
+                    gitDiffBytes: diffOutput.Length,
+                    lastScriptExitCode: runState.LastScriptExitCode,
+                    lastFailureDigest: runState.LastFailureDigest);
+                return TurnHandlingAction.Complete;
+            case TurnResultKind.FailedTerminal:
+                var failureDigest = turnContext.Result.FailureDigest ?? runState.LastFailureDigest;
+                runResult = RunResult.FailedException(
+                    lastScriptExitCode: runState.LastScriptExitCode,
+                    lastFailureDigest: failureDigest);
+                exceptionToThrow = new InvalidOperationException(
+                    $"Engineer step {stepNumber} failed.\n{failureDigest}",
+                    turnContext.Result.Exception);
+                return TurnHandlingAction.Fail;
+            default:
+                throw new InvalidOperationException($"Unsupported turn result kind: {turnContext.Result.Kind}");
+        }
     }
 }
