@@ -1,19 +1,25 @@
-using Microsoft.Extensions.AI;
 using Bendover.Application.Interfaces;
+using Microsoft.Extensions.AI;
 
-namespace Bendover.Application.Turn;
+namespace Bendover.Application.Transcript;
 
 public sealed class StreamingTranscriptWriter : ITranscriptWriter
 {
     private const int TranscriptPreviewLimit = 320;
 
     private readonly Func<string, Task> _notifyProgressAsync;
-    private readonly IReadOnlyCollection<string> _selectedPractices;
+    private IReadOnlyCollection<string> _selectedPractices = Array.Empty<string>();
 
-    public StreamingTranscriptWriter(Func<string, Task> notifyProgressAsync, IReadOnlyCollection<string> selectedPractices)
+    public StreamingTranscriptWriter(Func<string, Task> notifyProgressAsync)
     {
         _notifyProgressAsync = notifyProgressAsync;
+    }
+
+    public Task WriteSelectedPracticesAsync(IReadOnlyCollection<string> selectedPractices)
+    {
         _selectedPractices = selectedPractices ?? Array.Empty<string>();
+        var selectedCsv = string.Join(", ", _selectedPractices.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+        return _notifyProgressAsync($"[transcript][run] selected_practices={selectedCsv}");
     }
 
     public async Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages)

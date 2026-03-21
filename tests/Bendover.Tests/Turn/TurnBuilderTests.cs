@@ -1,5 +1,6 @@
 using Bendover.Application.Turn;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Transcript;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -42,8 +43,7 @@ public class TurnBuilderTests
                 {
                     transcriptMessages.Add(message);
                     return Task.CompletedTask;
-                },
-                new[] { "practice" }),
+                }),
             recorder.Object,
             engineerClient.Object);
         var builder = TurnBuilder.Create(run);

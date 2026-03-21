@@ -1,10 +1,13 @@
-using Microsoft.Extensions.AI;
 using Bendover.Application.Interfaces;
+using Microsoft.Extensions.AI;
 
-namespace Bendover.Application.Turn;
+namespace Bendover.Application.Transcript;
 
 public sealed class NoOpTranscriptWriter : ITranscriptWriter
 {
+    public Task WriteSelectedPracticesAsync(IReadOnlyCollection<string> selectedPractices)
+        => Task.CompletedTask;
+
     public Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages)
         => Task.CompletedTask;
 

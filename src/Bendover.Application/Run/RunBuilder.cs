@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using Bendover.Application.Transcript;
 
 namespace Bendover.Application.Run;
 
@@ -24,9 +25,9 @@ public sealed class RunBuilder
         return this;
     }
 
-    public RunBuilder WithTranscript()
+    public RunBuilder ConfigureTranscript(bool enabled)
     {
-        _streamTranscriptEnabled = true;
+        _streamTranscriptEnabled = enabled;
         return this;
     }
 
@@ -48,7 +49,9 @@ public sealed class RunBuilder
             ArgumentNullException.ThrowIfNull(context);
             ArgumentNullException.ThrowIfNull(terminal);
 
-            context.StreamTranscriptEnabled = _streamTranscriptEnabled;
+            context.TranscriptWriter = _streamTranscriptEnabled
+                ? new StreamingTranscriptWriter(context.NotifyProgressAsync)
+                : new NoOpTranscriptWriter();
 
             var activeStages = new List<RunStage>();
             Exception? pendingException = null;

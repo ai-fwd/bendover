@@ -96,18 +96,14 @@ public class AgentOrchestrator : IAgentOrchestrator
             NotifyProgressAsync = NotifyProgressAsync
         };
 
-        var runBuilder = RunBuilder.Create(_runStageFactory)
+        var runPipeline = RunBuilder.Create(_runStageFactory)
             .Add<RepositoryStage>()
             .Add<RecordingStage>()
             .Add<SandboxStage>()
-            .Add<PracticeSelectionStage>();
-
-        if (context.StreamTranscript)
-        {
-            runBuilder.WithTranscript();
-        }
-
-        var runPipeline = runBuilder.Build();
+            .Add<PracticeSelectionStage>()
+            .ConfigureTranscript(context.StreamTranscript)
+            .Build();
+        
         await runPipeline(runStageContext, async runContext =>
         {
             var plan = initialGoal;

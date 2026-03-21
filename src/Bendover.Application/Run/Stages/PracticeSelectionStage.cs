@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Bendover.Application.Interfaces;
-using Bendover.Application.Turn;
 using Bendover.Domain;
 using Microsoft.Extensions.AI;
 
@@ -60,14 +59,9 @@ public sealed class PracticeSelectionStage : RunStage
         context.PracticesContext = string.Join(
             "\n",
             context.SelectedPractices.Select(p => $"- [{p.Name}] ({p.AreaOfConcern}): {p.Content}"));
-        context.TranscriptWriter = context.StreamTranscriptEnabled
-            ? new StreamingTranscriptWriter(context.NotifyProgressAsync, selectedPracticeNames)
-            : new NoOpTranscriptWriter();
+        await context.TranscriptWriter.WriteSelectedPracticesAsync(selectedPracticeNames);
 
-        if (context.StreamTranscriptEnabled)
-        {
-            var selectedCsv = string.Join(", ", selectedPracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-            await context.NotifyProgressAsync($"[transcript][run] selected_practices={selectedCsv}");
-        }
+        var selectedCsv = string.Join(", ", selectedPracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+        await context.NotifyProgressAsync($"Selected practices: {selectedCsv}");
     }
 }
