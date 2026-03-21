@@ -50,7 +50,7 @@ public sealed class RunBuilder
             ArgumentNullException.ThrowIfNull(terminal);
 
             context.TranscriptWriter = _streamTranscriptEnabled
-                ? new StreamingTranscriptWriter(context.NotifyProgressAsync)
+                ? new EventTranscriptWriter(context.Events)
                 : new NoOpTranscriptWriter();
 
             var activeStages = new List<RunStage>();

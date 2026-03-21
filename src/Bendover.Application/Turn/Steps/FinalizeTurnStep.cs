@@ -21,7 +21,7 @@ public sealed class FinalizeTurnStep : TurnStep
         await _run.RunRecorder.RecordOutputAsync(context.ObservationPhase, context.SerializedObservation);
 
         await _run.TranscriptWriter.WriteOutputAsync(context.ObservationPhase, context.SerializedObservation);
-        await _run.NotifyStepAsync(new AgentStepEvent(
+        await _run.Events.StepAsync(new AgentStepEvent(
             StepNumber: context.StepNumber,
             Plan: observation.StepPlan,
             Tool: TurnContent.BuildStepTool(observation),

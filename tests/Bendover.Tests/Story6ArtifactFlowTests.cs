@@ -78,6 +78,7 @@ public class Story6ArtifactFlowTests
             var runRecorder = new PromptOptRunRecorder(
                 new System.IO.Abstractions.FileSystem(),
                 runContextAccessor);
+            var eventPublisher = new AgentEventPublisher(new[] { observerMock.Object });
 
             var orchestrator = new AgentOrchestrator(
                 agentPromptServiceMock.Object,
@@ -86,7 +87,7 @@ public class Story6ArtifactFlowTests
                 new ScriptGenerator(),
                 agenticTurnServiceMock.Object,
                 environmentValidatorMock.Object,
-                new[] { observerMock.Object },
+                eventPublisher,
                 leadAgentMock.Object,
                 runRecorder,
                 runContextAccessor,
@@ -187,6 +188,7 @@ public class Story6ArtifactFlowTests
             var runRecorder = new PromptOptRunRecorder(
                 new System.IO.Abstractions.FileSystem(),
                 runContextAccessor);
+            var eventPublisher = new AgentEventPublisher(new[] { observerMock.Object });
 
             var orchestrator = new AgentOrchestrator(
                 agentPromptServiceMock.Object,
@@ -195,7 +197,7 @@ public class Story6ArtifactFlowTests
                 new ScriptGenerator(),
                 agenticTurnServiceMock.Object,
                 environmentValidatorMock.Object,
-                new[] { observerMock.Object },
+                eventPublisher,
                 leadAgentMock.Object,
                 runRecorder,
                 runContextAccessor,

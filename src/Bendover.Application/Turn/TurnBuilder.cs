@@ -18,7 +18,7 @@ public sealed class TurnBuilder
         ArgumentNullException.ThrowIfNull(runContext.RunRecorder);
         ArgumentNullException.ThrowIfNull(runContext.EngineerClient);
         ArgumentNullException.ThrowIfNull(runContext.AgenticTurnService);
-        ArgumentNullException.ThrowIfNull(runContext.NotifyStepAsync);
+        ArgumentNullException.ThrowIfNull(runContext.Events);
         ArgumentException.ThrowIfNullOrWhiteSpace(runContext.EngineerPromptTemplate);
         ArgumentNullException.ThrowIfNull(runContext.SelectedPractices);
 

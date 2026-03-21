@@ -25,6 +25,7 @@ public static class ProgramServiceRegistration
         services.AddSingleton<IContainerService, DockerContainerService>();
         services.AddSingleton<IAgenticTurnService, AgenticTurnService>();
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
+        services.AddSingleton<IAgentEventPublisher, AgentEventPublisher>();
         services.AddSingleton<ScriptGenerator>();
         services.AddSingleton<System.IO.Abstractions.IFileSystem, System.IO.Abstractions.FileSystem>();
         services.AddSingleton<IFileService, FileService>();

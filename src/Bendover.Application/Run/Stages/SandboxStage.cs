@@ -23,10 +23,10 @@ public sealed class SandboxStage : RunStage
 
     public override async Task SetupAsync(RunStageContext context)
     {
-        await context.NotifyProgressAsync("Verifying Environment...");
+        await context.Events.ProgressAsync("Verifying Environment...");
         await _environmentValidator.ValidateAsync();
 
-        await context.NotifyProgressAsync("Executing in Container...");
+        await context.Events.ProgressAsync("Executing in Container...");
         await _containerService.StartContainerAsync(new SandboxExecutionSettings(
             context.SourceRepositoryPath,
             BaseCommit: context.BaseCommit));

@@ -1,25 +1,29 @@
 using Bendover.Application.Interfaces;
+using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
 
 namespace Bendover.Application.Transcript;
 
-public sealed class StreamingTranscriptWriter : ITranscriptWriter
+public sealed class EventTranscriptWriter : ITranscriptWriter
 {
     private const int TranscriptPreviewLimit = 320;
 
-    private readonly Func<string, Task> _notifyProgressAsync;
+    private readonly IAgentEventPublisher _events;
     private IReadOnlyCollection<string> _selectedPractices = Array.Empty<string>();
 
-    public StreamingTranscriptWriter(Func<string, Task> notifyProgressAsync)
+    public EventTranscriptWriter(IAgentEventPublisher events)
     {
-        _notifyProgressAsync = notifyProgressAsync;
+        _events = events ?? throw new ArgumentNullException(nameof(events));
     }
 
     public Task WriteSelectedPracticesAsync(IReadOnlyCollection<string> selectedPractices)
     {
         _selectedPractices = selectedPractices ?? Array.Empty<string>();
         var selectedCsv = string.Join(", ", _selectedPractices.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-        return _notifyProgressAsync($"[transcript][run] selected_practices={selectedCsv}");
+        return _events.TranscriptAsync(new AgentTranscriptEvent(
+            Category: "run",
+            Phase: string.Empty,
+            Message: $"[transcript][run] selected_practices={selectedCsv}"));
     }
 
     public async Task WritePromptAsync(string phase, IReadOnlyList<ChatMessage> messages)
@@ -40,7 +44,10 @@ public sealed class StreamingTranscriptWriter : ITranscriptWriter
             ? "(none)"
             : string.Join(", ", deliveredPractices.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
 
-        await _notifyProgressAsync($"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}");
+        await _events.TranscriptAsync(new AgentTranscriptEvent(
+            Category: "prompt",
+            Phase: phase,
+            Message: $"[transcript][prompt] phase={phase} roles={roles} user={userSummary} system_selected_practices={deliveredCsv}"));
 
         foreach (var practice in _selectedPractices
                      .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -48,19 +55,28 @@ public sealed class StreamingTranscriptWriter : ITranscriptWriter
                      .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
         {
             var delivered = deliveredPractices.Contains(practice) ? "yes" : "no";
-            await _notifyProgressAsync($"[transcript][audit] phase={phase} practice={practice} delivered={delivered}");
+            await _events.TranscriptAsync(new AgentTranscriptEvent(
+                Category: "audit",
+                Phase: phase,
+                Message: $"[transcript][audit] phase={phase} practice={practice} delivered={delivered}"));
         }
     }
 
     public Task WriteOutputAsync(string phase, string output)
     {
         var preview = ToCompactSingleLine(output);
-        return _notifyProgressAsync($"[transcript][output] phase={phase} chars={output.Length} preview={preview}");
+        return _events.TranscriptAsync(new AgentTranscriptEvent(
+            Category: "output",
+            Phase: phase,
+            Message: $"[transcript][output] phase={phase} chars={output.Length} preview={preview}"));
     }
 
     public Task WriteFailureAsync(string phase, string failureDigest)
     {
-        return _notifyProgressAsync($"[transcript][failure] phase={phase}\n{failureDigest}");
+        return _events.TranscriptAsync(new AgentTranscriptEvent(
+            Category: "failure",
+            Phase: phase,
+            Message: $"[transcript][failure] phase={phase}\n{failureDigest}"));
     }
 
     private static HashSet<string> ExtractPracticesFromSystemPrompt(string systemPrompt)

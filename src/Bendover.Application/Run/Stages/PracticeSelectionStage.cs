@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Bendover.Application.Interfaces;
 using Bendover.Domain;
+using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
 
 namespace Bendover.Application.Run.Stages;
@@ -22,7 +23,7 @@ public sealed class PracticeSelectionStage : RunStage
 
     public override async Task ExecuteAsync(RunStageContext context)
     {
-        await context.NotifyProgressAsync("Lead Agent Analyzing Request...");
+        await context.Events.ProgressAsync("Lead Agent Analyzing Request...");
 
         var allPractices = context.Practices.ToList();
         var availablePracticeNames = new HashSet<string>(
@@ -62,6 +63,6 @@ public sealed class PracticeSelectionStage : RunStage
         await context.TranscriptWriter.WriteSelectedPracticesAsync(selectedPracticeNames);
 
         var selectedCsv = string.Join(", ", selectedPracticeNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-        await context.NotifyProgressAsync($"Selected practices: {selectedCsv}");
+        await context.Events.ProgressAsync($"Selected practices: {selectedCsv}");
     }
 }

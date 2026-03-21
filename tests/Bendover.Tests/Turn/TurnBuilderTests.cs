@@ -1,6 +1,8 @@
+using Bendover.Application;
 using Bendover.Application.Turn;
 using Bendover.Application.Interfaces;
 using Bendover.Application.Transcript;
+using Bendover.Domain.Interfaces;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -12,7 +14,6 @@ public class TurnBuilderTests
     [Fact]
     public async Task Build_ShouldUseNoOpTranscriptWriter_ByDefault()
     {
-        var transcriptMessages = new List<string>();
         var recorder = CreateRecorderMock();
         var engineerClient = CreateEngineerClientMock();
         var run = CreateRunContext(
@@ -28,22 +29,23 @@ public class TurnBuilderTests
 
         await pipeline(CreateContext(run));
 
-        Assert.Empty(transcriptMessages);
+        Assert.IsType<NoOpTranscriptWriter>(run.TranscriptWriter);
     }
 
     [Fact]
-    public async Task Build_ShouldUseStreamingTranscriptWriter_WhenEnabled()
+    public async Task Build_ShouldUseEventTranscriptWriter_WhenEnabled()
     {
-        var transcriptMessages = new List<string>();
+        var transcriptEvents = new List<AgentTranscriptEvent>();
         var recorder = CreateRecorderMock();
         var engineerClient = CreateEngineerClientMock();
         var run = CreateRunContext(
-            new StreamingTranscriptWriter(
-                message =>
+            new EventTranscriptWriter(CreateEventPublisher(evt =>
+            {
+                if (evt is AgentTranscriptEvent transcript)
                 {
-                    transcriptMessages.Add(message);
-                    return Task.CompletedTask;
-                }),
+                    transcriptEvents.Add(transcript);
+                }
+            })),
             recorder.Object,
             engineerClient.Object);
         var builder = TurnBuilder.Create(run);
@@ -54,7 +56,7 @@ public class TurnBuilderTests
 
         await pipeline(CreateContext(run));
 
-        Assert.NotEmpty(transcriptMessages);
+        Assert.NotEmpty(transcriptEvents);
     }
 
     private static RunContext CreateRunContext(
@@ -69,7 +71,7 @@ public class TurnBuilderTests
             RunRecorder = recorder,
             EngineerClient = engineerClient,
             AgenticTurnService = new Mock<IAgenticTurnService>().Object,
-            NotifyStepAsync = _ => Task.CompletedTask,
+            Events = CreateEventPublisher(_ => { }),
             EngineerPromptTemplate = "template",
             SelectedPractices = new[] { "practice" }
         };
@@ -117,5 +119,15 @@ public class TurnBuilderTests
             .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "ok") }));
 
         return client;
+    }
+
+    private static IAgentEventPublisher CreateEventPublisher(Action<AgentEvent> capture)
+    {
+        var observer = new Mock<IAgentObserver>();
+        observer
+            .Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>()))
+            .Callback<AgentEvent>(capture)
+            .Returns(Task.CompletedTask);
+        return new AgentEventPublisher(new[] { observer.Object });
     }
 }

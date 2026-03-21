@@ -10,3 +10,8 @@ public sealed record AgentStepEvent(
     string Tool,
     string Observation,
     bool IsCompletion) : AgentEvent;
+
+public sealed record AgentTranscriptEvent(
+    string Category,
+    string Phase,
+    string Message) : AgentEvent;

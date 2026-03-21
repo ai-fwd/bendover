@@ -11,7 +11,7 @@ public sealed class RunContext
     public required IPromptOptRunRecorder RunRecorder { get; init; }
     public required IChatClient EngineerClient { get; init; }
     public required IAgenticTurnService AgenticTurnService { get; init; }
-    public required Func<AgentStepEvent, Task> NotifyStepAsync { get; init; }
+    public required IAgentEventPublisher Events { get; init; }
     public required string EngineerPromptTemplate { get; init; }
     public required IReadOnlyCollection<string> SelectedPractices { get; init; }
 }

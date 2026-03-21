@@ -23,6 +23,9 @@ public class HubAgentObserver : IAgentObserver
             case AgentStepEvent step:
                 await _hubContext.Clients.All.SendAsync("ReceiveStep", step);
                 break;
+            case AgentTranscriptEvent transcript:
+                await _hubContext.Clients.All.SendAsync("ReceiveTranscript", transcript);
+                break;
         }
     }
 }

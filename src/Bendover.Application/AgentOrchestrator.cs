@@ -29,8 +29,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IGitRunner _gitRunner;
     private readonly RunStageFactory _runStageFactory;
     private readonly TurnStepFactory _turnStepFactory;
-
-    private readonly IEnumerable<IAgentObserver> _observers;
+    private readonly IAgentEventPublisher _events;
 
     public AgentOrchestrator(
         IAgentPromptService agentPromptService,
@@ -39,7 +38,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ScriptGenerator scriptGenerator,
         IAgenticTurnService agenticTurnService,
         IEnvironmentValidator environmentValidator,
-        IEnumerable<IAgentObserver> observers,
+        IAgentEventPublisher events,
         ILeadAgent leadAgent,
         IPromptOptRunRecorder runRecorder,
         IPromptOptRunContextAccessor runContextAccessor,
@@ -52,31 +51,13 @@ public class AgentOrchestrator : IAgentOrchestrator
         _agenticTurnService = agenticTurnService;
         _containerService = containerService;
         _environmentValidator = environmentValidator;
-        _observers = observers;
+        _events = events;
         _leadAgent = leadAgent;
         _runRecorder = runRecorder;
         _runContextAccessor = runContextAccessor;
         _gitRunner = gitRunner;
         _runStageFactory = runStageFactory;
         _turnStepFactory = turnStepFactory;
-    }
-
-    private async Task EmitEventAsync(AgentEvent evt)
-    {
-        foreach (var observer in _observers)
-        {
-            await observer.OnEventAsync(evt);
-        }
-    }
-
-    private Task NotifyProgressAsync(string message)
-    {
-        return EmitEventAsync(new AgentProgressEvent(message));
-    }
-
-    private Task NotifyStepAsync(AgentStepEvent stepEvent)
-    {
-        return EmitEventAsync(stepEvent);
     }
 
     public async Task RunAsync(string initialGoal, IReadOnlyCollection<Practice> practices, string? agentsPath = null)
@@ -94,7 +75,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             PromptOptRunContext = porContext,
             BundleId = bundleId,
             SourceRepositoryPath = Directory.GetCurrentDirectory(),
-            NotifyProgressAsync = NotifyProgressAsync
+            Events = _events
         };
 
         var runPipeline = RunBuilder.Create(_runStageFactory)
@@ -105,22 +86,22 @@ public class AgentOrchestrator : IAgentOrchestrator
             .ConfigureTranscript(porContext.StreamTranscript)
             .Build();
 
-        await runPipeline(runStageContext, async runContext =>
+        await runPipeline(runStageContext, async ctx =>
         {
             var plan = initialGoal;
             var engineerClient = _clientResolver.GetClient(AgentRole.Engineer);
             var engineerPromptTemplate = _agentPromptService.LoadEngineerPromptTemplate(agentsPath);
 
-            var run = new RunContext
+            var runContext = new RunContext
             {
                 StepFactory = _turnStepFactory,
-                TranscriptWriter = runContext.TranscriptWriter,
+                TranscriptWriter = ctx.TranscriptWriter,
                 RunRecorder = _runRecorder,
                 EngineerClient = engineerClient,
                 AgenticTurnService = _agenticTurnService,
-                NotifyStepAsync = NotifyStepAsync,
+                Events = _events,
                 EngineerPromptTemplate = engineerPromptTemplate,
-                SelectedPractices = runContext.SelectedPracticeNames
+                SelectedPractices = ctx.SelectedPracticeNames
             };
 
             var runState = new TurnRunState
@@ -128,7 +109,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 StepHistory = []
             };
 
-            var turn = TurnBuilder.Create(run)
+            var turn = TurnBuilder.Create(runContext)
                 .Add<GuardTurnStep>()
                 .Add<BuildContextStep>()
                 .Add<BuildPromptStep>()
@@ -140,14 +121,14 @@ public class AgentOrchestrator : IAgentOrchestrator
             for (var stepIndex = 0; stepIndex < MaxActionSteps; stepIndex++)
             {
                 var stepNumber = stepIndex + 1;
-                await NotifyProgressAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
+                await _events.ProgressAsync($"Engineer step {stepNumber} of {MaxActionSteps}...");
 
                 var turnContext = new TurnContext
                 {
                     StepNumber = stepNumber,
                     RunState = runState,
                     Plan = plan ?? string.Empty,
-                    PracticesContext = runContext.PracticesContext
+                    PracticesContext = ctx.PracticesContext
                 };
 
                 await turn(turnContext);
@@ -164,18 +145,18 @@ public class AgentOrchestrator : IAgentOrchestrator
                     case TurnHandlingAction.Continue:
                         continue;
                     case TurnHandlingAction.Complete:
-                        runContext.RunResult = resolvedRunResult!;
-                        await NotifyProgressAsync("Finished.");
+                        ctx.RunResult = resolvedRunResult!;
+                        await _events.ProgressAsync("Finished.");
                         return;
                     case TurnHandlingAction.Fail:
-                        runContext.RunResult = resolvedRunResult!;
+                        ctx.RunResult = resolvedRunResult!;
                         throw exceptionToThrow!;
                     default:
                         throw new InvalidOperationException($"Unsupported turn handling action: {action}");
                 }
             }
 
-            runContext.RunResult = RunResult.FailedMaxTurns(
+            ctx.RunResult = RunResult.FailedMaxTurns(
                 lastScriptExitCode: runState.LastScriptExitCode,
                 lastFailureDigest: runState.LastFailureDigest);
             throw new InvalidOperationException($"Engineer failed after {MaxActionSteps} action steps.\n{runState.LastFailureDigest}");

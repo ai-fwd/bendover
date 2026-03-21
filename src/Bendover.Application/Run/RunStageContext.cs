@@ -1,6 +1,7 @@
 using Bendover.Application.Interfaces;
 using Bendover.Application.Transcript;
 using Bendover.Domain;
+using Bendover.Domain.Interfaces;
 
 namespace Bendover.Application.Run;
 
@@ -12,7 +13,7 @@ public sealed class RunStageContext
     public required PromptOptRunContext PromptOptRunContext { get; init; }
     public required string BundleId { get; init; }
     public required string SourceRepositoryPath { get; init; }
-    public required Func<string, Task> NotifyProgressAsync { get; init; }
+    public required IAgentEventPublisher Events { get; init; }
 
     public string BaseCommit { get; set; } = string.Empty;
     public IReadOnlyCollection<string> SelectedPracticeNames { get; set; } = Array.Empty<string>();

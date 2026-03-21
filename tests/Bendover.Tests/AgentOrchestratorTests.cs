@@ -30,6 +30,7 @@ public class AgentOrchestratorTests
     private readonly Mock<IPromptOptRunRecorder> _runRecorderMock;
     private readonly Mock<IPromptOptRunContextAccessor> _runContextAccessorMock;
     private readonly Mock<IGitRunner> _gitRunnerMock;
+    private readonly IAgentEventPublisher _eventPublisher;
     private readonly AgentOrchestrator _sut;
 
     public AgentOrchestratorTests()
@@ -45,6 +46,7 @@ public class AgentOrchestratorTests
         _runRecorderMock = new Mock<IPromptOptRunRecorder>();
         _runContextAccessorMock = new Mock<IPromptOptRunContextAccessor>();
         _gitRunnerMock = new Mock<IGitRunner>();
+        _eventPublisher = new AgentEventPublisher(new[] { _observerMock.Object });
 
         _observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>()))
             .Returns(Task.CompletedTask);
@@ -88,7 +90,7 @@ public class AgentOrchestratorTests
             new ScriptGenerator(),
             _agenticTurnServiceMock.Object,
             _environmentValidatorMock.Object,
-            new[] { _observerMock.Object },
+            _eventPublisher,
             _leadAgentMock.Object,
             _runRecorderMock.Object,
             _runContextAccessorMock.Object,
@@ -333,16 +335,19 @@ public class AgentOrchestratorTests
         await _sut.RunAsync("Build feature", CreatePractices());
 
         var runTranscriptEvent = events
-            .OfType<AgentProgressEvent>()
+            .OfType<AgentTranscriptEvent>()
             .FirstOrDefault(x => x.Message.Contains("[transcript][run] selected_practices=", StringComparison.Ordinal));
         Assert.NotNull(runTranscriptEvent);
         Assert.Contains("tdd_spirit", runTranscriptEvent!.Message, StringComparison.Ordinal);
 
         var outputTranscriptEvent = events
-            .OfType<AgentProgressEvent>()
+            .OfType<AgentTranscriptEvent>()
             .FirstOrDefault(x => x.Message.Contains("[transcript][output] phase=engineer_step_1", StringComparison.Ordinal));
         Assert.NotNull(outputTranscriptEvent);
         Assert.Contains("...(truncated)", outputTranscriptEvent!.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            events.OfType<AgentProgressEvent>(),
+            evt => evt.Message.Contains("[transcript]", StringComparison.Ordinal));
     }
 
     [Fact]
