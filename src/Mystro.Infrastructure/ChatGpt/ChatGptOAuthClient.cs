@@ -1,9 +1,8 @@
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Mystro.Infrastructure.ChatGpt;
 
@@ -33,7 +32,7 @@ public sealed class ChatGptOAuthClient
 
         var code = await listener.WaitForAuthorizationCodeAsync(state, cancellationToken);
         var tokenResponse = await ExchangeCodeForTokensAsync(code, listener.RedirectUri, pkce, cancellationToken);
-        var accountId = TryExtractAccountId(tokenResponse.IdToken);
+        var accountId = TryExtractAccountId(tokenResponse.IdToken, tokenResponse.AccessToken);
 
         var expiresAt = tokenResponse.ExpiresIn.HasValue
             ? DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn.Value)
@@ -73,7 +72,7 @@ public sealed class ChatGptOAuthClient
             throw new InvalidOperationException("Token refresh response did not include required credentials.");
         }
 
-        var accountId = TryExtractAccountId(tokenResponse.IdToken) ?? session.AccountId;
+        var accountId = TryExtractAccountId(tokenResponse.IdToken, tokenResponse.AccessToken) ?? session.AccountId;
         var expiresAt = tokenResponse.ExpiresIn.HasValue
             ? DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn.Value)
             : session.ExpiresAt;
@@ -135,7 +134,7 @@ public sealed class ChatGptOAuthClient
             ["id_token_add_organizations"] = "true",
             ["codex_cli_simplified_flow"] = "true",
             ["state"] = state,
-            ["originator"] = "mystro"
+            ["originator"] = ChatGptDefaults.Originator
         };
 
         var query = string.Join("&", parameters.Select(kv =>
@@ -157,15 +156,67 @@ public sealed class ChatGptOAuthClient
             .Replace('/', '_');
     }
 
-    private static string? TryExtractAccountId(string? idToken)
+    private static string? TryExtractAccountId(string? idToken, string? accessToken)
     {
-        if (string.IsNullOrWhiteSpace(idToken))
+        var accountId = TryExtractAccountIdFromJwt(idToken);
+        if (!string.IsNullOrWhiteSpace(accountId))
+        {
+            return accountId;
+        }
+
+        return TryExtractAccountIdFromJwt(accessToken);
+    }
+
+    private static string? TryExtractAccountIdFromJwt(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
         {
             return null;
         }
 
-        var parts = idToken.Split('.');
-        if (parts.Length < 2)
+        var claims = ParseJwtClaims(token);
+        if (!claims.HasValue || claims.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var root = claims.Value;
+        if (TryGetString(root, "chatgpt_account_id", out var accountId) && !string.IsNullOrWhiteSpace(accountId))
+        {
+            return accountId;
+        }
+
+        if (root.TryGetProperty("https://api.openai.com/auth", out var authClaim)
+            && authClaim.ValueKind == JsonValueKind.Object
+            && TryGetString(authClaim, "chatgpt_account_id", out accountId)
+            && !string.IsNullOrWhiteSpace(accountId))
+        {
+            return accountId;
+        }
+
+        if (root.TryGetProperty("organizations", out var organizations) && organizations.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var organization in organizations.EnumerateArray())
+            {
+                if (organization.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (TryGetString(organization, "id", out accountId) && !string.IsNullOrWhiteSpace(accountId))
+                {
+                    return accountId;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static JsonElement? ParseJwtClaims(string token)
+    {
+        var parts = token.Split('.');
+        if (parts.Length != 3)
         {
             return null;
         }
@@ -178,17 +229,24 @@ public sealed class ChatGptOAuthClient
                 .Replace('_', '/');
             var bytes = Convert.FromBase64String(payload);
             using var doc = JsonDocument.Parse(bytes);
-            if (doc.RootElement.TryGetProperty("sub", out var sub))
-            {
-                return sub.GetString();
-            }
+            return doc.RootElement.Clone();
         }
         catch
         {
             return null;
         }
+    }
 
-        return null;
+    private static bool TryGetString(JsonElement element, string propertyName, out string? value)
+    {
+        if (element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String)
+        {
+            value = property.GetString();
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 
     private sealed record TokenResponse(
@@ -230,11 +288,20 @@ public sealed class ChatGptOAuthClient
 
         public OAuthListener()
         {
-            var port = GetAvailablePort();
+            var port = ChatGptDefaults.OAuthPort;
             RedirectUri = new Uri($"http://localhost:{port}/auth/callback");
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://localhost:{port}/");
-            _listener.Start();
+            try
+            {
+                _listener.Start();
+            }
+            catch (HttpListenerException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Unable to start OAuth callback listener at {RedirectUri}. Ensure port {port} is free and try again.",
+                    ex);
+            }
             _ = ListenAsync(_cts.Token);
         }
 
@@ -408,15 +475,6 @@ public sealed class ChatGptOAuthClient
                       </body>
                     </html>
                     """;
-        }
-
-        private static int GetAvailablePort()
-        {
-            var listener = new TcpListener(IPAddress.Loopback, 0);
-            listener.Start();
-            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            listener.Stop();
-            return port;
         }
 
         public void Dispose()
