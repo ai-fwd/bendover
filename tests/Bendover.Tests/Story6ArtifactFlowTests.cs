@@ -1,5 +1,7 @@
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Run;
+using Bendover.Application.Run.Stages;
 using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
@@ -89,6 +91,12 @@ public class Story6ArtifactFlowTests
                 runRecorder,
                 runContextAccessor,
                 gitRunnerMock.Object,
+                CreateRunStageFactory(
+                    containerServiceMock.Object,
+                    gitRunnerMock.Object,
+                    runRecorder,
+                    environmentValidatorMock.Object,
+                    leadAgentMock.Object),
                 CreateStepFactory());
 
             var practices = new List<Practice>
@@ -192,6 +200,12 @@ public class Story6ArtifactFlowTests
                 runRecorder,
                 runContextAccessor,
                 gitRunnerMock.Object,
+                CreateRunStageFactory(
+                    containerServiceMock.Object,
+                    gitRunnerMock.Object,
+                    runRecorder,
+                    environmentValidatorMock.Object,
+                    leadAgentMock.Object),
                 CreateStepFactory());
 
             var practices = new List<Practice>
@@ -232,5 +246,25 @@ public class Story6ArtifactFlowTests
         services.AddTransient<ExecuteTurnStep>();
         services.AddTransient<FinalizeTurnStep>();
         return new TurnStepFactory(services.BuildServiceProvider());
+    }
+
+    private static RunStageFactory CreateRunStageFactory(
+        IContainerService containerService,
+        IGitRunner gitRunner,
+        IPromptOptRunRecorder runRecorder,
+        IEnvironmentValidator environmentValidator,
+        ILeadAgent leadAgent)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(containerService);
+        services.AddSingleton(gitRunner);
+        services.AddSingleton(runRecorder);
+        services.AddSingleton(environmentValidator);
+        services.AddSingleton(leadAgent);
+        services.AddTransient<RepositoryStage>();
+        services.AddTransient<RecordingStage>();
+        services.AddTransient<SandboxStage>();
+        services.AddTransient<PracticeSelectionStage>();
+        return new RunStageFactory(services.BuildServiceProvider());
     }
 }

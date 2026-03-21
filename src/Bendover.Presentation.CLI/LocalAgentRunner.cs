@@ -1,6 +1,8 @@
 using Bendover.Application;
 using Bendover.Application.Evaluation;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Run;
+using Bendover.Application.Run.Stages;
 using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Exceptions;
@@ -66,6 +68,11 @@ public class LocalAgentRunner : IAgentRunner
         services.AddSingleton<IPromptOptRunContextAccessor, PromptOptRunContextAccessor>();
         services.AddSingleton<IPromptOptRunRecorder, PromptOptRunRecorder>();
         services.AddSingleton<IPromptOptRunEvaluator, PromptOptRunEvaluator>();
+        services.AddSingleton<RunStageFactory>();
+        services.AddTransient<RepositoryStage>();
+        services.AddTransient<RecordingStage>();
+        services.AddTransient<SandboxStage>();
+        services.AddTransient<PracticeSelectionStage>();
         services.AddSingleton<TurnStepFactory>();
         services.AddTransient<GuardTurnStep>();
         services.AddTransient<BuildContextStep>();

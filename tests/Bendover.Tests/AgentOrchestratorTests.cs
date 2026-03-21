@@ -1,5 +1,7 @@
 using Bendover.Application;
 using Bendover.Application.Interfaces;
+using Bendover.Application.Run;
+using Bendover.Application.Run.Stages;
 using Bendover.Application.Turn;
 using Bendover.Domain;
 using Bendover.Domain.Entities;
@@ -91,6 +93,7 @@ public class AgentOrchestratorTests
             _runRecorderMock.Object,
             _runContextAccessorMock.Object,
             _gitRunnerMock.Object,
+            CreateRunStageFactory(),
             CreateStepFactory());
     }
 
@@ -609,5 +612,20 @@ public class AgentOrchestratorTests
         services.AddTransient<ExecuteTurnStep>();
         services.AddTransient<FinalizeTurnStep>();
         return new TurnStepFactory(services.BuildServiceProvider());
+    }
+
+    private RunStageFactory CreateRunStageFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_containerServiceMock.Object);
+        services.AddSingleton(_gitRunnerMock.Object);
+        services.AddSingleton(_runRecorderMock.Object);
+        services.AddSingleton(_environmentValidatorMock.Object);
+        services.AddSingleton(_leadAgentMock.Object);
+        services.AddTransient<RepositoryStage>();
+        services.AddTransient<RecordingStage>();
+        services.AddTransient<SandboxStage>();
+        services.AddTransient<PracticeSelectionStage>();
+        return new RunStageFactory(services.BuildServiceProvider());
     }
 }
