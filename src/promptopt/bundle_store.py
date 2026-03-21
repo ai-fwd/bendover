@@ -46,7 +46,7 @@ def ensure_active_bundle(promptopt_root: Path, seed_bundle_id: str = "seed") -> 
     Behavior:
     - If active.json exists, return its bundle id as-is.
     - If active.json is missing, rebuild bundles/<seed_bundle_id> from root
-      .bendover/{practices,agents} and write active.json -> seed.
+      .mystro/{practices,agents} and write active.json -> seed.
     """
     promptopt_root = Path(promptopt_root)
     active_json_path = promptopt_root / "active.json"
@@ -73,8 +73,8 @@ def _rebuild_seed_bundle(promptopt_root: Path, seed_bundle_id: str) -> None:
 
 
 def _resolve_root_sources(promptopt_root: Path) -> tuple[Path, Path]:
-    bendover_root = promptopt_root.parent
-    return bendover_root / "practices", bendover_root / "agents"
+    mystro_root = promptopt_root.parent
+    return mystro_root / "practices", mystro_root / "agents"
 
 
 def _validate_root_sources(practices_source: Path, agents_source: Path) -> None:

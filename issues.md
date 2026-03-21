@@ -61,16 +61,16 @@ _Note: Most of these need to be addressed via the agent and NOT manually to vali
 
 ## PromptOpt.Cli
 - [ ] Rename to PolicyOpt -- don't need the CLI part. It's just a tool
-- [ ] Rule for building solution successfully `dotnet build Bendover.sln`
-- [ ] Rule for running test at solution successfully `dotnet test Bendover.sln`
+- [ ] Rule for building solution successfully `dotnet build Mystro.sln`
+- [ ] Rule for running test at solution successfully `dotnet test Mystro.sln`
 - [x] Using a StubAgentRunner. Needs to use the actual AgentOrchestrator 
 - [x] Ensure metric_fn & design is correct for practice specific mutation
 - [x] Validated a full curated run - not perfect but evaluation does work
 - [x] Validation is happening in a /tmp directory but it should be happening in the sandbox where real edits are made, and git_diff.patch contains something
-- [x] .bendover/agents for system prompts should get optimized separately from practices. For now we're skipping them.
+- [x] .mystro/agents for system prompts should get optimized separately from practices. For now we're skipping them.
 
 ## ScriptRunner
-- [ ] Respect the author of the patch, Bendover should get credit.
+- [ ] Respect the author of the patch, Mystro should get credit.
 - [ ] Need to change how stepPlan is surfaced and parsed -- not loving it
 - [ ] 
 

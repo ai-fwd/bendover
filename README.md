@@ -1,12 +1,10 @@
-# Bendover 
+# Mystro 
 
-Bendover is an opinionated, self improving coding agent.
+Mystro is an opinionated, self improving coding agent.
 
-![Bendover cli](assets/bendover.png)
+![Mystro cli](assets/mystro.png)
 
 It’s an experiment in building an agentic system that can learn and apply a specific coding policy aka judgment when ambiguity shows up, instead of falling back to generic pre training led reasoning that doesn’t align.
-
-_The name bendover is inspired by a soca song that goes a little something like this 🎵[...] take it easy I will do the work, you don't have to [...]🎵_
 
 # The Hypothesis
 
@@ -25,7 +23,7 @@ Some notes:
 - Behavior is defined by role targeted practices → "this is how I do X"
 - Judgment over syntax → identical decisions, not code
 - Real work is the dataset → learning comes from specific examples, not volume
-- The initial Bendover scaffolding is intentionally opinionated → my own judgement
+- The initial Mystro scaffolding is intentionally opinionated → my own judgement
 
 <sup>*</sup> The policy it learns must match the one I use internally when ambiguity shows up. That policy is expressed through code. 
 
@@ -56,28 +54,28 @@ dotnet test
 # 4) Capture a real run
 # The CLI header shows:
 #   Run Id: <value>
-#   Run Dir: .bendover/promptopt/runs/<run_id>
-./bendover "Add a unit test for run scoring"
+#   Run Dir: .mystro/promptopt/runs/<run_id>
+./mystro "Add a unit test for run scoring"
 
 # 5) Score the captured run (use the printed run_id)
-dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
+dotnet run --project src/Mystro.PromptOpt.CLI -- --run-id <run_id> --verbose
 
 # Optional: force plain console output
-dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --ui plain --verbose
+dotnet run --project src/Mystro.PromptOpt.CLI -- --run-id <run_id> --ui plain --verbose
 
 # 6) Create GEPA training split
-mkdir -p .bendover/promptopt/datasets
-printf "%s\n" "<run_id>" > .bendover/promptopt/datasets/train.txt
+mkdir -p .mystro/promptopt/datasets
+printf "%s\n" "<run_id>" > .mystro/promptopt/datasets/train.txt
 
 # 7) Install promptopt in editable mode
 python -m venv .venv
 ./.venv/bin/pip install -e .
 
-# 8) Run GEPA (defaults --promptopt-root to .bendover/promptopt)
+# 8) Run GEPA (defaults --promptopt-root to .mystro/promptopt)
 ./.venv/bin/promptopt --max-full-evals 3
 
 # 9) Inspect active optimized bundle
-cat .bendover/promptopt/active.json
+cat .mystro/promptopt/active.json
 
 # 10) Clean promptopt generated state
 ./.venv/bin/promptopt clean
@@ -99,7 +97,7 @@ Agent__ApiKey=sk-local-dummy
 
 ```dotenv
 # PromptOpt replay command used by the Python optimizer
-export PROMPTOPT_CLI_COMMAND='dotnet run --project src/Bendover.PromptOpt.CLI --'
+export PROMPTOPT_CLI_COMMAND='dotnet run --project src/Mystro.PromptOpt.CLI --'
 
 # Reflection model provider settings (OpenAI API key mode)
 OPENAI_API_BASE=https://api.openai.com/v1
@@ -112,16 +110,16 @@ DSPY_REFLECTION_MODEL=openai/gpt-4o
 Connect once:
 
 ```bash
-./bendover /connect
+./mystro /connect
 ```
 
 Disconnect when needed:
 
 ```bash
-./bendover /disconnect
+./mystro /disconnect
 ```
 
-Manual fallback: delete `~/.bendover/chatgpt.json`.
+Manual fallback: delete `~/.mystro/chatgpt.json`.
 
 Model behavior with subscription:
 
@@ -135,7 +133,7 @@ Reflection model note:
 - To use ChatGPT subscription for reflection, run the local proxy and point `OPENAI_API_BASE` to it:
 
 ```bash
-dotnet run --project src/Bendover.PromptOpt.CLI -- serve-chatgpt-proxy
+dotnet run --project src/Mystro.PromptOpt.CLI -- serve-chatgpt-proxy
 ```
 
 ```dotenv
@@ -146,21 +144,21 @@ DSPY_REFLECTION_MODEL=gpt-5.3-codex
 
 ## Core Concepts (Plain English)
 
-- **Run**: One recorded agent session under `.bendover/promptopt/runs/<run_id>`.
+- **Run**: One recorded agent session under `.mystro/promptopt/runs/<run_id>`.
 - **Evaluation**: Rule checks applied to run artifacts (`git_diff.patch`, test output, selected practices).
 - **Score**: Numeric quality result written to `evaluator.json` (`0.0` to `1.0`).
 - **Practice attribution**: Practice-specific evaluator feedback in `practice_attribution.notes_by_practice`.
-- **Bundle**: Versioned prompt package (practices + agents) under `.bendover/promptopt/bundles/<bundle_id>`.
-- **Active bundle**: Bundle ID in `.bendover/promptopt/active.json` used as current optimization baseline.
+- **Bundle**: Versioned prompt package (practices + agents) under `.mystro/promptopt/bundles/<bundle_id>`.
+- **Active bundle**: Bundle ID in `.mystro/promptopt/active.json` used as current optimization baseline.
 - **GEPA**: DSPy optimizer that replays runs, reads evaluator feedback, and mutates targeted practices.
 
 ## Workflow Diagram
 
 ```mermaid
 flowchart TD
-  A[Run Bendover.Presentation.CLI] --> S[Engineer executes in Docker sandbox]
+  A[Run Mystro.Presentation.CLI] --> S[Engineer executes in Docker sandbox]
   S --> P[Capture sandbox git diff]
-  P --> B[Artifacts in .bendover/promptopt/runs/<run_id>]
+  P --> B[Artifacts in .mystro/promptopt/runs/<run_id>]
   B --> C[Score existing run: PromptOpt.CLI --run-id]
   B --> D[Create datasets/train.txt]
   D --> E[Run promptopt]
@@ -176,19 +174,19 @@ flowchart TD
 Capture a run:
 
 ```bash
-./bendover "Your task description"
+./mystro "Your task description"
 ```
 
 The CLI header shows:
 
 - `Run Id: <run_id>`
-- `Run Dir: .bendover/promptopt/runs/<run_id>` (rendered as a `TextPath`)
+- `Run Dir: .mystro/promptopt/runs/<run_id>` (rendered as a `TextPath`)
 
 ### Sandbox and Patch Apply Behavior
 
 - Engineer code is executed inside a Docker sandbox container.
 - The system captures `git_diff.patch` from the sandbox workspace into run artifacts.
-- In `Bendover.Presentation.CLI` runs, that sandbox patch is applied back to your source repository.
+- In `Mystro.Presentation.CLI` runs, that sandbox patch is applied back to your source repository.
 - In PromptOpt replay/evaluation runs, patch application to your source repo is disabled; replay runs in a temporary clone and only emits artifacts/output.
 
 ### Key Artifacts
@@ -214,10 +212,10 @@ When capture is enabled, `prompts.json`, `outputs.json`, and `transcript.md` are
 Score a recorded run without rerunning agents:
 
 ```bash
-dotnet run --project src/Bendover.PromptOpt.CLI -- --run-id <run_id> --verbose
+dotnet run --project src/Mystro.PromptOpt.CLI -- --run-id <run_id> --verbose
 ```
 
-![Bendover evaluator](assets/bendover-evaluator.png)
+![Mystro evaluator](assets/mystro-evaluator.png)
 
 PromptOpt console behavior:
 
@@ -231,7 +229,7 @@ Bundle resolution in `--run-id` mode:
 1. If `--bundle <path>` is provided, that path is used.
 2. Otherwise `bundle_id.txt` in the run directory is used.
 3. If missing, fallback is `run_meta.json` (`bundle_id` or `bundleId`).
-4. `current` or legacy `default` resolve to root `.bendover`.
+4. `current` or legacy `default` resolve to root `.mystro`.
 5. Scoring writes/overwrites `evaluator.json` in the run directory.
 
 ## 3. Replay + Evaluate a Bundle
@@ -239,8 +237,8 @@ Bundle resolution in `--run-id` mode:
 Replay mode executes the run from a specific commit with a specific bundle:
 
 ```bash
-dotnet run --project src/Bendover.PromptOpt.CLI -- \
-  --bundle .bendover/promptopt/bundles/<bundle_id> \
+dotnet run --project src/Mystro.PromptOpt.CLI -- \
+  --bundle .mystro/promptopt/bundles/<bundle_id> \
   --task /path/to/task-dir \
   --out /path/to/output-dir \
   --verbose
@@ -257,7 +255,7 @@ Output directory contains replay artifacts plus `evaluator.json`.
 
 ### 4.1 Prepare dataset split
 
-Create `.bendover/promptopt/datasets/train.txt` with one run ID per line:
+Create `.mystro/promptopt/datasets/train.txt` with one run ID per line:
 
 ```text
 20260211_220801_08c49959
@@ -277,13 +275,13 @@ python -m venv .venv
 ./.venv/bin/promptopt --max-full-evals 3
 ```
 
-![Bendover evaluator](assets/bendover-promptopt.png)
+![Mystro evaluator](assets/mystro-promptopt.png)
 
 If `PROMPTOPT_CLI_COMMAND` is not set in environment or `.env`, pass `--cli-command` explicitly.
 
 Default root behavior:
 
-- `promptopt` and `promptopt clean` both default `--promptopt-root` to `.bendover/promptopt`.
+- `promptopt` and `promptopt clean` both default `--promptopt-root` to `.mystro/promptopt`.
 - Override with `--promptopt-root <path>` when needed.
 
 Useful option:
@@ -293,7 +291,7 @@ Useful option:
 ### 4.4 Clean PromptOpt State
 
 ```bash
-# default root (.bendover/promptopt)
+# default root (.mystro/promptopt)
 ./.venv/bin/promptopt clean
 
 # custom root
@@ -309,9 +307,9 @@ Useful option:
 
 Bundle lifecycle (current behavior):
 
-1. If `.bendover/promptopt/active.json` exists, GEPA starts from that bundle.
-2. If missing, GEPA rebuilds `.bendover/promptopt/bundles/seed` from root `.bendover/practices` and `.bendover/agents`, then writes `active.json` to `seed`.
-3. New bundles are written as `gengepa_<hash8>` under `.bendover/promptopt/bundles`.
+1. If `.mystro/promptopt/active.json` exists, GEPA starts from that bundle.
+2. If missing, GEPA rebuilds `.mystro/promptopt/bundles/seed` from root `.mystro/practices` and `.mystro/agents`, then writes `active.json` to `seed`.
+3. New bundles are written as `gengepa_<hash8>` under `.mystro/promptopt/bundles`.
 4. `active.json` is updated to the best generated bundle with score metadata.
 
 Preflight requirement:
@@ -373,7 +371,7 @@ docker run --rm hello-world
 
 ### 6.3 Missing run artifacts
 
-- `--run-id` scoring requires `.bendover/promptopt/runs/<run_id>`.
+- `--run-id` scoring requires `.mystro/promptopt/runs/<run_id>`.
 - Replay mode requires `task.md` and `base_commit.txt`.
 
 ### 6.4 GEPA attribution preflight failed

@@ -3,7 +3,7 @@
 ## Build command
 
 ```bash
-dotnet build src/Bendover.ScriptRunner/Bendover.ScriptRunner.csproj -c Debug
+dotnet build src/Mystro.ScriptRunner/Mystro.ScriptRunner.csproj -c Debug
 ```
 
 Expected:
@@ -33,7 +33,7 @@ CSX
 3. Run grouped style:
 
 ```bash
-dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file tmp/story3/grouped_body.csx
+dotnet src/Mystro.ScriptRunner/bin/Debug/net10.0/Mystro.ScriptRunner.dll --body-file tmp/story3/grouped_body.csx
 ```
 
 Expected:
@@ -43,7 +43,7 @@ Expected:
 4. Run shorthand style:
 
 ```bash
-dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file tmp/story3/shorthand_body.csx
+dotnet src/Mystro.ScriptRunner/bin/Debug/net10.0/Mystro.ScriptRunner.dll --body-file tmp/story3/shorthand_body.csx
 ```
 
 Expected:

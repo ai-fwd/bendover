@@ -86,11 +86,11 @@ appsettings.*.json
 !appsettings.json
 
 ## GEPA runs, logs, tmp files
-**/.bendover/promptopt/runs/
-**/.bendover/promptopt/logs/
-**/.bendover/promptopt/tmp/
-**/.bendover/promptopt/*.env
-**/.bendover/promptopt/bundles/
+**/.mystro/promptopt/runs/
+**/.mystro/promptopt/logs/
+**/.mystro/promptopt/tmp/
+**/.mystro/promptopt/*.env
+**/.mystro/promptopt/bundles/
 **/tmp/
 
 # python
@@ -108,8 +108,8 @@ build/
 .env
 
 # Generated SDK tool surface context
-.bendover/agents/tools.md
-**/.bendover/promptopt/bundles/*/agents/tools.md
-.bendover/promptopt/cache/
-.bendover/promptopt/active.json
-.bendover/promptopt/datasets/train.txt
+.mystro/agents/tools.md
+**/.mystro/promptopt/bundles/*/agents/tools.md
+.mystro/promptopt/cache/
+.mystro/promptopt/active.json
+.mystro/promptopt/datasets/train.txt

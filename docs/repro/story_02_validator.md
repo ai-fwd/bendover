@@ -3,7 +3,7 @@
 ## Build command
 
 ```bash
-dotnet build src/Bendover.ScriptRunner/Bendover.ScriptRunner.csproj -c Debug
+dotnet build src/Mystro.ScriptRunner/Mystro.ScriptRunner.csproj -c Debug
 ```
 
 Expected:
@@ -13,7 +13,7 @@ Expected:
 ## Validation command pattern
 
 ```bash
-dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file <path>
+dotnet src/Mystro.ScriptRunner/bin/Debug/net10.0/Mystro.ScriptRunner.dll --body-file <path>
 ```
 
 ## Sample inputs and expected results

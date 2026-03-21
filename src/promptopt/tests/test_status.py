@@ -13,7 +13,7 @@ def test_state_enters_draining_until_active_evaluations_finish():
         _event(
             "startup",
             phase="startup",
-            root=".bendover/promptopt",
+            root=".mystro/promptopt",
             run_count=1,
             reflection_transcript_enabled=True,
             heartbeat_seconds=15,

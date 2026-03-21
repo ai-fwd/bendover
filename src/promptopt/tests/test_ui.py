@@ -5,7 +5,7 @@ from promptopt.ui import build_render_text
 def test_live_renderer_includes_dashboard_sections():
     state = PromptOptRunState(
         phase="reflection",
-        root=".bendover/promptopt",
+        root=".mystro/promptopt",
         run_count=1,
         started_at_utc="2026-03-01T00:00:00Z",
         reflection_transcript_enabled=True,
@@ -17,7 +17,7 @@ def test_live_renderer_includes_dashboard_sections():
         latest_warning="No valset provided; using trainset as valset.",
         latest_reflection_preview="preview text",
         recent_activity=[
-            "startup root=.bendover/promptopt runs=1",
+            "startup root=.mystro/promptopt runs=1",
             "iteration 1 selected program 0 score=0.7",
             "iteration 1 proposed practice_2",
         ],

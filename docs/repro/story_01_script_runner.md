@@ -5,7 +5,7 @@
 1. Build solution (requested in proof workstream):
 
 ```bash
-dotnet build Bendover.sln -c Debug
+dotnet build Mystro.sln -c Debug
 ```
 
 Observed in this environment:
@@ -18,7 +18,7 @@ Observed in this environment:
 2. Build ScriptRunner project directly:
 
 ```bash
-dotnet build src/Bendover.ScriptRunner/Bendover.ScriptRunner.csproj -c Debug
+dotnet build src/Mystro.ScriptRunner/Mystro.ScriptRunner.csproj -c Debug
 ```
 
 Expected:
@@ -32,7 +32,7 @@ cat <<'CSX' > tmp/story1/valid_body.csx
 Console.WriteLine("RunnerProof: hello from body");
 CSX
 
-dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file tmp/story1/valid_body.csx
+dotnet src/Mystro.ScriptRunner/bin/Debug/net10.0/Mystro.ScriptRunner.dll --body-file tmp/story1/valid_body.csx
 ```
 
 Expected:
@@ -46,7 +46,7 @@ cat <<'CSX' > tmp/story1/invalid_body.csx
 Console.WriteLine("broken"
 CSX
 
-dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file tmp/story1/invalid_body.csx
+dotnet src/Mystro.ScriptRunner/bin/Debug/net10.0/Mystro.ScriptRunner.dll --body-file tmp/story1/invalid_body.csx
 ```
 
 Expected:

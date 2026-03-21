@@ -87,7 +87,7 @@ def prepare_replay_task(run_id, runs_root):
     """
     run = load_run_artifact(Path(runs_root), run_id)
 
-    temp_dir = Path(f"/tmp/bendover_replay_{run_id}_{int(time.time())}")
+    temp_dir = Path(f"/tmp/mystro_replay_{run_id}_{int(time.time())}")
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     (temp_dir / "task.md").write_text(run.goal)

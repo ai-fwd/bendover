@@ -733,7 +733,7 @@ def prepare_task_dir(run: RunArtifact) -> Path:
 
     The CLI expects a task.md and base_commit.txt file.
     """
-    temp_dir = Path(tempfile.mkdtemp(prefix=f"bendover_replay_{run.run_id}_"))
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"mystro_replay_{run.run_id}_"))
     (temp_dir / "task.md").write_text(run.goal)
     (temp_dir / "base_commit.txt").write_text(run.base_commit)
     previous_run_result_path = run.run_dir / "run_result.json"
@@ -895,9 +895,9 @@ def configure_reflection_lm(
 def _run_optimization(
     cli_command: str | None = typer.Option(
         None,
-        help="Command to invoke Bendover CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
+        help="Command to invoke Mystro CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
     ),
-    promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
+    promptopt_root: str = typer.Option(".mystro/promptopt", help="Root directory for prompt optimization data"),
     train_split: str | None = typer.Option(None, help="Path to train.txt (defaults to datasets/train.txt)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
     reflection_lm: str = typer.Option(os.getenv("DSPY_REFLECTION_MODEL", "gpt-4o-mini"), help="Reflection LM model or 'test'"),
@@ -912,7 +912,7 @@ def _run_optimization(
 
     High-level flow:
     1) Load run IDs from datasets/train.txt.
-    2) Resolve the active bundle (bootstrap seed from root .bendover content if needed).
+    2) Resolve the active bundle (bootstrap seed from root .mystro content if needed).
     3) Build a DSPy program with one predictor per practice file.
     4) Let GEPA reflect on traces + scores to evolve instructions.
     5) Write the best bundle and update active.json.
@@ -949,7 +949,7 @@ def _run_optimization(
     if len(run_ids) > 10:
         raise ValueError("train_split must contain at most 10 run_ids")
 
-    # Resolve the seed bundle. Missing active.json triggers seed bootstrap from root .bendover content.
+    # Resolve the seed bundle. Missing active.json triggers seed bootstrap from root .mystro content.
     active_bundle_id = ensure_active_bundle(root)
     seed_bundle_path = bundles_root / active_bundle_id
 
@@ -1214,9 +1214,9 @@ def main(
     ctx: typer.Context,
     cli_command: str | None = typer.Option(
         None,
-        help="Command to invoke Bendover CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
+        help="Command to invoke Mystro CLI (defaults to PROMPTOPT_CLI_COMMAND env var)",
     ),
-    promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
+    promptopt_root: str = typer.Option(".mystro/promptopt", help="Root directory for prompt optimization data"),
     train_split: str | None = typer.Option(None, help="Path to train.txt (defaults to datasets/train.txt)"),
     timeout_seconds: int = typer.Option(900, help="Execution timeout"),
     reflection_lm: str = typer.Option(
@@ -1247,7 +1247,7 @@ def main(
 
 @app.command("clean")
 def clean(
-    promptopt_root: str = typer.Option(".bendover/promptopt", help="Root directory for prompt optimization data"),
+    promptopt_root: str = typer.Option(".mystro/promptopt", help="Root directory for prompt optimization data"),
 ):
     _run_clean(promptopt_root)
 

@@ -3,13 +3,13 @@
 ## Repro command (ArtifactProof)
 
 ```bash
-dotnet test tests/Bendover.Tests/Bendover.Tests.csproj -c Debug --filter FullyQualifiedName~Story6ArtifactFlowTests.RunAsync_PersistsSandboxArtifactsToHostOutDir_WithExpectedNames -v normal
+dotnet test tests/Mystro.Tests/Mystro.Tests.csproj -c Debug --filter FullyQualifiedName~Story6ArtifactFlowTests.RunAsync_PersistsSandboxArtifactsToHostOutDir_WithExpectedNames -v normal
 ```
 
 ## Expected result
 - Exit code: `0`
 - Test output includes:
-  - `Passed Bendover.Tests.Story6ArtifactFlowTests.RunAsync_PersistsSandboxArtifactsToHostOutDir_WithExpectedNames`
+  - `Passed Mystro.Tests.Story6ArtifactFlowTests.RunAsync_PersistsSandboxArtifactsToHostOutDir_WithExpectedNames`
 
 ## What the proof run validates
 - One orchestrator run persists sandbox-generated artifacts to host output directory.

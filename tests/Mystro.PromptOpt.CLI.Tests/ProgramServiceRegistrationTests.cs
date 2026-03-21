@@ -1,0 +1,28 @@
+using Mystro.Application.Evaluation;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Mystro.PromptOpt.CLI.Tests;
+
+public class ProgramServiceRegistrationTests
+{
+    [Fact]
+    public void Program_Registers_IEvaluatorRule_Implementations()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder().Build();
+
+        ProgramServiceRegistration.RegisterServices(
+            services,
+            configuration,
+            Directory.GetCurrentDirectory());
+
+        using var serviceProvider = services.BuildServiceProvider();
+        var rules = serviceProvider.GetServices<IEvaluatorRule>().ToList();
+
+        Assert.Contains(rules, r => r.GetType().Name == "MissingTestsRule");
+        Assert.Contains(rules, r => r.GetType().Name == "TDDSpiritRule");
+        Assert.Contains(rules, r => r.GetType().Name == "CleanInterfacesRule");
+        Assert.Contains(rules, r => r.GetType().Name == "ForbiddenFilesRule");
+    }
+}

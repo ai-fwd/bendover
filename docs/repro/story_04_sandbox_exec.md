@@ -5,7 +5,7 @@
 1. Build ScriptRunner artifacts used inside sandbox workspace copy:
 
 ```bash
-dotnet build src/Bendover.ScriptRunner/Bendover.ScriptRunner.csproj -c Debug
+dotnet build src/Mystro.ScriptRunner/Mystro.ScriptRunner.csproj -c Debug
 ```
 
 Expected:
@@ -15,7 +15,7 @@ Expected:
 2. Start container with local repo mounted read-only at `/input/repo`:
 
 ```bash
-docker run -d --name bendover_story4_proof -v "$(pwd)":/input/repo:ro mcr.microsoft.com/dotnet/sdk:10.0 sleep infinity
+docker run -d --name mystro_story4_proof -v "$(pwd)":/input/repo:ro mcr.microsoft.com/dotnet/sdk:10.0 sleep infinity
 ```
 
 Expected:
@@ -25,7 +25,7 @@ Expected:
 3. Copy repo into mutable sandbox workspace:
 
 ```bash
-docker exec bendover_story4_proof bash -lc 'rm -rf /workspace && mkdir -p /workspace && cp -a /input/repo/. /workspace'
+docker exec mystro_story4_proof bash -lc 'rm -rf /workspace && mkdir -p /workspace && cp -a /input/repo/. /workspace'
 ```
 
 Expected:
@@ -34,7 +34,7 @@ Expected:
 4. Write engineer body to fixed path in sandbox:
 
 ```bash
-docker exec bendover_story4_proof bash -lc 'cat <<"CSX" > /workspace/engineer_body.csx
+docker exec mystro_story4_proof bash -lc 'cat <<"CSX" > /workspace/engineer_body.csx
 sdk.WriteFile("/workspace/story4_sandbox.txt", "created inside sandbox workspace");
 Console.WriteLine("SandboxProof execution complete");
 CSX'
@@ -46,7 +46,7 @@ Expected:
 5. Execute ScriptRunner against sandbox body file:
 
 ```bash
-docker exec bendover_story4_proof bash -lc 'cd /workspace && dotnet src/Bendover.ScriptRunner/bin/Debug/net10.0/Bendover.ScriptRunner.dll --body-file /workspace/engineer_body.csx'
+docker exec mystro_story4_proof bash -lc 'cd /workspace && dotnet src/Mystro.ScriptRunner/bin/Debug/net10.0/Mystro.ScriptRunner.dll --body-file /workspace/engineer_body.csx'
 ```
 
 Expected:
@@ -56,7 +56,7 @@ Expected:
 6. Inspect command result artifact in sandbox:
 
 ```bash
-docker exec bendover_story4_proof bash -lc 'test -f /workspace/story4_sandbox.txt && cat /workspace/story4_sandbox.txt'
+docker exec mystro_story4_proof bash -lc 'test -f /workspace/story4_sandbox.txt && cat /workspace/story4_sandbox.txt'
 ```
 
 Expected:
@@ -75,7 +75,7 @@ Expected:
 8. Cleanup:
 
 ```bash
-docker rm -f bendover_story4_proof
+docker rm -f mystro_story4_proof
 ```
 
 Expected:

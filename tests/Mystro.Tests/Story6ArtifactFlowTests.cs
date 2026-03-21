@@ -1,0 +1,272 @@
+using Mystro.Application;
+using Mystro.Application.Interfaces;
+using Mystro.Application.Run;
+using Mystro.Application.Run.Stages;
+using Mystro.Application.Turn;
+using Mystro.Domain;
+using Mystro.Domain.Entities;
+using Mystro.Domain.Interfaces;
+using Mystro.Infrastructure.Services;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using System.Text.Json;
+using Xunit;
+
+namespace Mystro.Tests;
+
+public class Story6ArtifactFlowTests
+{
+    [Fact]
+    public async Task RunAsync_PersistsSandboxArtifactsToHostOutDir_WithExpectedNames()
+    {
+        var outDir = Path.Combine(Path.GetTempPath(), $"story6-artifacts-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            var leadAgentMock = new Mock<ILeadAgent>();
+            var agentPromptServiceMock = new Mock<IAgentPromptService>();
+            var clientResolverMock = new Mock<IChatClientResolver>();
+            var engineerClientMock = new Mock<IChatClient>();
+            var containerServiceMock = new Mock<IContainerService>();
+            var agenticTurnServiceMock = new Mock<IAgenticTurnService>();
+            var environmentValidatorMock = new Mock<IEnvironmentValidator>();
+            var observerMock = new Mock<IAgentObserver>();
+            var gitRunnerMock = new Mock<IGitRunner>();
+
+            environmentValidatorMock.Setup(x => x.ValidateAsync()).Returns(Task.CompletedTask);
+            observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>())).Returns(Task.CompletedTask);
+            leadAgentMock.Setup(x => x.AnalyzeTaskAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<Practice>>(), It.IsAny<string?>()))
+                .ReturnsAsync(new[] { "tdd_spirit" });
+
+            engineerClientMock.SetupSequence(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.WriteFile(\"a.txt\", \"artifact\");") }))
+                .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.Done();") }));
+
+            clientResolverMock.Setup(x => x.GetClient(AgentRole.Engineer)).Returns(engineerClientMock.Object);
+
+            containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
+                .Returns(Task.CompletedTask);
+            agenticTurnServiceMock.SetupSequence(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
+                .ReturnsAsync(new AgenticTurnObservation(
+                    ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                    DiffExecution: new SandboxExecutionResult(-1, string.Empty, string.Empty, "skipped"),
+                    HasChanges: false,
+                    CompletionSignaled: false))
+                .ReturnsAsync(new AgenticTurnObservation(
+                    ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                    DiffExecution: new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"),
+                    HasChanges: true,
+                    CompletionSignaled: true));
+
+            containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
+                .ReturnsAsync(new SandboxExecutionResult(0, "diff --git a/a.txt b/a.txt\n+artifact", string.Empty, "diff --git a/a.txt b/a.txt\n+artifact"));
+            containerServiceMock.Setup(x => x.StopContainerAsync())
+                .Returns(Task.CompletedTask);
+
+            gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+                .ReturnsAsync("abc123");
+            agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate(It.IsAny<string?>()))
+                .Returns("Engineer prompt template\n\nGenerated tools content");
+
+            var runContextAccessor = new PromptOptRunContextAccessor
+            {
+                Current = new PromptOptRunContext(outDir, Capture: true, RunId: "run-1", BundleId: "bundle-1", ApplySandboxPatchToSource: false)
+            };
+
+            var runRecorder = new PromptOptRunRecorder(
+                new System.IO.Abstractions.FileSystem(),
+                runContextAccessor);
+            var eventPublisher = new AgentEventPublisher(new[] { observerMock.Object });
+
+            var orchestrator = new AgentOrchestrator(
+                agentPromptServiceMock.Object,
+                clientResolverMock.Object,
+                containerServiceMock.Object,
+                new ScriptGenerator(),
+                agenticTurnServiceMock.Object,
+                environmentValidatorMock.Object,
+                eventPublisher,
+                leadAgentMock.Object,
+                runRecorder,
+                runContextAccessor,
+                gitRunnerMock.Object,
+                CreateRunStageFactory(
+                    containerServiceMock.Object,
+                    gitRunnerMock.Object,
+                    runRecorder,
+                    environmentValidatorMock.Object,
+                    leadAgentMock.Object),
+                CreateStepFactory());
+
+            var practices = new List<Practice>
+            {
+                new("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
+            };
+
+            await orchestrator.RunAsync("Do work", practices);
+
+            containerServiceMock.Verify(
+                x => x.StartContainerAsync(It.Is<SandboxExecutionSettings>(settings =>
+                    string.Equals(settings.BaseCommit, "abc123", StringComparison.Ordinal)
+                    && string.Equals(settings.SourceRepositoryPath, Directory.GetCurrentDirectory(), StringComparison.Ordinal))),
+                Times.Once);
+
+            var gitDiffPath = Path.Combine(outDir, "git_diff.patch");
+            Assert.True(File.Exists(gitDiffPath));
+            Assert.Equal("diff --git a/a.txt b/a.txt\n+artifact", File.ReadAllText(gitDiffPath));
+
+            Assert.False(File.Exists(Path.Combine(outDir, "dotnet_build.txt")));
+            Assert.False(File.Exists(Path.Combine(outDir, "dotnet_test.txt")));
+
+            var runResultPath = Path.Combine(outDir, "run_result.json");
+            Assert.True(File.Exists(runResultPath));
+            using var runResultDoc = JsonDocument.Parse(File.ReadAllText(runResultPath));
+            Assert.Equal("completed", runResultDoc.RootElement.GetProperty("status").GetString());
+            Assert.True(runResultDoc.RootElement.GetProperty("has_code_changes").GetBoolean());
+            Assert.True(runResultDoc.RootElement.GetProperty("completion_signaled").GetBoolean());
+        }
+        finally
+        {
+            if (Directory.Exists(outDir))
+            {
+                Directory.Delete(outDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_PersistsNoDiffOutcome_AsCompletedWithoutCodeChanges()
+    {
+        var outDir = Path.Combine(Path.GetTempPath(), $"story6-artifacts-nodiff-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            var leadAgentMock = new Mock<ILeadAgent>();
+            var agentPromptServiceMock = new Mock<IAgentPromptService>();
+            var clientResolverMock = new Mock<IChatClientResolver>();
+            var engineerClientMock = new Mock<IChatClient>();
+            var containerServiceMock = new Mock<IContainerService>();
+            var agenticTurnServiceMock = new Mock<IAgenticTurnService>();
+            var environmentValidatorMock = new Mock<IEnvironmentValidator>();
+            var observerMock = new Mock<IAgentObserver>();
+            var gitRunnerMock = new Mock<IGitRunner>();
+
+            environmentValidatorMock.Setup(x => x.ValidateAsync()).Returns(Task.CompletedTask);
+            observerMock.Setup(x => x.OnEventAsync(It.IsAny<AgentEvent>())).Returns(Task.CompletedTask);
+            leadAgentMock.Setup(x => x.AnalyzeTaskAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<Practice>>(), It.IsAny<string?>()))
+                .ReturnsAsync(new[] { "tdd_spirit" });
+            engineerClientMock.Setup(x => x.CompleteAsync(It.IsAny<IList<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ChatCompletion(new[] { new ChatMessage(ChatRole.Assistant, "sdk.Done();") }));
+            clientResolverMock.Setup(x => x.GetClient(AgentRole.Engineer)).Returns(engineerClientMock.Object);
+
+            containerServiceMock.Setup(x => x.StartContainerAsync(It.IsAny<SandboxExecutionSettings>()))
+                .Returns(Task.CompletedTask);
+            agenticTurnServiceMock.Setup(x => x.ExecuteAgenticTurnAsync(It.IsAny<string>()))
+                .ReturnsAsync(new AgenticTurnObservation(
+                    ScriptExecution: new SandboxExecutionResult(0, "ok", string.Empty, "ok"),
+                    DiffExecution: new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty),
+                    HasChanges: false,
+                    CompletionSignaled: true));
+            containerServiceMock.Setup(x => x.ExecuteCommandAsync("cd /workspace && git diff"))
+                .ReturnsAsync(new SandboxExecutionResult(0, string.Empty, string.Empty, string.Empty));
+            containerServiceMock.Setup(x => x.StopContainerAsync())
+                .Returns(Task.CompletedTask);
+
+            gitRunnerMock.Setup(x => x.RunAsync("rev-parse HEAD", It.IsAny<string?>(), It.IsAny<string?>()))
+                .ReturnsAsync("abc123");
+            agentPromptServiceMock.Setup(x => x.LoadEngineerPromptTemplate(It.IsAny<string?>()))
+                .Returns("Engineer prompt template\n\nGenerated tools content");
+
+            var runContextAccessor = new PromptOptRunContextAccessor
+            {
+                Current = new PromptOptRunContext(outDir, Capture: true, RunId: "run-1", BundleId: "bundle-1", ApplySandboxPatchToSource: false)
+            };
+
+            var runRecorder = new PromptOptRunRecorder(
+                new System.IO.Abstractions.FileSystem(),
+                runContextAccessor);
+            var eventPublisher = new AgentEventPublisher(new[] { observerMock.Object });
+
+            var orchestrator = new AgentOrchestrator(
+                agentPromptServiceMock.Object,
+                clientResolverMock.Object,
+                containerServiceMock.Object,
+                new ScriptGenerator(),
+                agenticTurnServiceMock.Object,
+                environmentValidatorMock.Object,
+                eventPublisher,
+                leadAgentMock.Object,
+                runRecorder,
+                runContextAccessor,
+                gitRunnerMock.Object,
+                CreateRunStageFactory(
+                    containerServiceMock.Object,
+                    gitRunnerMock.Object,
+                    runRecorder,
+                    environmentValidatorMock.Object,
+                    leadAgentMock.Object),
+                CreateStepFactory());
+
+            var practices = new List<Practice>
+            {
+                new("tdd_spirit", AgentRole.Architect, "Architecture", "Write tests first.")
+            };
+
+            await orchestrator.RunAsync("Do work", practices);
+
+            var gitDiffPath = Path.Combine(outDir, "git_diff.patch");
+            Assert.True(File.Exists(gitDiffPath));
+            Assert.Equal(string.Empty, File.ReadAllText(gitDiffPath));
+
+            var runResultPath = Path.Combine(outDir, "run_result.json");
+            Assert.True(File.Exists(runResultPath));
+            using var runResultDoc = JsonDocument.Parse(File.ReadAllText(runResultPath));
+            Assert.Equal("completed", runResultDoc.RootElement.GetProperty("status").GetString());
+            Assert.False(runResultDoc.RootElement.GetProperty("has_code_changes").GetBoolean());
+            Assert.Equal(0, runResultDoc.RootElement.GetProperty("git_diff_bytes").GetInt32());
+            Assert.True(runResultDoc.RootElement.GetProperty("completion_signaled").GetBoolean());
+        }
+        finally
+        {
+            if (Directory.Exists(outDir))
+            {
+                Directory.Delete(outDir, recursive: true);
+            }
+        }
+    }
+
+    private static TurnStepFactory CreateStepFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<GuardTurnStep>();
+        services.AddTransient<BuildContextStep>();
+        services.AddTransient<BuildPromptStep>();
+        services.AddTransient<InvokeAgentStep>();
+        services.AddTransient<ExecuteTurnStep>();
+        services.AddTransient<FinalizeTurnStep>();
+        return new TurnStepFactory(services.BuildServiceProvider());
+    }
+
+    private static RunStageFactory CreateRunStageFactory(
+        IContainerService containerService,
+        IGitRunner gitRunner,
+        IPromptOptRunRecorder runRecorder,
+        IEnvironmentValidator environmentValidator,
+        ILeadAgent leadAgent)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(containerService);
+        services.AddSingleton(gitRunner);
+        services.AddSingleton(runRecorder);
+        services.AddSingleton(environmentValidator);
+        services.AddSingleton(leadAgent);
+        services.AddTransient<RepositoryStage>();
+        services.AddTransient<RecordingStage>();
+        services.AddTransient<SandboxStage>();
+        services.AddTransient<PracticeSelectionStage>();
+        return new RunStageFactory(services.BuildServiceProvider());
+    }
+}

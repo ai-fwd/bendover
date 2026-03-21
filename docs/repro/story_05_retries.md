@@ -3,7 +3,7 @@
 ## Repro command (RetryProof)
 
 ```bash
-dotnet test tests/Bendover.Tests/Bendover.Tests.csproj -c Debug --filter FullyQualifiedName~AgentOrchestratorTests.RunAsync_ShouldRetryEngineer_WhenExecutionFailsThenSucceed -v normal
+dotnet test tests/Mystro.Tests/Mystro.Tests.csproj -c Debug --filter FullyQualifiedName~AgentOrchestratorTests.RunAsync_ShouldRetryEngineer_WhenExecutionFailsThenSucceed -v normal
 ```
 
 ## Scenario used by the proof
@@ -14,7 +14,7 @@ dotnet test tests/Bendover.Tests/Bendover.Tests.csproj -c Debug --filter FullyQu
 
 ## Expected outcomes
 - Test exits with code `0`
-- Test reports `Passed Bendover.Tests.AgentOrchestratorTests.RunAsync_ShouldRetryEngineer_WhenExecutionFailsThenSucceed`
+- Test reports `Passed Mystro.Tests.AgentOrchestratorTests.RunAsync_ShouldRetryEngineer_WhenExecutionFailsThenSucceed`
 - Retry prompt validation in the test confirms retry prompt includes failure digest entries:
   - `exit_code=1`
   - compile error marker `CS1026`

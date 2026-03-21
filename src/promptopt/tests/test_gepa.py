@@ -30,7 +30,7 @@ def temp_workspace(tmp_path):
     train_txt = tmp_path / "train.txt"
     train_txt.write_text("task1\ntask3\n")
     
-    bundles_dir = tmp_path / ".bendover" / "promptopt" / "bundles"
+    bundles_dir = tmp_path / ".mystro" / "promptopt" / "bundles"
     bundles_dir.mkdir(parents=True)
     
     return {
@@ -137,7 +137,7 @@ def test_evaluate_bundle_contract(mock_popen, temp_workspace):
     success, score = evaluate_bundle(
         bundle_path=bundle_path,
         task_path=task_path,
-        cli_command="bendover-cli",
+        cli_command="mystro-cli",
         log_dir=log_dir,
         timeout_seconds=10
     )
@@ -186,7 +186,7 @@ def test_evaluate_bundle_preserves_explicit_long_ui_flag(mock_popen, temp_worksp
     evaluate_bundle(
         bundle_path=Path("bundle"),
         task_path=Path("task"),
-        cli_command="bendover-cli --ui live",
+        cli_command="mystro-cli --ui live",
         log_dir=log_dir,
         timeout_seconds=10,
     )
@@ -223,7 +223,7 @@ def test_evaluate_bundle_preserves_explicit_short_ui_flag(mock_popen, temp_works
     evaluate_bundle(
         bundle_path=Path("bundle"),
         task_path=Path("task"),
-        cli_command="bendover-cli -u plain",
+        cli_command="mystro-cli -u plain",
         log_dir=log_dir,
         timeout_seconds=10,
     )
@@ -277,7 +277,7 @@ def test_evaluate_bundle_timeout_retry(mock_popen, temp_workspace):
     success, score = evaluate_bundle(
         bundle_path=bundle_path,
         task_path=task_path,
-        cli_command="bendover-cli",
+        cli_command="mystro-cli",
         log_dir=log_dir,
         timeout_seconds=0
     )
@@ -362,7 +362,7 @@ def test_evaluate_bundle_emits_heartbeat(mock_popen, _mock_monotonic, _mock_slee
         success, score = evaluate_bundle(
             bundle_path=Path("bundle_x"),
             task_path=Path("task_y"),
-            cli_command="bendover-cli",
+            cli_command="mystro-cli",
             log_dir=log_dir,
             timeout_seconds=30,
         )

@@ -1,4 +1,4 @@
-# The runtime image for the Bendover Agent Sandbox
+# The runtime image for the Mystro Agent Sandbox
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 
 # Install dotnet-script globally

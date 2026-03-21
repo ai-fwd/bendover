@@ -24,7 +24,7 @@ Keep PromptOpt runs reproducible by treating run context and bundle layout as st
 - Replay bundles must include `agents/lead.md`, `agents/engineer.md`, and `agents/tools.md`.
 - `tools.md` is treated as required runtime prompt context for engineer execution.
 - In scoring mode, bundle resolution may come from override, `bundle_id.txt`, or run metadata (`bundle_id`/`bundleId`).
-- Special bundle aliases like `current`/`default` resolve to root `.bendover` bundle semantics.
+- Special bundle aliases like `current`/`default` resolve to root `.mystro` bundle semantics.
 
 ## Mode behavior
 - Replay mode:

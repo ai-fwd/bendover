@@ -65,10 +65,10 @@ def test_write_bundle_preserves_agents_passthrough_files(tmp_path: Path):
 
 
 def test_ensure_active_bundle_bootstraps_seed_from_root_sources(tmp_path: Path):
-    bendover_root = tmp_path / ".bendover"
-    promptopt_root = bendover_root / "promptopt"
-    practices_source = bendover_root / "practices"
-    agents_source = bendover_root / "agents"
+    mystro_root = tmp_path / ".mystro"
+    promptopt_root = mystro_root / "promptopt"
+    practices_source = mystro_root / "practices"
+    agents_source = mystro_root / "agents"
     practices_source.mkdir(parents=True)
     agents_source.mkdir(parents=True)
 
@@ -89,10 +89,10 @@ def test_ensure_active_bundle_bootstraps_seed_from_root_sources(tmp_path: Path):
 
 
 def test_ensure_active_bundle_rebuilds_seed_when_active_is_deleted(tmp_path: Path):
-    bendover_root = tmp_path / ".bendover"
-    promptopt_root = bendover_root / "promptopt"
-    practices_source = bendover_root / "practices"
-    agents_source = bendover_root / "agents"
+    mystro_root = tmp_path / ".mystro"
+    promptopt_root = mystro_root / "promptopt"
+    practices_source = mystro_root / "practices"
+    agents_source = mystro_root / "agents"
     practices_source.mkdir(parents=True)
     agents_source.mkdir(parents=True)
 
@@ -117,7 +117,7 @@ def test_ensure_active_bundle_rebuilds_seed_when_active_is_deleted(tmp_path: Pat
 
 
 def test_ensure_active_bundle_returns_existing_active_bundle_without_bootstrap(tmp_path: Path):
-    promptopt_root = tmp_path / ".bendover" / "promptopt"
+    promptopt_root = tmp_path / ".mystro" / "promptopt"
     promptopt_root.mkdir(parents=True)
     (promptopt_root / "active.json").write_text('{"bundleId":"gen_existing"}')
 
@@ -128,9 +128,9 @@ def test_ensure_active_bundle_returns_existing_active_bundle_without_bootstrap(t
 
 
 def test_ensure_active_bundle_fails_when_root_practices_missing(tmp_path: Path):
-    bendover_root = tmp_path / ".bendover"
-    promptopt_root = bendover_root / "promptopt"
-    agents_source = bendover_root / "agents"
+    mystro_root = tmp_path / ".mystro"
+    promptopt_root = mystro_root / "promptopt"
+    agents_source = mystro_root / "agents"
     agents_source.mkdir(parents=True)
     (agents_source / "lead.md").write_text("Lead")
     (agents_source / "engineer.md").write_text("Engineer")
@@ -141,10 +141,10 @@ def test_ensure_active_bundle_fails_when_root_practices_missing(tmp_path: Path):
 
 
 def test_ensure_active_bundle_fails_when_root_practices_empty(tmp_path: Path):
-    bendover_root = tmp_path / ".bendover"
-    promptopt_root = bendover_root / "promptopt"
-    practices_source = bendover_root / "practices"
-    agents_source = bendover_root / "agents"
+    mystro_root = tmp_path / ".mystro"
+    promptopt_root = mystro_root / "promptopt"
+    practices_source = mystro_root / "practices"
+    agents_source = mystro_root / "agents"
     practices_source.mkdir(parents=True)
     agents_source.mkdir(parents=True)
     (agents_source / "lead.md").write_text("Lead")
@@ -156,9 +156,9 @@ def test_ensure_active_bundle_fails_when_root_practices_empty(tmp_path: Path):
 
 
 def test_ensure_active_bundle_fails_when_root_agents_missing(tmp_path: Path):
-    bendover_root = tmp_path / ".bendover"
-    promptopt_root = bendover_root / "promptopt"
-    practices_source = bendover_root / "practices"
+    mystro_root = tmp_path / ".mystro"
+    promptopt_root = mystro_root / "promptopt"
+    practices_source = mystro_root / "practices"
     practices_source.mkdir(parents=True)
     (practices_source / "tdd_spirit.md").write_text("---\nName: tdd_spirit\n---\n\ncontent")
 
@@ -168,10 +168,10 @@ def test_ensure_active_bundle_fails_when_root_agents_missing(tmp_path: Path):
 
 @pytest.mark.parametrize("missing_file", ["lead.md", "engineer.md", "tools.md"])
 def test_ensure_active_bundle_fails_when_required_agent_file_missing(tmp_path: Path, missing_file: str):
-    bendover_root = tmp_path / ".bendover"
-    promptopt_root = bendover_root / "promptopt"
-    practices_source = bendover_root / "practices"
-    agents_source = bendover_root / "agents"
+    mystro_root = tmp_path / ".mystro"
+    promptopt_root = mystro_root / "promptopt"
+    practices_source = mystro_root / "practices"
+    agents_source = mystro_root / "agents"
     practices_source.mkdir(parents=True)
     agents_source.mkdir(parents=True)
     (practices_source / "tdd_spirit.md").write_text("---\nName: tdd_spirit\n---\n\ncontent")

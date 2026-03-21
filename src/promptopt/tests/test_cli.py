@@ -103,7 +103,7 @@ def mock_dependencies(tmp_path):
 def test_cli_invocation_format_uses_env_cli_command(mock_dependencies, tmp_path, monkeypatch):
     deps = mock_dependencies
     promptopt_root = tmp_path / "promptopt"
-    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "mystro-cli")
 
     result = runner.invoke(app, [
         "--promptopt-root", str(promptopt_root),
@@ -126,7 +126,7 @@ def test_cli_invocation_format_uses_env_cli_command(mock_dependencies, tmp_path,
 def test_cli_preflight_fails_without_practice_attribution(mock_dependencies, tmp_path, monkeypatch):
     deps = mock_dependencies
     promptopt_root = tmp_path / "promptopt"
-    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "mystro-cli")
     deps["program"].return_value = dspy.Prediction(
         score=0.0,
         feedback_by_pred={},
@@ -173,7 +173,7 @@ def test_cli_fails_when_cli_command_missing(mock_dependencies, tmp_path, monkeyp
 
 def test_cli_uses_default_promptopt_root_for_optimization(mock_dependencies, monkeypatch):
     deps = mock_dependencies
-    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "mystro-cli")
 
     result = runner.invoke(app, [
         "--reflection-lm", "test",
@@ -181,14 +181,14 @@ def test_cli_uses_default_promptopt_root_for_optimization(mock_dependencies, mon
     ])
 
     assert result.exit_code == 0
-    deps["load_split"].assert_called_with(".bendover/promptopt/datasets/train.txt")
-    deps["ensure_active_bundle"].assert_called_once_with(Path(".bendover/promptopt"))
+    deps["load_split"].assert_called_with(".mystro/promptopt/datasets/train.txt")
+    deps["ensure_active_bundle"].assert_called_once_with(Path(".mystro/promptopt"))
 
 
 def test_cli_passes_num_threads_to_gepa_and_uses_plain_ui(mock_dependencies, tmp_path, monkeypatch):
     deps = mock_dependencies
     promptopt_root = tmp_path / "promptopt"
-    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "bendover-cli")
+    monkeypatch.setenv("PROMPTOPT_CLI_COMMAND", "mystro-cli")
 
     result = runner.invoke(app, [
         "--promptopt-root", str(promptopt_root),
@@ -209,7 +209,7 @@ def test_cli_uses_default_promptopt_root_for_clean():
         result = runner.invoke(app, ["clean"])
 
     assert result.exit_code == 0
-    mock_clean.assert_called_once_with(".bendover/promptopt")
+    mock_clean.assert_called_once_with(".mystro/promptopt")
 
 
 def test_cli_clean_removes_targets_and_preserves_non_gen_entries(tmp_path):
