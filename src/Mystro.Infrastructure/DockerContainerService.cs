@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
+using System.Net;
 using Mystro.Domain.Entities;
 using Mystro.Domain.Interfaces;
 using Docker.DotNet;
@@ -10,14 +12,17 @@ namespace Mystro.Infrastructure;
 public class DockerContainerService : IContainerService
 {
     private readonly DockerClient _client;
+    private readonly IAgentEventPublisher _events;
     private string? _containerId;
-    private const string ImageName = "mcr.microsoft.com/dotnet/sdk:10.0";
+    private const string SandboxImageTag = "mystro/sandbox:local";
     private const string InputRepoPath = "/input/repo";
     private const string WorkspacePath = "/workspace";
     private const string ScriptBodyPath = "/workspace/script_body.csx";
 
-    public DockerContainerService()
+    public DockerContainerService(IAgentEventPublisher events)
     {
+        _events = events ?? throw new ArgumentNullException(nameof(events));
+
         var dockerUri = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
             ? new Uri("npipe://./pipe/docker_engine")
             : new Uri("unix:///var/run/docker.sock");
@@ -38,9 +43,12 @@ public class DockerContainerService : IContainerService
             throw new DirectoryNotFoundException($"Source repository path not found: {sourceRepositoryPath}");
         }
 
+        await EnsureSandboxImageAsync(sourceRepositoryPath);
+
+        await _events.ProgressAsync($"Starting sandbox container from image '{SandboxImageTag}'...");
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
-            Image = ImageName,
+            Image = SandboxImageTag,
             Cmd = new[] { "sleep", "infinity" },
             HostConfig = new HostConfig
             {
@@ -349,4 +357,105 @@ public class DockerContainerService : IContainerService
         bool is_done,
         string? step_plan,
         string? tool_call);
+
+    private async Task EnsureSandboxImageAsync(string sourceRepositoryPath)
+    {
+        await _events.ProgressAsync($"Checking sandbox image cache ('{SandboxImageTag}')...");
+        if (await SandboxImageExistsAsync())
+        {
+            await _events.ProgressAsync($"Sandbox image ready from local cache ('{SandboxImageTag}').");
+            return;
+        }
+
+        var dockerfilePath = Path.Combine(sourceRepositoryPath, "Dockerfile");
+        if (!File.Exists(dockerfilePath))
+        {
+            await _events.ProgressAsync($"Sandbox image bootstrap failed: Dockerfile not found at '{dockerfilePath}'.");
+            throw new InvalidOperationException(
+                $"Sandbox image '{SandboxImageTag}' is missing and no Dockerfile was found at '{dockerfilePath}'. " +
+                "Ensure SourceRepositoryPath points to the repository root.");
+        }
+
+        await _events.ProgressAsync("Sandbox image missing; building from Dockerfile (first run may take a few minutes)...");
+        HostCommandResult buildResult;
+        try
+        {
+            buildResult = await RunHostCommandAsync(
+                "docker",
+                ["build", "-t", SandboxImageTag, "-f", dockerfilePath, sourceRepositoryPath],
+                sourceRepositoryPath);
+        }
+        catch (Exception ex)
+        {
+            await _events.ProgressAsync($"Sandbox image bootstrap failed while invoking Docker CLI: {ex.GetType().Name}.");
+            throw new InvalidOperationException(
+                $"Failed to invoke Docker CLI while building sandbox image '{SandboxImageTag}'. " +
+                "Ensure Docker CLI is installed and available on PATH.", ex);
+        }
+
+        if (buildResult.ExitCode != 0)
+        {
+            await _events.ProgressAsync($"Sandbox image build failed (exit code {buildResult.ExitCode}).");
+            throw new InvalidOperationException(
+                $"Failed to build sandbox image '{SandboxImageTag}' from '{dockerfilePath}'.\n" +
+                $"Command: docker build -t {SandboxImageTag} -f \"{dockerfilePath}\" \"{sourceRepositoryPath}\"\n" +
+                $"{buildResult.CombinedOutput}");
+        }
+
+        await _events.ProgressAsync($"Sandbox image build completed ('{SandboxImageTag}').");
+        if (!await SandboxImageExistsAsync())
+        {
+            await _events.ProgressAsync($"Sandbox image bootstrap failed: image '{SandboxImageTag}' still not found after build.");
+            throw new InvalidOperationException(
+                $"Docker build completed but sandbox image '{SandboxImageTag}' is still not available locally.");
+        }
+    }
+
+    private async Task<bool> SandboxImageExistsAsync()
+    {
+        try
+        {
+            await _client.Images.InspectImageAsync(SandboxImageTag);
+            return true;
+        }
+        catch (DockerApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
+    private static async Task<HostCommandResult> RunHostCommandAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory)
+    {
+        var startInfo = new ProcessStartInfo(fileName)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = workingDirectory
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start process '{fileName}'.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        return new HostCommandResult(process.ExitCode, stdout, stderr);
+    }
+
+    private sealed record HostCommandResult(int ExitCode, string Stdout, string Stderr)
+    {
+        public string CombinedOutput => $"{Stdout}{Stderr}";
+    }
 }
