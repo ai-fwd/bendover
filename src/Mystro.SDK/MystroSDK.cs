@@ -451,8 +451,7 @@ public sealed class MystroSDK
             foreach (var directory in directories)
             {
                 var name = Path.GetFileName(directory);
-                if (string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(name, "tmp", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -472,13 +471,6 @@ public sealed class MystroSDK
 
             foreach (var file in files)
             {
-                var fileName = Path.GetFileName(file);
-                if (string.Equals(fileName, "script_body.csx", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(fileName, "script_result.json", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
                 yield return ToWorkspaceRelativePath(file);
             }
         }
