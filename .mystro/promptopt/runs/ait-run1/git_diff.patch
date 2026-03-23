@@ -1,0 +1,28 @@
+diff --git a/src/Mystro.SDK/MystroSDK.cs b/src/Mystro.SDK/MystroSDK.cs
+index c415ffc..060d352 100644
+--- a/src/Mystro.SDK/MystroSDK.cs
++++ b/src/Mystro.SDK/MystroSDK.cs
+@@ -451,7 +451,8 @@ public sealed class MystroSDK
+             foreach (var directory in directories)
+             {
+                 var name = Path.GetFileName(directory);
+-                if (string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase))
++                if (string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase)
++                    || string.Equals(name, "tmp", StringComparison.OrdinalIgnoreCase))
+                 {
+                     continue;
+                 }
+@@ -471,6 +472,13 @@ public sealed class MystroSDK
+ 
+             foreach (var file in files)
+             {
++                var fileName = Path.GetFileName(file);
++                if (string.Equals(fileName, "script_body.csx", StringComparison.OrdinalIgnoreCase)
++                    || string.Equals(fileName, "script_result.json", StringComparison.OrdinalIgnoreCase))
++                {
++                    continue;
++                }
++
+                 yield return ToWorkspaceRelativePath(file);
+             }
+         }
