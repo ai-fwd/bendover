@@ -142,12 +142,16 @@ public class BenchmarkRunOrchestrator
                 sink.AddVerboseDetail($"Loaded {practices.Count} practices.");
             }
 
-            var taskFilePath = _fileSystem.Path.Combine(taskPath, "task.md");
-            var taskText = await _fileSystem.File.ReadAllTextAsync(taskFilePath);
-            sink.SetStatus("Loading task");
+            var goalFilePath = _fileSystem.Path.Combine(taskPath, "goal.txt");
+            var taskText = await _fileSystem.File.ReadAllTextAsync(goalFilePath);
+            if (string.IsNullOrWhiteSpace(taskText))
+            {
+                throw new InvalidOperationException($"goal.txt is empty: {goalFilePath}");
+            }
+            sink.SetStatus("Loading goal");
             if (verbose)
             {
-                sink.AddVerboseDetail($"Loaded task file: {taskFilePath}");
+                sink.AddVerboseDetail($"Loaded goal file: {goalFilePath}");
             }
 
             if (!_fileSystem.Directory.Exists(resolvedOutputPath))

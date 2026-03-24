@@ -90,7 +90,7 @@ def prepare_replay_task(run_id, runs_root):
     temp_dir = Path(f"/tmp/mystro_replay_{run_id}_{int(time.time())}")
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    (temp_dir / "task.md").write_text(run.goal)
+    (temp_dir / "goal.txt").write_text(run.goal)
     (temp_dir / "base_commit.txt").write_text(run.base_commit)
 
     return temp_dir

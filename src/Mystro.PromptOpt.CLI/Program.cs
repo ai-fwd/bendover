@@ -363,28 +363,32 @@ public class RunCommand : AsyncCommand<RunCommandSettings>
 
     private static string LoadReplayGoal(string taskPath)
     {
-        var taskFilePath = Path.Combine(taskPath, "task.md");
-        if (!File.Exists(taskFilePath))
-        {
-            return "Replay bundle evaluation";
-        }
-
-        var goal = File.ReadAllText(taskFilePath).Trim();
-        return string.IsNullOrWhiteSpace(goal) ? "Replay bundle evaluation" : goal;
+        return LoadRequiredGoal(taskPath, "task");
     }
 
     private static string LoadScoreGoal(string runDirectory)
     {
-        var taskFilePath = Path.Combine(runDirectory, "task.md");
-        if (!File.Exists(taskFilePath))
+        var goal = LoadRequiredGoal(runDirectory, "run");
+        return $"Score existing run: {goal}";
+    }
+
+    private static string LoadRequiredGoal(string directoryPath, string directoryLabel)
+    {
+        var goalFilePath = Path.Combine(directoryPath, "goal.txt");
+        if (!File.Exists(goalFilePath))
         {
-            return "Score existing run";
+            throw new FileNotFoundException(
+                $"Missing required goal file: {goalFilePath}. {directoryLabel} directory must include goal.txt.");
         }
 
-        var goal = File.ReadAllText(taskFilePath).Trim();
-        return string.IsNullOrWhiteSpace(goal)
-            ? "Score existing run"
-            : $"Score existing run: {goal}";
+        var goal = File.ReadAllText(goalFilePath).Trim();
+        if (string.IsNullOrWhiteSpace(goal))
+        {
+            throw new InvalidOperationException(
+                $"goal.txt is empty in {directoryLabel} directory: {directoryPath}");
+        }
+
+        return goal;
     }
 
     private static void WriteVerboseSummaryIfNeeded(

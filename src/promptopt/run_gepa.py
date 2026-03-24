@@ -731,10 +731,10 @@ def prepare_task_dir(run: RunArtifact) -> Path:
     """
     Build a minimal "task" directory for the CLI replay.
 
-    The CLI expects a task.md and base_commit.txt file.
+    The CLI expects a goal.txt and base_commit.txt file.
     """
     temp_dir = Path(tempfile.mkdtemp(prefix=f"mystro_replay_{run.run_id}_"))
-    (temp_dir / "task.md").write_text(run.goal)
+    (temp_dir / "goal.txt").write_text(run.goal)
     (temp_dir / "base_commit.txt").write_text(run.base_commit)
     previous_run_result_path = run.run_dir / "run_result.json"
     if previous_run_result_path.exists():
