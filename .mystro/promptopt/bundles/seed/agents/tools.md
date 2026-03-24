@@ -1,0 +1,78 @@
+# SDK Tool Usage Contract (Auto-generated)
+
+- The Engineer is responsible for solving the task.
+- If tool usage is needed, use the preloaded `sdk` global.
+- Output must be BODY-only C# script statements.
+- The script should call SDK tools to achieve the goal.
+
+## Entry Point
+- Global variable: `sdk`
+- Type: `MystroSDK`
+
+## sdk Methods
+- `Void Build()`
+  - Category: `verification`
+  - Summary: Runs dotnet build from the current workspace.
+  - Use this instead of: `dotnet build shell command`
+  - Result visibility: Automatically emits full stdout/stderr/exit code.
+- `Void DeleteFile(String path)`
+  - Category: `mutation`
+  - Summary: Deletes a file at a workspace-relative path.
+  - Use this instead of: `rm`
+  - Result visibility: Automatically emits delete success/failure details.
+  - Param `path`: Must resolve inside workspace root.
+- `Void Done()`
+  - Category: `completion`
+  - Summary: Signals that the agent is done and the host loop should stop.
+  - Use this instead of: `custom completion shell signaling`
+  - Result visibility: Automatically emits completion signal metadata.
+- `String GetCurrentBranch()`
+  - Category: `repository_read`
+  - Summary: Returns current git branch name.
+  - Use this instead of: `git rev-parse --abbrev-ref HEAD`
+  - Result visibility: Automatically emits branch name output.
+- `String GetDiff(String path)`
+  - Category: `repository_read`
+  - Summary: Returns git diff output. Optionally limits diff to one workspace path.
+  - Use this instead of: `git diff`
+  - Result visibility: Automatically emits full diff output.
+  - Param `path`: Optional workspace-relative path filter.
+- `String GetHeadCommit()`
+  - Category: `repository_read`
+  - Summary: Returns current git HEAD commit hash.
+  - Use this instead of: `git rev-parse HEAD`
+  - Result visibility: Automatically emits commit hash output.
+- `InspectFileResult InspectFile(String pattern, InspectFileOptions options)`
+  - Category: `discovery`
+  - Summary: Inspects file content using regex or plain-text matching.
+  - Use this instead of: `rg, grep, sed`
+  - Result visibility: Automatically emits full structured match results with context lines.
+  - Param `pattern`: Regex by default; set UseRegex=false for literal matching.
+- `String[] ListChangedFiles()`
+  - Category: `repository_read`
+  - Summary: Lists changed files relative to the workspace root.
+  - Use this instead of: `git diff --name-only`
+  - Result visibility: Automatically emits the full changed-file list.
+- `LocateFileResult LocateFile(String pattern, LocateFileOptions options)`
+  - Category: `discovery`
+  - Summary: Locates files by path substring or wildcard pattern.
+  - Use this instead of: `find`
+  - Result visibility: Automatically emits full structured locate results.
+  - Param `pattern`: Substring by default; supports '*' and '?' wildcard patterns.
+- `String ReadFile(String path)`
+  - Category: `discovery`
+  - Summary: Reads full file content from a workspace-relative path.
+  - Use this instead of: `cat`
+  - Result visibility: Automatically emits full file content in success payload.
+  - Param `path`: Must resolve inside workspace root.
+- `Void Test()`
+  - Category: `verification`
+  - Summary: Runs dotnet test from the current workspace.
+  - Use this instead of: `dotnet test shell command`
+  - Result visibility: Automatically emits full stdout/stderr/exit code.
+- `Void WriteFile(String path, String content)`
+  - Category: `mutation`
+  - Summary: Writes file content to a workspace-relative path.
+  - Use this instead of: `manual file redirection/edit scripting`
+  - Result visibility: Automatically emits write success/failure details including byte count.
+  - Param `path`: Must resolve inside workspace root.

@@ -1,0 +1,51 @@
+diff --git a/src/Mystro.SDK/MystroSDK.cs b/src/Mystro.SDK/MystroSDK.cs
+index c415ffc..a8805bb 100644
+--- a/src/Mystro.SDK/MystroSDK.cs
++++ b/src/Mystro.SDK/MystroSDK.cs
+@@ -8,6 +8,17 @@ namespace Mystro.SDK;
+ public sealed class MystroSDK
+ {
+     private readonly ISdkActionEventSink _eventSink;
++    private static readonly HashSet<string> IgnoredDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
++    {
++        ".git",
++        "tmp"
++    };
++
++    private static readonly HashSet<string> IgnoredFileNames = new(StringComparer.OrdinalIgnoreCase)
++    {
++        "script_body.csx",
++        "script_result.json"
++    };
+ 
+     public MystroSDK(ISdkActionEventSink eventSink)
+     {
+@@ -451,7 +462,7 @@ public sealed class MystroSDK
+             foreach (var directory in directories)
+             {
+                 var name = Path.GetFileName(directory);
+-                if (string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase))
++                if (IgnoredDirectoryNames.Contains(name))
+                 {
+                     continue;
+                 }
+@@ -471,6 +482,12 @@ public sealed class MystroSDK
+ 
+             foreach (var file in files)
+             {
++                var name = Path.GetFileName(file);
++                if (IgnoredFileNames.Contains(name))
++                {
++                    continue;
++                }
++
+                 yield return ToWorkspaceRelativePath(file);
+             }
+         }
+@@ -740,4 +757,4 @@ public sealed record InspectFileMatch(
+     int LineNumber,
+     string Line,
+     IReadOnlyList<string> Before,
+-    IReadOnlyList<string> After);
++    IReadOnlyList<string> After);
+\ No newline at end of file

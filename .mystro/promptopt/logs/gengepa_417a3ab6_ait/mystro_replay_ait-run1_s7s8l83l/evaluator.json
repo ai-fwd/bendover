@@ -1,0 +1,16 @@
+{
+  "pass": true,
+  "score": 0.8,
+  "flags": [],
+  "notes": [
+    "Production code changed without accompanying tests."
+  ],
+  "practice_attribution": {
+    "selected_practices": [
+      "external_io_abstractions",
+      "coding_style"
+    ],
+    "offending_practices": [],
+    "notes_by_practice": {}
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "gengepa_417a3ab6",
+  "parent": "seed",
+  "generation": "gepa",
+  "created_at": "2026-03-24T00:43:00.569446Z",
+  "hash": "417a3ab689f2b9594cf1b68401a535951a769dde1d5f7fa5ee8ea66fcc4d5310",
+  "trainRunIds": [
+    "ait-run1"
+  ],
+  "devRunIds": []
+}
