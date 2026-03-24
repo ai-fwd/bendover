@@ -1,0 +1,1 @@
+Update MystroSDK.cs to ignore the generated script_body.csx and script_result.json files and anything under the /tmp directory in EnumerateWorkspaceFiles

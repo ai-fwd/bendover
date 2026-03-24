@@ -1,0 +1,24 @@
+{
+  "pass": true,
+  "score": 0.7,
+  "flags": [],
+  "notes": [
+    "Avoid chained \u0027||\u0027 equality checks for membership. Use HashSet\u003CT\u003E with Contains(...).",
+    "Production code changed without accompanying tests."
+  ],
+  "practice_attribution": {
+    "selected_practices": [
+      "external_io_abstractions",
+      "coding_style",
+      "codebase_overview"
+    ],
+    "offending_practices": [
+      "coding_style"
+    ],
+    "notes_by_practice": {
+      "coding_style": [
+        "Avoid chained \u0027||\u0027 equality checks for membership. Use HashSet\u003CT\u003E with Contains(...)."
+      ]
+    }
+  }
+}
