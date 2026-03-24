@@ -1,0 +1,121 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Launch ChatGPT Proxy",
+            "type": "process",
+            "command": "dotnet",
+            "args": [
+                "run",
+                "--project",
+                "src/Mystro.PromptOpt.CLI",
+                "--",
+                "serve-chatgpt-proxy"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "promptopt clean",
+            "type": "process",
+            "command": "${workspaceFolder}/src/promptopt/.venv/bin/promptopt",
+            "args": [
+                "clean"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "promptopt run",
+            "type": "process",
+            "command": "${workspaceFolder}/src/promptopt/.venv/bin/promptopt",
+            "args": [
+                "--max-full-evals",
+                "${input:maxFullEvals}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Replay & Evaluate Run",
+            "type": "shell",
+            "command": "dotnet run --project src/Mystro.PromptOpt.CLI -- --bundle \".mystro/promptopt/bundles/${input:promptOptReplayBundle}\" --task \".mystro/promptopt/runs/${input:promptOptReplayTask}\" --out \".mystro/promptopt/runs/${input:promptOptReplayOut}\" ${input:promptOptReplayExtraArgs}",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Evaluate Run",
+            "type": "process",
+            "command": "dotnet",
+            "args": [
+                "run",
+                "--project",
+                "src/Mystro.PromptOpt.CLI",
+                "--",
+                "--run-id",
+                "${input:promptOptRunId}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "maxFullEvals",
+            "type": "promptString",
+            "description": "Max full evals",
+            "default": "4"
+        },
+        {
+            "id": "promptOptReplayBundle",
+            "type": "promptString",
+            "description": "Bundle name under .mystro/promptopt/bundles",
+        },
+        {
+            "id": "promptOptReplayTask",
+            "type": "promptString",
+            "description": "Task/run name under .mystro/promptopt/runs",
+        },
+        {
+            "id": "promptOptReplayOut",
+            "type": "promptString",
+            "description": "Output run name under .mystro/promptopt/runs",
+        },
+        {
+            "id": "promptOptReplayExtraArgs",
+            "type": "promptString",
+            "description": "Extra CLI args",
+            "default": "--verbose"
+        },
+        {
+            "id": "promptOptRunId",
+            "type": "promptString",
+            "description": "Run ID under .mystro/promptopt/runs",
+        }
+    ]
+}
