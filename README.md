@@ -246,7 +246,7 @@ dotnet run --project src/Mystro.PromptOpt.CLI -- \
 
 Task directory contract:
 
-- `task.md`: goal text
+- `goal.txt`: goal text
 - `base_commit.txt`: commit hash to checkout before replay
 
 Output directory contains replay artifacts plus `evaluator.json`.
@@ -372,7 +372,7 @@ docker run --rm hello-world
 ### 6.3 Missing run artifacts
 
 - `--run-id` scoring requires `.mystro/promptopt/runs/<run_id>`.
-- Replay mode requires `task.md` and `base_commit.txt`.
+- Replay mode requires `goal.txt` and `base_commit.txt`.
 
 ### 6.4 GEPA attribution preflight failed
 

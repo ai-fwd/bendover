@@ -24,7 +24,7 @@ def verify_helpers():
         # Test 1: prepare_replay_task
         print("Testing prepare_replay_task...")
         task_dir = prepare_replay_task("run_001", root / "runs")
-        assert (task_dir / "task.md").read_text() == "Build a spaceship"
+        assert (task_dir / "goal.txt").read_text() == "Build a spaceship"
         assert (task_dir / "base_commit.txt").read_text() == "abc1234"
         print("PASS")
         

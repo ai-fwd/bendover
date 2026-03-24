@@ -59,7 +59,7 @@ public class BenchmarkRunOrchestratorTests
         var taskText = "Do the work";
 
         _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData(commitHash));
-        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
+        _fileSystem.AddFile(Path.Combine(taskPath, "goal.txt"), new MockFileData(taskText));
         _fileSystem.AddFile(
             Path.Combine(practicesPath, "tdd_spirit.md"),
             new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
@@ -112,7 +112,7 @@ public class BenchmarkRunOrchestratorTests
         var taskText = "Do the work";
 
         _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData("abc1234"));
-        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
+        _fileSystem.AddFile(Path.Combine(taskPath, "goal.txt"), new MockFileData(taskText));
         _fileSystem.AddFile(
             Path.Combine(practicesPath, "tdd_spirit.md"),
             new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
@@ -159,7 +159,7 @@ public class BenchmarkRunOrchestratorTests
         var sawCopiedToolsTemplate = false;
 
         _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData("abc1234"));
-        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
+        _fileSystem.AddFile(Path.Combine(taskPath, "goal.txt"), new MockFileData(taskText));
         _fileSystem.AddFile(
             Path.Combine(practicesPath, "tdd_spirit.md"),
             new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
@@ -213,7 +213,7 @@ public class BenchmarkRunOrchestratorTests
         var taskText = "Do the work";
 
         _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData("abc1234"));
-        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
+        _fileSystem.AddFile(Path.Combine(taskPath, "goal.txt"), new MockFileData(taskText));
         _fileSystem.AddFile(
             Path.Combine(practicesPath, "tdd_spirit.md"),
             new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
@@ -240,7 +240,7 @@ public class BenchmarkRunOrchestratorTests
         var taskText = "Do the work";
 
         _fileSystem.AddFile(Path.Combine(taskPath, "base_commit.txt"), new MockFileData("abc1234"));
-        _fileSystem.AddFile(Path.Combine(taskPath, "task.md"), new MockFileData(taskText));
+        _fileSystem.AddFile(Path.Combine(taskPath, "goal.txt"), new MockFileData(taskText));
         _fileSystem.AddFile(
             Path.Combine(practicesPath, "tdd_spirit.md"),
             new MockFileData("---\nName: tdd_spirit\nTargetRole: Architect\nAreaOfConcern: Architecture\n---\ncontent"));
